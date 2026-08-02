@@ -26,12 +26,9 @@ import {
   cacheVsCodeSessionId,
   cacheVSCodeVersion,
 } from "~/lib/platform/utils"
-import { hasGithubToken, setLastView, state } from "~/lib/runtime-state/state"
+import { hasGithubToken, state } from "~/lib/runtime-state/state"
 import { startTokenUsageRetention } from "~/lib/token-usage"
 import { getGitVersion, shortSha } from "~/lib/update/version"
-import { buildSnapshot, LiveFeedHub } from "~/lib/ws/live-feed"
-import { presenceRegistry } from "~/lib/ws/presence-registry"
-import { createWebSocketHandler } from "~/routes/ws/route"
 
 import { initBootLogger, printReadyBanner } from "./boot-io"
 import { emitBootStatus } from "./boot-status"
@@ -56,27 +53,6 @@ let serveImpl: ServeFn = serve
 /** Test-only: swap the srvx `serve` binder. Pass `null` to restore the real one. */
 export function __setServeForTests(fn: ServeFn | null): void {
   serveImpl = fn ?? serve
-}
-
-/**
- * Construct the live-feed WebSocket wiring (§1.2–1.3): one presence registry (the
- * tray-open dedup source) + one hub (producers → feed + (re)connect snapshot),
- * plus the Bun `websocket` handler that drives the socket lifecycle. Kept out of
- * `runServer`'s checklist body; the caller passes `websocket` into `serve(...)`
- * and calls `hub.start()` once the sidecar is listening.
- */
-function createLiveFeed(): {
-  hub: LiveFeedHub
-  websocket: ReturnType<typeof createWebSocketHandler>
-} {
-  const registry = presenceRegistry
-  const hub = new LiveFeedHub({ registry, buildSnapshot })
-  return {
-    hub,
-    // onView persists the tab's section+scroll (§1.4) so a tray-reopened tab keeps
-    // the user's place; buildInlineUiState reads it back on the next page load.
-    websocket: createWebSocketHandler({ hub, registry, onView: setLastView }),
-  }
 }
 
 export interface RunServerOptions {
@@ -241,18 +217,15 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       + `auth=${hasGithubToken() ? "authenticated" : "unauthenticated"}`,
   )
 
-  const liveFeed = createLiveFeed()
-
   const httpServer = serveImpl({
     fetch: server.fetch,
     port: options.port,
     bun: {
       idleTimeout: 0,
-      websocket: liveFeed.websocket,
     },
   })
 
-  finalizeBoot(httpServer, liveFeed.hub)
+  finalizeBoot(httpServer)
 }
 
 /**
@@ -261,14 +234,12 @@ export async function runServer(options: RunServerOptions): Promise<void> {
  * proxy; ownership-guarded, no-op when routing is off), then drop the
  * "session running" sentinel ONLY after that URL is in place (a
  * present-on-next-boot sentinel means the last exit was ungraceful — see the
- * `staleSession` check), then attach the live-feed producers now that we're
- * listening (§1.3, idempotent), then install the shutdown handlers.
+ * `staleSession` check), then install the shutdown handlers.
  */
-function finalizeBoot(httpServer: ReturnType<ServeFn>, hub: LiveFeedHub): void {
+function finalizeBoot(httpServer: ReturnType<ServeFn>): void {
   void writePidfile()
   reconcileClaudeCodeOnBoot()
   markSessionRunning()
-  hub.start()
   startTokenUsageRetention()
   installShutdownHandlers(httpServer)
 }

@@ -10,11 +10,6 @@
  * during test runs. Tests must never touch real user credentials.
  *
  * Respects an explicit COPILOT_API_HOME (a test that sets its own wins).
- *
- * Also guarantees the gitignored `src/generated/ui-embed.ts` stub exists
- * before any test module imports it (src/routes/ui/route.ts). A fresh
- * `git worktree` never runs `bun install`, so without this the server-boot
- * tests fail with an opaque "Cannot find module '~/generated/ui-embed'".
  */
 
 import { afterEach, beforeEach, mock } from "bun:test"
@@ -22,8 +17,6 @@ import consola from "consola"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-
-import { ensureUiEmbedStub } from "../scripts/ensure-ui-embed-stub"
 
 // Reset the global consola level before every test. Some tests bump it to 5
 // (verbose mode, e.g. start-run-server) and don't restore it, leaking debug
@@ -45,11 +38,6 @@ beforeEach(() => {
 afterEach(() => {
   mock.restore()
 })
-
-// Force the EMPTY stub: a stray build (build:ui / app:dev / ui:harness) may have
-// left a populated embed behind, which flips `HAS_EMBED` true and makes the
-// ui-route tests serve the real embedded UI instead of their fixture dir.
-ensureUiEmbedStub(true)
 
 if (!process.env.COPILOT_API_HOME) {
   const dir = path.join(os.tmpdir(), `maximal-test-home-${process.pid}`)

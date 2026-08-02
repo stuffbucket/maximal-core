@@ -10,9 +10,9 @@ describe("x-maximal-version response header", () => {
     expect(res.headers.get("x-maximal-version")).toBe(BUILD_VERSION)
   })
 
-  test("redirect responses are stamped too", async () => {
-    const res = await server.request("/settings")
-    expect(res.status).toBe(301)
+  test("non-200 responses are stamped too", async () => {
+    const res = await server.request("/definitely-not-a-route")
+    expect(res.status).toBe(404)
     expect(res.headers.get("x-maximal-version")).toBe(BUILD_VERSION)
   })
 })
