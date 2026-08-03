@@ -123,3 +123,33 @@ describe("control route — SSE event stream", () => {
     expect(env.event).toBe("snapshot")
   })
 })
+
+describe("control route — auth flow", () => {
+  test("POST /auth/cancel with no active flow returns the current status", async () => {
+    const res = await makeApp().request("/auth/cancel", { method: "POST" })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { state: string }
+    expect(typeof body.state).toBe("string")
+  })
+
+  test("POST /auth/sign-out is ok with no session", async () => {
+    const res = await makeApp().request("/auth/sign-out", { method: "POST" })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+  })
+
+  test("POST /auth/rearm returns an outcome + status with no credential", async () => {
+    const res = await makeApp().request("/auth/rearm", { method: "POST" })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      outcome: unknown
+      status: { state: string }
+    }
+    expect(body.outcome).toBeDefined()
+    expect(typeof body.status.state).toBe("string")
+  })
+
+  test("GET /update-status is 200", async () => {
+    expect((await makeApp().request("/update-status")).status).toBe(200)
+  })
+})

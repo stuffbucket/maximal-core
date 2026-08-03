@@ -13,7 +13,13 @@ import type { Context, Hono as HonoApp } from "hono"
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 
-import { getAuthStatus } from "~/lib/auth/auth-controller"
+import {
+  cancelDeviceFlow,
+  getAuthStatus,
+  rearmCopilotAuth,
+  signOut,
+  startDeviceFlow,
+} from "~/lib/auth/auth-controller"
 import { activateAccountLive } from "~/lib/auth/auth-recovery"
 import {
   readDefaultRegistry,
@@ -33,8 +39,10 @@ import {
   type ControlSnapshot,
 } from "~/lib/live/resources"
 import { getControlHub } from "~/lib/live/service"
+import { cacheModels } from "~/lib/platform/utils"
 import { emitQuitRequest, emitUpdateRequest } from "~/lib/start/boot-status"
 import { getTokenUsageSummary } from "~/lib/token-usage"
+import { getUpdateStatus } from "~/lib/update/update-check"
 
 type HubAccessor = () => ControlHub<ControlSnapshot>
 
@@ -115,6 +123,55 @@ function registerReads(app: HonoApp): void {
     const clients = listActiveClients()
     return c.json({ clients, total: clients.length })
   })
+
+  app.get("/update-status", async (c) => {
+    try {
+      return c.json(await getUpdateStatus())
+    } catch (error) {
+      return forwardError(c, error)
+    }
+  })
+}
+
+/**
+ * GitHub auth flow — thin wrappers over the auth-controller state machine. The
+ * UI POSTs /auth/start, renders the device code from the returned status, and
+ * watches the live `auth` topic until the state flips. /cancel aborts without
+ * signing out; /rearm self-heals a session that degraded (OS wake / focus).
+ * /models/refresh forces a catalog refetch.
+ */
+function registerAuthActions(app: HonoApp): void {
+  app.post("/auth/start", async (c) => {
+    try {
+      return c.json(await startDeviceFlow())
+    } catch (error) {
+      return forwardError(c, error)
+    }
+  })
+
+  app.post("/auth/cancel", (c) => c.json(cancelDeviceFlow()))
+
+  app.post("/auth/rearm", async (c) =>
+    c.json({ outcome: await rearmCopilotAuth(), status: getAuthStatus() }),
+  )
+
+  app.post("/auth/sign-out", async (c) => {
+    try {
+      await signOut()
+      return c.json({ ok: true })
+    } catch (error) {
+      return forwardError(c, error)
+    }
+  })
+
+  app.post("/models/refresh", async (c) => {
+    try {
+      await cacheModels()
+      return c.json(buildModelsList())
+    } catch (error) {
+      return forwardError(c, error)
+    }
+  })
 }
 
 /** Browser-tab quit / in-place upgrade — a UI with no native host POSTs these
@@ -134,12 +191,9 @@ function registerShellSignals(app: HonoApp): void {
 
 /**
  * Account switch/remove — serialized through the mutex; broadcast the new
- * accounts list on success.
- *
- * NOTE: these edit maximal's persisted registry only. Making the RUNNING proxy
- * adopt the new account without a restart (re-mint the Copilot token, refresh
- * models, swap the in-memory trio) is the follow-up `activateAccount` work in
- * the spec; today a reconnect/restart picks up the new active key.
+ * accounts list on success. /switch adopts the account in the RUNNING proxy
+ * live via activateAccountLive (mint + commit + refresh + emit); /remove only
+ * edits the persisted registry (a reconnect/restart drops a removed active key).
  */
 function registerAccountActions(
   app: HonoApp,
@@ -206,6 +260,7 @@ export function createControlRoutes(options: ControlRoutesOptions = {}): Hono {
 
   registerEventStream(app, hub)
   registerReads(app)
+  registerAuthActions(app)
   registerShellSignals(app)
   registerAccountActions(app, hub, new AsyncMutex())
 
