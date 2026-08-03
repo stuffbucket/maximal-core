@@ -5,6 +5,7 @@ import {
   type ControlFrame,
   type ControlTopic,
   serializeFrame,
+  type SnapshotPayload,
 } from "~/lib/live/contract"
 import { BoundedQueue, CLOSED } from "~/lib/live/queue"
 
@@ -40,10 +41,19 @@ export interface ControlHubOptions<Snapshot = unknown> {
   ringCapacity?: number
   /** Per-subscriber queue depth before a slow client is dropped. */
   queueCapacity?: number
+  /** If set, send an SSE keepalive comment to every subscriber this often.
+   *  Enqueued through each subscriber's queue, so the single drain loop stays
+   *  the only writer. Omit to disable (the default). */
+  heartbeatMs?: number
 }
 
 const DEFAULT_RING_CAPACITY = 512
 const DEFAULT_QUEUE_CAPACITY = 256
+
+/** SSE comment sent on each heartbeat tick — keeps idle connections open
+ *  through intermediaries and surfaces a dead peer (an unwritable socket
+ *  overflows the queue and the subscriber is dropped). */
+const HEARTBEAT_FRAME = ": keepalive\n\n"
 
 /**
  * Owns the cursor, the delta ring, the epoch, and fan-out to every connected
@@ -64,11 +74,29 @@ export class ControlHub<Snapshot = unknown> {
   private readonly buildSnapshot: () => Promise<Snapshot>
   private readonly ringCapacity: number
   private readonly queueCapacity: number
+  private readonly heartbeatTimer: ReturnType<typeof setInterval> | null
 
   constructor(options: ControlHubOptions<Snapshot>) {
     this.buildSnapshot = options.buildSnapshot
     this.ringCapacity = options.ringCapacity ?? DEFAULT_RING_CAPACITY
     this.queueCapacity = options.queueCapacity ?? DEFAULT_QUEUE_CAPACITY
+    this.heartbeatTimer =
+      options.heartbeatMs === undefined ?
+        null
+      : this.startHeartbeat(options.heartbeatMs)
+  }
+
+  private startHeartbeat(intervalMs: number): ReturnType<typeof setInterval> {
+    const timer = setInterval(() => {
+      this.fanout(HEARTBEAT_FRAME)
+    }, intervalMs)
+    timer.unref()
+    return timer
+  }
+
+  /** Stop the heartbeat timer. For tests and a clean shutdown. */
+  dispose(): void {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
   }
 
   // ── Producer API ────────────────────────────────────────────────────────
@@ -149,16 +177,13 @@ export class ControlHub<Snapshot = unknown> {
         this.remove(subscriber, "snapshot_failed")
         throw error
       }
+      const payload: SnapshotPayload<Snapshot> = {
+        protocolVersion: CONTROL_PROTOCOL_VERSION,
+        epoch: this.epoch,
+        snapshot,
+      }
       subscriber.queue.pushFront(
-        serializeFrame({
-          topic: "snapshot",
-          cursor: baseline,
-          data: {
-            protocolVersion: CONTROL_PROTOCOL_VERSION,
-            epoch: this.epoch,
-            snapshot,
-          },
-        }),
+        serializeFrame({ topic: "snapshot", cursor: baseline, data: payload }),
       )
     }
 

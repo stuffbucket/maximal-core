@@ -14,11 +14,6 @@
 import { HTTPError } from "~/lib/errors/error"
 import { getCopilotUsage } from "~/services/github/get-copilot-usage"
 
-export type PreflightCopilotErrorFn = (
-  token: string,
-  login: string,
-) => Promise<string | null>
-
 export async function preflightCopilotError(
   token: string,
   login: string,

@@ -309,3 +309,25 @@ describe("ControlHub — backpressure + cleanup", () => {
     expect(sink.closedReason).toBe("snapshot_failed")
   })
 })
+
+describe("ControlHub — heartbeat", () => {
+  test("sends periodic keepalive comments through the single drain", async () => {
+    const hub = new ControlHub({
+      buildSnapshot: snapshotBuilder(),
+      heartbeatMs: 10,
+    })
+    const sink = new FakeSink()
+    await hub.subscribe(sink)
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    hub.dispose()
+
+    const keepalives = sink.rawFrames.filter((frame) => frame.startsWith(":"))
+    expect(keepalives.length).toBeGreaterThanOrEqual(1)
+    expect(keepalives[0]).toContain("keepalive")
+
+    // dispose stopped the timer — no further keepalives arrive.
+    const countAfterDispose = sink.rawFrames.length
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(sink.rawFrames.length).toBe(countAfterDispose)
+  })
+})

@@ -1,6 +1,16 @@
 # Architecture
 
-This is a local proxy that exposes the GitHub Copilot API as both an OpenAI-compatible and Anthropic-compatible HTTP service. It uses GitHub Copilot the same way Opencode's built-in Copilot provider does: authenticate with the user's own Copilot license, route requests to the Copilot endpoint, translate the response shape. The entry point is `src/main.ts` (CLI via `citty`), which dispatches to subcommands: `start`, `auth`, `check-usage`, `debug`.
+`maximal-core` is a **headless** local proxy that exposes the GitHub Copilot
+API as both an OpenAI-compatible and Anthropic-compatible HTTP service. It uses
+GitHub Copilot the same way Opencode's built-in Copilot provider does:
+authenticate with the user's own Copilot license, route requests to the Copilot
+endpoint, translate the response shape. The entry point is `src/main.ts` (CLI
+via `citty`), which dispatches to subcommands: `auth`, `start`, `setup`, `app`,
+`api`, `uninstall`, `check-usage`, `debug`.
+
+There is no UI in core. A decoupled UI tier or desktop app drives the engine
+over the loopback `/control` HTTP + SSE surface (see
+[Control API + live event stream](#control-api--live-event-stream)).
 
 ## Request flow for `/v1/messages` (Anthropic path)
 
@@ -23,41 +33,94 @@ This is a local proxy that exposes the GitHub Copilot API as both an OpenAI-comp
 | Path | Purpose |
 |---|---|
 | `src/server.ts` | Hono app, middleware stack, route registration |
-| `src/lib/` | Shared utilities: config, state, auth, tokens, rate-limit, models, tokenizer, trace |
+| `src/lib/` | Shared utilities: config, state, auth, tokens, rate-limit, models, tokenizer, trace, and the `live/` control hub |
 | `src/routes/` | Route handlers grouped by endpoint family |
+| `src/routes/control/` | The decoupled control API + SSE event stream (loopback-only) |
 | `src/services/` | Upstream API clients (Copilot, GitHub, providers) |
 | `tests/` | All test files (`*.test.ts`), Bun built-in runner |
-| `shell/` | Tauri menu-bar app (Vite frontend + `src-tauri/` Rust shell) wrapping the proxy as a sidecar |
 
-## Middleware stack (in order)
+There is no `shell/`, and no `routes/ui`, `routes/settings`, `routes/ws`, or
+`lib/ws` — those UI surfaces were removed when core was split out. `routes/control`
+is the replacement.
 
-`traceIdMiddleware` → `logger()` → `cors()` → `createAuthMiddleware` (API key validation via `x-api-key` or `Authorization: Bearer`; unauthenticated paths: `/`, `/ui/*`)
+## Mounted routes and middleware stack
+
+`src/server.ts` builds the Hono app. Middleware runs in this order:
+
+`traceIdMiddleware` → version-header stamp (`x-maximal-version`) → `logger()` →
+`cors()` (localhost allowlist, not `*`) → `createOriginGuardMiddleware` (rejects
+a present non-localhost `Origin` on control prefixes) → `createAuthMiddleware`
+(API-key validation via `x-api-key` or `Authorization: Bearer`) →
+`staleRefreshMiddleware` (lazy model-cache refresh, after auth).
+
+Auth exemptions the middleware grants:
+
+- **Unauthenticated paths:** `/`, `/status`, `/_debug/state`, `/setup-status`, `/openapi.json`.
+- **Unauthenticated prefixes:** `/control/*` — the control router enforces loopback itself.
+- **Loopback-only paths:** `/usage`, `/token-usage`, `/token-usage/events`, `/_internal/shutdown` — same-machine callers skip the API-key dance; remote callers still need a key.
+
+Upstream-touching routes (`/chat/completions`, `/models`, `/embeddings`,
+`/responses`, `/v1/*`, `/:provider/v1/*`) are additionally gated on
+`requireGithubAuth`: without a GitHub token the server still listens but these
+answer `401 not_authenticated` instead of crashing.
+
+Mounted routers: `/_debug`, `/_internal`, `/control`, product-API
+(`/setup-status` + `/openapi.json`), `/chat/completions`, `/models`,
+`/embeddings`, `/usage`, `/token-usage`, `/responses`, their `/v1/*`
+aliases, `/v1/messages`, and the provider-scoped `/:provider/v1/messages`
+and `/:provider/v1/models`.
 
 ## Model routing
 
-`src/lib/models/models.ts` normalizes Claude model IDs via 5 regex patterns (handles variants like `claude-opus-4-6`, `claude-opus-4.6`). The `useMessagesApi` config flag (default `true`) controls whether Claude-family models use the native Messages API or fall back to Chat Completions.
+`src/lib/models/models.ts` normalizes Claude model IDs via regex patterns
+(handles variants like `claude-opus-4-6`, `claude-opus-4.6`). The
+`useMessagesApi` config flag (default `true`) controls whether Claude-family
+models use the native Messages API or fall back to Chat Completions.
 
 ## Config and state
 
 - `src/lib/config/config.ts` — `AppConfig` shape, disk read/write from `~/.local/share/maximal/config.json` (Linux/macOS) or `%USERPROFILE%\.local\share\maximal\config.json` (Windows). Also respects `COPILOT_API_HOME` env var.
 - `src/lib/config/config-schema.ts` — zod runtime validation. Bad config → exit non-zero with key path. Unknown keys → warning, kept via `.loose()`.
 - `src/lib/runtime-state/state.ts` — singleton mutable state: tokens, accountType, rate-limit, models cache.
-- `src/lib/auth/github-token-store.ts` — the GitHub identity store. Multi-account registry (schema v2) at `accounts.json` beside the legacy `github_token`: `{ activeKey, accounts: Record<"login@host", AccountRecord> }`, atomic temp+rename writes. Boot reads the active account; the legacy single-record file is migrated in once (gated, offline→`unknown@host`) and kept as a rollback fallback. The three sign-in producers (device-code, CLI, gh-reuse) all persist a typed `AccountRecord`; switch/remove + the `/settings/api/accounts` routes drive quick-switch (set active → reboot the sidecar into it). Sign-out forgets the active account; Remove forgets a specific one; both touch only maximal's own copy — never `gh`. RMW takes no lock (safe on the single Bun sidecar; see the comment above `addAccountToDefaultRegistry`).
+- `src/lib/auth/github-token-store.ts` — the GitHub identity store. Multi-account registry (schema v2) at `accounts.json` beside the legacy `github_token`: `{ activeKey, accounts: Record<"login@host", AccountRecord> }`, atomic temp+rename writes. Boot reads the active account; the legacy single-record file is migrated in once (gated, offline→`unknown@host`) and kept as a rollback fallback. The three sign-in producers (device-code, CLI, gh-reuse) all persist a typed `AccountRecord`. The `/control/accounts/switch` and `/control/accounts/remove` actions edit this registry (set active → a reconnect/restart adopts it). Sign-out forgets the active account; Remove forgets a specific one; both touch only maximal's own copy — never `gh`. RMW takes no lock (safe on the single Bun process; see the comment above `addAccountToDefaultRegistry`).
 - `src/lib/auth/secrets.ts` — file-based provider keys at `~/.local/share/maximal/secrets/<name>` (mode 0600). Env wins; file fills in unset values.
 - `src/lib/runtime-state/cache.ts` — `Cache<K,V>` LRU wrapper with hit/miss/eviction metrics. Wrapped instances register globally for `/_debug/state`.
+
+## Control API + live event stream
+
+Core is headless: sign-in is CLI-only and the engine serves no UI. A decoupled
+UI-server tier or desktop app consumes core over the loopback `/control`
+surface (Ollama-style), which replaces the removed `/settings/api` request API
+and `/ws` live feed. Full contract in
+[`docs/spec/control-api.md`](spec/control-api.md).
+
+- **Reads** (`src/routes/control/route.ts`): `GET /control/{auth,accounts,apps,models,usage,config,clients}` — each mirrors a live topic; a topic's event `data` is byte-identical to its GET body.
+- **Actions:** `POST /control/accounts/switch`, `POST /control/accounts/remove` — serialized through an `AsyncMutex`; each broadcasts the resulting accounts list.
+- **Live stream:** `GET /control/events` (SSE). A single `ControlHub` (`src/lib/live/hub.ts`) owns the monotonic cursor, replay ring, epoch, and fan-out; the HTTP route is a thin adapter. On connect it emits a `snapshot` frame under lock, then full-resource upsert deltas per topic. `Last-Event-ID` + `epoch` resume from the ring (K8s list-watch semantics); a gap past the ring forces a re-snapshot.
+- **Loopback gate:** the whole `/control` surface re-checks the caller IP itself — a remote caller gets `404`, exactly like `/_internal`. Cross-origin browser requests are additionally 403'd by the Origin guard.
 
 ## Diagnostic surfaces
 
 - **`maximal debug`** (and `--json`) — effective config, executor selection (which `Executor` `selectExecutor()` would pick), secret sources (env/file/config/unset, never values), paths.
 - **`GET /_debug/state`** — live equivalent on a running proxy. 404 by default; gated on `state.verbose`. Useful when restart isn't an option.
+- **`GET /status`** — unauthenticated identity + liveness probe (`service: "maximal"`, per-subsystem health; safe-for-unauth booleans/counts only).
 - **Daily log** at `~/.local/share/maximal/logs/messages-handler-<date>.log` — request payloads, translated SSE events, web-tools agent traces. 7-day retention.
+
+## Token counting
+
+`/v1/messages/count_tokens`: when `anthropicApiKey` is configured, forwards
+Claude model requests to Anthropic's free `/v1/messages/count_tokens` endpoint
+for exact counts. Otherwise falls back to GPT `o200k_base` tokenizer with 1.15x
+multiplier (`src/lib/models/tokenizer.ts`).
 
 ## Parallel-agent convention
 
-This repo can collide on a shared working tree (lint-staged stash + concurrent merge ate a turn already). For parallel agents:
+This repo can collide on a shared working tree (lint-staged stash + concurrent
+merge ate a turn already). For parallel agents:
+
 - **Spawned subagents:** pass `isolation: "worktree"` to the Agent tool.
-- **Sessions:** create a worktree manually with `git worktree add ../maximal-<task> -b agent/<task>`; clean up with `git worktree remove ../maximal-<task>` after merging back. `git worktree add` does **not** run `bun install`, so the gitignored `src/generated/ui-embed.ts` stub won't exist — the gates now self-heal it (`check:fast` and the test preload call `ensure:ui-embed`), but run `bun install` in the new tree anyway if you need its node_modules.
-- **Never run `git stash pop` in a shared working tree.** It silently merges another in-flight worker's stash into your tree, and on conflict it leaves an inconsistent state that's easy to "clean up" by `rm`-ing files that aren't yours. We lost a session's worth of React-shell work to this exact path: a subagent ran `git stash pop` to bisect a test failure, hit a conflict, and `rm`'d untracked files it didn't recognize. If you need an isolated bisect, use a worktree (see above). If you must inspect a stash, use `git stash show -p stash@{N}` (read-only) and never `pop` / `apply` outside an isolated tree.
+- **Sessions:** create a worktree manually with `git worktree add ../maximal-<task> -b agent/<task>`; clean up with `git worktree remove ../maximal-<task>` after merging back. `git worktree add` does **not** run `bun install`, so run it in the new tree if you need its node_modules.
+- **Never run `git stash pop` in a shared working tree.** It silently merges another in-flight worker's stash into your tree, and on conflict it leaves an inconsistent state that's easy to "clean up" by `rm`-ing files that aren't yours. If you need an isolated bisect, use a worktree. If you must inspect a stash, use `git stash show -p stash@{N}` (read-only) and never `pop` / `apply` outside an isolated tree.
 
 See also: `docs/codegen-feedback-loops-practices.md` → Dispatch and review loops.
 
@@ -110,11 +173,3 @@ See also: `docs/codegen-feedback-loops-practices.md` → Dispatch and review loo
   unrecognized token and release-please skips it — even if the diff
   contains a real `fix:`. Title PRs accordingly; the body's individual
   commit messages don't reach `main` through a squash.
-
-## Tauri shell
-
-`shell/` is a Tauri 2 menu-bar app that wraps the proxy for non-CLI users. `bun run app:sidecar` builds the UI (`bun run build:ui`), regenerates the embed manifest, and compiles the standalone proxy binary into `shell/src-tauri/binaries/`. Tauri launches it as a sidecar bound to `127.0.0.1:4141`. The settings (React, Bun-bundled) and dashboard (vanilla) UIs live in `shell/ui/{settings,dashboard}` and are **embedded in the sidecar binary**, served by the proxy at `/ui/settings` and `/ui/dashboard` (`src/routes/ui/route.ts`) — from `shell/dist` on disk in dev, from `$bunfs` in the compiled binary. The webview windows point at those `/ui/*` URLs; legacy `/settings` and `/usage-viewer` 301-redirect to them. No Vite — Bun is the bundler.
-
-## Token counting
-
-`/v1/messages/count_tokens`: when `anthropicApiKey` is configured, forwards Claude model requests to Anthropic's free `/v1/messages/count_tokens` endpoint for exact counts. Otherwise falls back to GPT `o200k_base` tokenizer with 1.15x multiplier (`src/lib/models/tokenizer.ts`).

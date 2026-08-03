@@ -20,6 +20,9 @@ import { getTokenUsageSummary, onTokenUsageRecorded } from "~/lib/token-usage"
  *  frame — collapses a per-request storm into at most one delta per tick. */
 const USAGE_FLUSH_MS = 1000
 
+/** Keepalive cadence for connected SSE clients. */
+const HEARTBEAT_MS = 15_000
+
 let hub: ControlHub<ControlSnapshot> | null = null
 let teardown: Array<() => void> = []
 
@@ -27,6 +30,7 @@ export function getControlHub(): ControlHub<ControlSnapshot> {
   if (hub) return hub
   const created = new ControlHub<ControlSnapshot>({
     buildSnapshot: buildControlSnapshot,
+    heartbeatMs: HEARTBEAT_MS,
   })
 
   teardown.push(
@@ -72,5 +76,6 @@ export function getControlHub(): ControlHub<ControlSnapshot> {
 export function stopControlHub(): void {
   for (const stop of teardown) stop()
   teardown = []
+  hub?.dispose()
   hub = null
 }

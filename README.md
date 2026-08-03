@@ -1,85 +1,71 @@
-# maximal
+# maximal-core
 
-Local proxy that lets Anthropic-API and OpenAI-API clients (Claude Code,
-Claude Desktop in Cowork mode, Codex, etc.) talk to GitHub Copilot's
-backend, including GitHub Enterprise deployments. It adds a server-side
-web-tools agent loop, model-id rewriting for Claude Desktop's picker,
-and an Ollama Cloud–backed search/fetch executor.
+The headless proxy core of [maximal](https://github.com/stuffbucket/maximal).
+A local HTTP proxy that lets Anthropic-API and OpenAI-API clients (Claude
+Code, Codex, and similar) talk to GitHub Copilot's backend, including GitHub
+Enterprise deployments. It adds a server-side web-tools agent loop, model-id
+rewriting, and an Ollama Cloud–backed search/fetch executor.
+
+This package (`@stuffbucket/maximal-core`) is **headless** — there is no UI,
+no menu-bar shell, and it serves no browser pages. It exposes a decoupled
+`/control` HTTP + SSE API that a separate UI tier or desktop app consumes over
+loopback (Ollama-style). See [Relation to `maximal`](#relation-to-maximal).
 
 ## What this gives you
 
-Run the proxy locally, point your client at it, and Copilot serves the
-model. Claude Code thinks it's talking to `api.anthropic.com`; Codex
-thinks it's talking to `api.openai.com`; both are actually hitting GHC.
-GHE is supported via `COPILOT_API_ENTERPRISE_URL`.
+Run the proxy locally, point your client at it, and Copilot serves the model.
+Claude Code thinks it's talking to `api.anthropic.com`; Codex thinks it's
+talking to `api.openai.com`; both are actually hitting GitHub Copilot. GHE is
+supported via `COPILOT_API_ENTERPRISE_URL`.
 
-Server-side web tools (`web_search_20250305`, `web_fetch_20250910`)
-that Copilot rejects natively are resolved by an internal agent loop:
-the proxy strips the server-side declaration, substitutes a
-client-side shim, drives the model through tool round-trips with
-Copilot, and synthesizes the Anthropic-shaped result blocks back to
-the client. Set `OLLAMA_API_KEY` to enable real search via ollama.com's
-hosted endpoints; otherwise search returns `unavailable` and fetch
-runs in-process.
+Server-side web tools (`web_search_20250305`, `web_fetch_20250910`) that
+Copilot rejects natively are resolved by an internal agent loop: the proxy
+strips the server-side declaration, substitutes a client-side shim, drives the
+model through tool round-trips with Copilot, and synthesizes the
+Anthropic-shaped result blocks back to the client. Set `OLLAMA_API_KEY` to
+enable real search via ollama.com's hosted endpoints; otherwise search returns
+`unavailable` and fetch runs in-process.
 
-## Layout
+## Endpoints
 
-```
-src/                       Proxy source (request handlers, web-tools agent,
-                           id rewriter, executors, services).
-tests/                     bun-test suites.
-docs/admin/                MDM reference, Cowork client config notes.
-docs/spec/                 Architecture specs (web-tools, tool-bridge).
-scripts/                   Operator helpers (e.g. install-cowork-egress.sh).
-contrib/                   Read-only reference (opencode-copilot auth pattern,
-                           Ollama anthropic spike).
-LICENSE                    MIT.
-THIRD-PARTY-LICENSE        Bundled-dependency license pointer (npm SBOM)
-                           and site-asset attributions (shaders, sprites).
-```
+All bound to `127.0.0.1:4141` by default.
+
+| Path | Purpose |
+|---|---|
+| `POST /v1/messages`, `/v1/messages/count_tokens` | Anthropic-compatible messages API |
+| `POST /:provider/v1/messages`, `/:provider/v1/models` | Provider-scoped Anthropic-compatible endpoints |
+| `POST /chat/completions`, `/v1/chat/completions` | OpenAI-compatible chat completions |
+| `POST /responses`, `/v1/responses` | OpenAI Responses API |
+| `POST /embeddings`, `/v1/embeddings` | Embeddings |
+| `GET /models`, `/v1/models` | Model catalog |
+| `GET /status` | Identity + liveness probe (unauthenticated) |
+| `GET /control/*`, `GET /control/events` | Decoupled control API + live SSE event stream for a UI (loopback-only) |
+| `GET /_debug/state` | Live effective state, gated on `--verbose` |
+
+The proxy endpoints require a GitHub token (from `maximal auth`); without one
+the server still listens but upstream routes answer `401 not_authenticated`.
 
 ## Install
 
-### Homebrew (macOS, Apple Silicon)
-
-```sh
-brew install stuffbucket/tap/maximal
-```
-
-This taps `stuffbucket/tap` automatically and installs the `maximal`
-command. Authenticate once, then run it in the foreground:
-
-```sh
-maximal auth --verbose                       # one-time device flow
-maximal start --account-type enterprise      # listen on :4141
-```
-
-Or run it as a login-persistent background service (logs to
-`$(brew --prefix)/var/log/maximal.log`):
-
-```sh
-brew services start maximal
-```
-
-Upgrade later with:
-
-```sh
-brew update && brew upgrade maximal
-```
-
-> The formula is Apple-Silicon-only — there is no Intel (`darwin-x64`)
-> build. On other platforms, run from source (below) or download a
-> binary from the
-> [latest release](https://github.com/stuffbucket/maximal/releases/latest).
-
-## Run
-
-From source (for development), substitute `maximal` with `bun run ./src/main.ts`:
+`maximal-core` is published as `@stuffbucket/maximal-core` and installs the
+`maximal` command (`dist/main.js`). Run from source for development:
 
 ```sh
 bun install
 bun run ./src/main.ts auth --verbose                       # one-time device flow
 bun run ./src/main.ts start --account-type enterprise      # listen on :4141
+```
+
+Build a standalone bundle with `bun run build` (`bun build src/main.ts
+--target=bun --outdir dist`).
+
+## Run
+
+Sign in once with the CLI device-code flow, then start the proxy:
+
+```sh
+maximal auth --verbose                       # one-time device flow
+maximal start --account-type enterprise      # listen on :4141
 ```
 
 Then point Claude Code at the proxy:
@@ -91,10 +77,12 @@ ANTHROPIC_MODEL=claude-sonnet-4-6-20260301 \
 claude
 ```
 
+The CLI (`src/main.ts`, via `citty`) dispatches these subcommands: `auth`,
+`start`, `setup`, `app`, `api`, `uninstall`, `check-usage`, `debug`.
+
 ## Configuration
 
-Settings can be supplied through five sources. Higher in the list
-wins:
+Settings can be supplied through five sources. Higher in the list wins:
 
 | # | Source | Lifetime | Notes |
 |---|---|---|---|
@@ -102,7 +90,10 @@ wins:
 | 2 | **Environment variables** | shell scope | `OLLAMA_API_KEY`, `ANTHROPIC_API_KEY`, `COPILOT_API_HOME`, `COPILOT_API_ENTERPRISE_URL`, `COPILOT_API_OAUTH_APP`. Bun also auto-loads `.env`. |
 | 3 | **Secrets files** | persistent, mode 0600 | `~/.local/share/maximal/secrets/<provider>` (e.g. `secrets/ollama`). Refused if mode is broader than 0600. |
 | 4 | **Config file** | persistent | `~/.local/share/maximal/config.json`. Schema-validated at boot; bad keys fail with a key path. Unknown keys warn but pass through. |
-| 5 | **Built-in defaults** | always | `src/lib/config.ts`. |
+| 5 | **Built-in defaults** | always | `src/lib/config/config.ts`. |
+
+The XDG home (`~/.local/share/maximal`, overridable via `COPILOT_API_HOME`)
+and config are shared with the parent `maximal` app.
 
 ### Knob reference
 
@@ -135,20 +126,41 @@ curl http://localhost:4141/_debug/state | jq    # only when running with --verbo
 Secrets are masked everywhere — the debug output reports `<env>` /
 `<file>` / `<config>` / `<unset>`, never the value.
 
+## Relation to `maximal`
+
+`maximal-core` was extracted from
+[`stuffbucket/maximal`](https://github.com/stuffbucket/maximal) to hold only
+the headless proxy engine. The UI that used to live in the parent repo (the
+Tauri menu-bar shell, the React settings UI, and the engine-served `/ui`,
+`/settings/api`, and `/ws` surfaces) is **not** part of core. In its place,
+core exposes the decoupled `/control` API + SSE event stream
+([`docs/spec/control-api.md`](docs/spec/control-api.md)) so a separate
+UI-server tier or desktop app can drive it over loopback HTTP, the same way a
+client talks to Ollama. Auth is CLI-only (`maximal auth`, device-code flow).
+
+## Layout
+
+```
+src/                       Proxy source: CLI, routes, lib, services.
+src/routes/                HTTP handlers grouped by endpoint family.
+src/lib/                   Shared utilities (config, auth, http, models, live/control hub).
+src/services/              Upstream API clients (Copilot, GitHub, providers).
+tests/                     bun-test suites.
+docs/spec/                 Feature specs (control-api, web-tools, tool-bridge).
+docs/admin/                Operator/MDM reference.
+scripts/                   Operator helpers.
+LICENSE                    MIT.
+THIRD-PARTY-LICENSE        Bundled-dependency license pointer (npm SBOM).
+```
+
 ## Releasing
 
-`docs/release-runbook.md` is the canonical checklist. Releases are
-automated by release-please: conventional commits on `main` accrue
-into an open "release PR" that bumps the version and updates
-`CHANGELOG.md`; merging it tags `vX.Y.Z`, which fires `release.yml` to
-build, sign, verify, and publish every installer. `bun run
-release:manual` (the old `bumpp` + `bun publish` path) remains as a
-local fallback. From a developer Mac, `bun run release:dmg` adds the
-polished `.dmg` to a release.
+`docs/release-runbook.md` is the canonical checklist. Releases are automated by
+release-please: conventional commits on `main` accrue into an open "release PR"
+that bumps the version and updates `CHANGELOG.md`; merging it tags `vX.Y.Z`.
 
 ## Status
 
-Pre-alpha. Functional end-to-end against x3-design enterprise. See
-`docs/spec/archive/web-tools.md` for the agent-loop spec,
-`docs/admin/claude-desktop-mdm.md` for Cowork-side configuration, and
-`docs/spec/archive/internal-distribution.md` for the v1 distribution plan.
+Pre-alpha. Functional end-to-end against enterprise Copilot. See
+`docs/spec/control-api.md` for the control surface and
+`docs/spec/archive/web-tools.md` for the agent-loop spec.

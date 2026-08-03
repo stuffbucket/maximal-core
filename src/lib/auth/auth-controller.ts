@@ -416,33 +416,6 @@ export async function startDeviceFlow(): Promise<AuthStatus> {
   }
 }
 
-/**
- * Cancel an in-flight device-code flow WITHOUT signing out. Aborts the
- * poller and returns to wherever the flow started from: the prior signed-in
- * account if there was one (so "sign in as a different account" → Cancel
- * keeps you on your current account), otherwise signed-out (first-run
- * cancel → the sign-in screen). The existing token/registry were never
- * touched by starting the flow, so the restored session is fully live.
- *
- * No-op (returns the current status) when there is no active flow.
- */
-export function cancelDeviceFlow(): AuthStatus {
-  const flow = currentFlow()
-  if (!flow) return getAuthStatus()
-  flow.abort.abort()
-  setAuthState(
-    flow.resume ?
-      {
-        kind: "signed-in",
-        login: flow.resume.login,
-        avatarUrl: flow.resume.avatarUrl,
-        connectedSinceMs: flow.resume.connectedSinceMs,
-      }
-    : { kind: "signed-out" },
-  )
-  return getAuthStatus()
-}
-
 // Single-flight by construction: this is only invoked from
 // startDeviceFlow() after a fresh AbortController is installed on a
 // fresh ActiveFlow. The "race condition" the linter flags is the
