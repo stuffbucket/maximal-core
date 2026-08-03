@@ -14,11 +14,10 @@ import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 
 import { getAuthStatus } from "~/lib/auth/auth-controller"
-import { preflightCopilotError } from "~/lib/auth/copilot-preflight"
+import { activateAccountLive } from "~/lib/auth/auth-recovery"
 import {
   readDefaultRegistry,
   removeAccount,
-  setActive,
   writeDefaultRegistry,
 } from "~/lib/auth/github-token-store"
 import { defaultGetRequestIp, isLoopbackAddress } from "~/lib/auth/request-auth"
@@ -154,19 +153,12 @@ function registerAccountActions(
         if (!key) {
           return c.json({ error: { message: "Expected { key } string." } }, 400)
         }
-        const reg = await readDefaultRegistry()
-        if (!(key in reg.accounts)) {
-          return c.json({ error: { message: `No account ${key}.` } }, 404)
+        // Live switch: mint the Copilot token, commit active, refresh models,
+        // emit auth.changed — the running proxy adopts the account, no restart.
+        const result = await activateAccountLive(key)
+        if (!result.ok) {
+          return c.json({ error: { message: result.message } }, result.status)
         }
-        const target = reg.accounts[key]
-        const preflightError = await preflightCopilotError(
-          target.token,
-          target.login,
-        )
-        if (preflightError) {
-          return c.json({ error: { message: preflightError } }, 422)
-        }
-        await writeDefaultRegistry(setActive(reg, key))
         hub().emit("accounts", await buildAccountsList())
         return c.json({ ok: true, key })
       } catch (error) {

@@ -17,6 +17,7 @@ import {
 import {
   __resetAuthRecoveryDepsForTests,
   __setAuthRecoveryDepsForTests,
+  activateAccountLive,
   attemptAutoRecovery,
 } from "~/lib/auth/auth-recovery"
 import {
@@ -207,5 +208,46 @@ describe("markAuthDegraded → auto-recovery wiring", () => {
     )
 
     expect(getAuthStatus()).toMatchObject({ state: "error", error: "revoked" })
+  })
+})
+
+describe("activateAccountLive (user-initiated switch)", () => {
+  test("switches live to the chosen account and signs in", async () => {
+    // bob active, alice inactive; the user switches to alice.
+    const reg = addAndActivate(
+      addAndActivate(emptyRegistry(), rec("alice")),
+      rec("bob"),
+    )
+    await writeDefaultRegistry(reg)
+
+    const result = await activateAccountLive(key("alice"))
+
+    expect(result.ok).toBe(true)
+    expect(harness.setupSawToken).toBe("ghu_alice") // minted with alice's token
+    expect(getAuthStatus().state).toBe("authenticated")
+    expect((await readDefaultRegistry()).activeKey).toBe(key("alice"))
+  })
+
+  test("404 for an unknown account key", async () => {
+    const result = await activateAccountLive("ghost@github.com")
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.status).toBe(404)
+      expect(result.message).toContain("No account")
+    }
+  })
+
+  test("422 when the target fails preflight (never mints)", async () => {
+    await writeDefaultRegistry(addAndActivate(emptyRegistry(), rec("alice")))
+    harness.preflight = () => Promise.resolve("quota exhausted")
+
+    const result = await activateAccountLive(key("alice"))
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.status).toBe(422)
+      expect(result.message).toBe("quota exhausted")
+    }
+    expect(harness.setupSawToken).toBeUndefined()
   })
 })

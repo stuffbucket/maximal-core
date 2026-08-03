@@ -116,6 +116,41 @@ async function switchActiveAccountLive(
 }
 
 /**
+ * User-initiated live account switch. Unlike `attemptAutoRecovery` (gated,
+ * iterates candidates), this activates the ONE account the user explicitly
+ * chose — that explicit choice IS the governance authorization the auto-sweep
+ * gates on, so it runs regardless of `config.autoRecoverAccount`. Preflights the
+ * target, then live-switches (mint + commit-active + refresh-models + emit), so
+ * the running proxy adopts the account with no restart. Returns an error
+ * descriptor rather than throwing so the caller maps it to an HTTP status.
+ */
+export async function activateAccountLive(
+  accountKeyToActivate: string,
+): Promise<{ ok: true } | { ok: false; status: 404 | 422; message: string }> {
+  const reg = await readDefaultRegistry()
+  if (!(accountKeyToActivate in reg.accounts)) {
+    return {
+      ok: false,
+      status: 404,
+      message: `No account ${accountKeyToActivate}.`,
+    }
+  }
+  const record = reg.accounts[accountKeyToActivate]
+  const preErr = await preflight(record.token, record.login)
+  if (preErr) return { ok: false, status: 422, message: preErr }
+  try {
+    await switchActiveAccountLive({ ...record, key: accountKeyToActivate })
+    return { ok: true }
+  } catch (err) {
+    return {
+      ok: false,
+      status: 422,
+      message: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
+/**
  * Try to recover onto a known-good account. Iterates every account that isn't
  * the just-failed active one and isn't already flagged `needsReauth`, preflights
  * each, and live-switches to the first that passes. A candidate that fails
