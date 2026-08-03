@@ -18,6 +18,21 @@
   "license": "MIT",
   "author": "stuffbucket",
   "type": "module",
+  "exports": {
+    "./client": {
+      "types": "./dist/lib/client.d.ts",
+      "import": "./dist/lib/client.js"
+    },
+    "./contract": {
+      "types": "./dist/lib/contract.d.ts",
+      "import": "./dist/lib/contract.js"
+    },
+    "./package.json": "./package.json",
+    "./settings-types": {
+      "types": "./dist/lib/settings-types.d.ts",
+      "import": "./dist/lib/settings-types.js"
+    }
+  },
   "bin": {
     "maximal": "./dist/main.js"
   },
@@ -26,6 +41,7 @@
   ],
   "scripts": {
     "build": "bun build src/main.ts --target=bun --outdir dist",
+    "build:lib": "tsup",
     "casts": "bun run scripts/find-casts.ts",
     "casts:check": "bun run scripts/find-casts.ts --check",
     "check:deep": "bun run check:fast && bun test && bun run knip",
@@ -39,7 +55,7 @@
     "lint:fast": "oxlint",
     "measure:baseline": "bun scripts/dev/measure-baseline.ts",
     "mutate": "stryker run",
-    "prepack": "bun run build",
+    "prepack": "bun run build && bun run build:lib",
     "prepare": "simple-git-hooks",
     "release:manual": "bumpp && bun publish --access public",
     "sbom": "bun scripts/sbom.ts",
@@ -91,6 +107,7 @@
     "oxlint": "^1.63.0",
     "prettier-plugin-packagejson": "^2.5.19",
     "simple-git-hooks": "^2.13.1",
+    "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   },
   "engines": {
