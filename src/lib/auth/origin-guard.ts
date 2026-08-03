@@ -48,7 +48,7 @@ export const CSRF_GUARDED_PREFIXES = [
   "/settings/api",
   "/_internal",
   "/_debug/state",
-  "/ws",
+  "/control",
 ] as const
 
 /**

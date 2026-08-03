@@ -18,6 +18,7 @@ import { getModelsLoadedAtMs, state } from "./lib/runtime-state/state"
 import { buildStatus } from "./lib/runtime-state/status"
 import { BUILD_VERSION } from "./lib/update/build-info"
 import { completionRoutes } from "./routes/chat-completions/route"
+import { controlRoutes } from "./routes/control/route"
 import { debugRoutes } from "./routes/debug/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
 import { internalRoutes } from "./routes/internal/route"
@@ -74,6 +75,11 @@ server.use(
       // served alongside the fresh-install `/setup-status` surface.
       "/openapi.json",
     ],
+    // The /control/* surface (control API + SSE event stream) is for a
+    // same-machine UI. It's exempt from the API-key dance; the control router
+    // enforces loopback itself (a remote caller gets 404) and the Origin guard
+    // 403s cross-origin browser requests.
+    allowUnauthenticatedPrefixes: ["/control"],
     // Loopback callers on the same machine skip the API-key dance for these
     // local-only endpoints; remote callers still need a valid API key.
     loopbackOnlyPaths: [
@@ -121,6 +127,9 @@ server.get("/status", (c) => c.json(buildStatus(SERVER_START_MS)))
 
 server.route("/_debug", debugRoutes)
 server.route("/_internal", internalRoutes)
+// The decoupled control API + live SSE event stream for a same-machine UI.
+// Loopback-gated inside the router. See src/routes/control/route.ts.
+server.route("/control", controlRoutes)
 // The maximal-specific product API surface: `/setup-status` plus its
 // route-bound OpenAPI document at `/openapi.json`. See routes/product-api.ts.
 server.route("/", productApiRoutes)
