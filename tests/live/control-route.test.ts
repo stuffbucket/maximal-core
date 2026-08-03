@@ -153,3 +153,36 @@ describe("control route — auth flow", () => {
     expect((await makeApp().request("/update-status")).status).toBe(200)
   })
 })
+
+describe("control route — settings endpoints", () => {
+  test("api-keys create → list → delete round-trips", async () => {
+    const app = makeApp()
+    const created = await app.request("/api-keys", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ label: "test-key", key: "testkey123" }),
+    })
+    expect(created.status).toBe(201)
+    const entry = (await created.json()) as { id: string; key: string }
+    expect(entry.key).toBe("testkey123")
+
+    const list = (await (await app.request("/api-keys")).json()) as {
+      entries: Array<{ id: string }>
+    }
+    expect(list.entries.some((e) => e.id === entry.id)).toBe(true)
+
+    const del = await app.request(`/api-keys/${entry.id}`, { method: "DELETE" })
+    expect(del.status).toBe(204)
+  })
+
+  test("GET /diagnostics returns version + token presence", async () => {
+    const res = await makeApp().request("/diagnostics")
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      version: string
+      tokens: { github_token_present: boolean }
+    }
+    expect(typeof body.version).toBe("string")
+    expect(typeof body.tokens.github_token_present).toBe("boolean")
+  })
+})

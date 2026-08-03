@@ -44,6 +44,8 @@ import { emitQuitRequest, emitUpdateRequest } from "~/lib/start/boot-status"
 import { getTokenUsageSummary } from "~/lib/token-usage"
 import { getUpdateStatus } from "~/lib/update/update-check"
 
+import { registerSettingsEndpoints } from "./settings-endpoints"
+
 type HubAccessor = () => ControlHub<ControlSnapshot>
 
 export interface ControlRoutesOptions {
@@ -261,6 +263,7 @@ export function createControlRoutes(options: ControlRoutesOptions = {}): Hono {
   registerEventStream(app, hub)
   registerReads(app)
   registerAuthActions(app)
+  registerSettingsEndpoints(app)
   registerShellSignals(app)
   registerAccountActions(app, hub, new AsyncMutex())
 
