@@ -159,26 +159,78 @@ These are documented in `docs/architecture.md` → *Testing gotchas* and expande
 here because they are the failure modes most likely to bite a reviewer or a new
 contributor.
 
-### 5.1 `mock.module` persists forward across files in a run — now lint-enforced
+### 5.1 `mock.module` persists forward across files in a run — partly lint-enforced
 Bun does **not** reset module mocks between test files, and CI orders files
 differently than local. An unrestored mock leaks its stub into a *sibling* file
 that then reads stale state — passing locally but failing in CI (or vice versa).
-This bit the project **four times** (culminating in a long #229 debugging loop).
+This bit the project **four times** (culminating in a long #229 debugging loop),
+then a fifth (#27).
+
+**Why an `afterAll` restore cannot fix this.** Bun evaluates **every** test
+file's module body during startup, before the first test runs. A six-file probe
+on Bun 1.3.11 produced this order:
+
+```
+PROBE-EVAL d / e / f / c / b / a     <- all six module bodies
+PROBE-TEST a done                    <- only then does the first test run
+PROBE-AFTERALL a done                <- teardown is last
+```
+
+So a `mock.module` installed at module scope is visible to every sibling that
+statically imports that module, and an `afterAll` restore is **structurally
+incapable** of preventing it: by the time teardown runs, every sibling has
+already linked whatever was installed. Which file wins is decided by loader
+scheduling during the eval phase, which is why the class flips between machines.
+Earlier revisions of this section said an awaited restore "does not reliably
+land" — that understated it. It is not a weak mitigation; it is not a mitigation.
+Keep the restore as cleanup for anything that reads the module *later* (a
+dynamic import, a lazy require), but never count it as protection.
+
+**Reproduce it deterministically.** `bun test --randomize --seed N` shuffles both
+file order and within-file test order, and prints the seed it used in the run
+summary (`--seed=…`) whether the run passes or fails — so a failure is always
+replayable. This is the tool for this whole class, including the non-mock
+variants in §5.6.
+
 **Mitigations, in order of strength:**
-- **Lint rule (enforced).** `mockModuleLeakGuard` (`eslint.config.js`, scoped to
-  `tests/**`) errors on the fire-and-forget forms — `void mock.module(...)` and
-  a bare `mock.module(...)` expression statement.
-- **Awaited is *not* automatically safe.** `await mock.module(...)` passes the
-  rule, but an awaited `afterAll` *restore* does **not** reliably land before the
-  next file's static imports on CI — so a mock of a *shared* module still leaks.
-  The rule catches the common footgun, not this one.
 - **Durable fix: don't mock a shared module across files.** Prefer the **real**
   module — the preload redirects `COPILOT_API_HOME` to a temp dir and
   `getClaudeCodeSettingsPath()` honors `CLAUDE_CONFIG_DIR`, so config/settings
-  round-trips are already isolated — or **injectable function options**. Only
-  stub a module with no env/injection seam, keep the wrapper behaviorally
-  identical (`...actual` / forward `...rest`), and prove with a sequential-import
-  repro that it can't break a later file.
+  round-trips are already isolated — or **injectable function options**
+  (`__setServeForTests`, `__setBootSecretsForTests`). Only stub a module with no
+  env/injection seam, keep the wrapper behaviorally identical (`...actual` /
+  forward `...rest`), and prove with `--randomize` over a spread of seeds that it
+  can't break a later file.
+- **Never stub a *data* export.** All 24 `mock.module` sites were audited in #27:
+  every one replaces *function* exports and spreads `...real` — except the one
+  that stubbed a data table (`SECRET_DEFS: []`), which is the one that caused the
+  outage. The asymmetry is the whole lesson. A leaked function stub gets
+  **called** by the sibling and usually throws or returns an obviously wrong
+  shape — loud, and near the cause. A leaked empty array is **read** silently and
+  yields a plausible wrong answer: `anthropic-key-precedence` saw an empty
+  secrets table and concluded, reasonably and wrongly, that no
+  `secrets/anthropic` entry existed. Expose a DI seam for the value instead.
+- **Lint rule (enforced, and honest about its limits).** `mockModuleLeakGuard`
+  (`eslint.config.js`, scoped to `tests/**`) enforces three things:
+  1. the fire-and-forget forms — `void mock.module(...)` and a bare
+     `mock.module(...)` expression statement. **Its justification is now
+     narrower than it was:** an unawaited install is not guaranteed to have
+     landed before the same file's next `await import(...)`, so the file can
+     exercise the real module while believing it stubbed one. It says nothing
+     about leaks, and the rule's message no longer claims otherwise.
+  2. stubbing a non-function export with a literal value (array / string /
+     number / boolean / template) — the silent-corruption shape above. Object
+     literals are deliberately **not** matched: `default: { ...real.default, fn }`
+     is a function override nested one level down and four legitimate sites use
+     it, and a rule that cries wolf gets suppressed and then enforces nothing.
+  3. a deny-list of modules a sibling is known to read passively — today `srvx`
+     and `~/lib/auth/secrets`. Membership is earned by an incident.
+
+  **What it cannot enforce, by construction:** whether any *given* `mock.module`
+  is safe. That depends on whether another file in the run imports the mocked
+  module and when it reads the binding — a property of the whole run's module
+  graph, not of the call site. No selector decides it. Treat a green lint as
+  "the known footguns are absent", never as "this mock was checked".
 
 This discipline is the decision of
 [ADR-0011](../decisions/0011-mock-module-leakage-discipline.md). Two parts of
@@ -186,9 +238,9 @@ that ADR remain authoritative: **prefer DI / injectable options over
 `mock.module`** for any shared module, and the **wrapper rule** (forward
 `...rest`, preserve return shape) when a stub is unavoidable. What actually
 *shipped* for enforcement is narrower than the ADR's original proposal — there
-is no `tests/helpers/` allowlist; the lint rule bans only the fire-and-forget
-forms and requires an awaited install + awaited `afterAll` restore. See the
-ADR's addendum for the full reconciliation.
+is no `tests/helpers/` allowlist. Note the ADR's "awaited install + awaited
+`afterAll` restore" is **superseded** by the eval-order finding above: the
+restore is cleanup, not a guarantee.
 
 ### 5.2 Spies leak too
 `spyOn` has the same cross-file hazard as `mock.module`: a spy left unrestored
@@ -224,6 +276,40 @@ A `git worktree` created for isolated work has no `node_modules` — `git worktr
 add` does not run an install. Run `bun install` (matches the lockfile) in the new
 tree before `bun run typecheck` or `bun test`, or imports fail with an opaque
 missing-module error.
+
+### 5.6 Module-level runtime state leaks the same way mocks do
+`mock.module` is the famous case, but it is a *special case* of a wider one:
+anything held at module scope is shared by every test file in the Bun worker.
+`src/` is full of legitimate process-global singletons — an active-clients Map, a
+single-flight guard, a prime cooldown, a models cache, and the whole `state`
+object — and each is one shared mutable object for the whole run. Two
+symmetrical bugs follow, and this project has shipped both (three times, in the
+one PR that added this section):
+
+- **A writer that resets only `beforeEach`** leaves whatever the *last-executed*
+  test recorded visible to every later file. Under the declared order the file
+  usually happens to end on a test that wrote nothing, so it looks clean;
+  `--randomize` removes the coincidence.
+- **A reader that resets only `afterEach`** inherits the previous *file's* state
+  for its own first-executed test, because `afterEach` has not run yet. Same
+  coincidence, mirrored.
+
+**Rules:**
+1. If a test touches process-global state, reset it in **both** `beforeEach` and
+   `afterEach`. One-sided cleanup is correct only by accident of ordering.
+2. Better, remove the dependency: a test that asserts "the roster is empty" is
+   asserting about every other file in the run. Take the state through an
+   injectable option (`ControlRoutesOptions.listClients`) so the assertion is
+   about the code under test, and let a dedicated unit test own the real
+   singleton.
+3. Note the failure often surfaces nowhere near the leak. A leftover
+   `state.rateLimitSeconds` makes `checkRateLimit` 429 an unrelated
+   `/responses` test whose body assertion then fails on `undefined` — the stack
+   names the victim, never the writer. When a `--randomize` failure makes no
+   local sense, look for a global the file reads but never sets.
+4. `bun test --randomize --seed N` is the detector. Run a spread of seeds — one
+   passing seed proves nothing, and the seed is printed in the run summary so any
+   failure replays exactly.
 
 ---
 
@@ -346,11 +432,16 @@ We would specifically like external judgment on these:
    growing; independent PRs appending to the same file collide on merge. There
    is no `max-lines` ESLint cap in this repo today, so nothing bounds this
    mechanically. Suggests a convention for splitting test files by concern.
-5. **`mock.module` global-state hazard (§5.1)** — now partly enforced by a lint
-   rule (`mockModuleLeakGuard`) that bans the fire-and-forget forms. **Residual
-   gap:** the rule can't catch an *awaited-but-cross-file-leaky* mock of a shared
-   module (an awaited restore doesn't reliably land on CI), so the convention
-   "prefer real/injectable deps for shared modules" still rests on review.
+5. **Cross-file shared-state hazard (§5.1, §5.6)** — `mockModuleLeakGuard` bans
+   the fire-and-forget `mock.module` forms, literal data stubs, and a deny-list
+   of known-passive modules. **Residual gap, and it is structural:** the rule
+   cannot decide whether a *given* mock is safe, because that depends on the
+   whole run's module graph rather than the call site — and an `afterAll` restore
+   cannot help, since Bun links every file's imports before any hook runs. The
+   same applies to plain module-level singletons (§5.6), which no lint rule
+   sees at all. So "prefer real/injectable deps for shared state" still rests on
+   review. **The one mechanical detector we have is `bun test --randomize`**, and
+   it is not yet run on a schedule — see §9.
 6. **No load/performance/soak coverage** for the proxy under sustained
    concurrent request load or long-running sidecar sessions.
 
@@ -381,6 +472,30 @@ checks a PR's milestone and bump. There is **no** build/sign/publish pipeline �
 no dmg, MSI, checksums, or smoke test on release — and no release automation:
 a release is a GitHub milestone, tagged by hand (see `docs/architecture.md`
 → *Release & PR conventions* and `docs/release-runbook.md`).
+
+### Why `--randomize` is not a PR gate
+
+Step 8 runs `bun test` in its declared order, deliberately. `bun test
+--randomize` is the only mechanical detector we have for the cross-file
+shared-state class (§5.1, §5.6), but it is the wrong shape for a merge gate:
+
+- **It fails PRs for defects they did not introduce.** The two flakes fixed
+  alongside this section were latent for months and surfaced on seeds unrelated
+  to any change. As a required check, that is an unrelated PR going red and a
+  contributor debugging someone else's leak — the reliable path to a gate people
+  learn to re-run until green, which is worse than no gate.
+- **Not every failure it surfaces is seed-reproducible.** Some of the suites it
+  shuffles spawn real engines on real ports; under a loaded runner those fail on
+  timing, at any seed. A gate must distinguish "your change is wrong" from "the
+  runner was busy", and this one cannot.
+- **Reproducibility itself is fine.** Bun prints `--seed=<N>` in the run summary
+  on every `--randomize` run, pass or fail, so the seed is always in the log and
+  a failure replays exactly. That objection does not survive contact.
+
+So the disposition is: **a separate scheduled job**, several seeds per run,
+non-blocking, filing an issue on failure — plus `--randomize` in the local loop
+when you touch a shared singleton or add a `mock.module`. Run a spread of seeds;
+one passing seed proves nothing.
 
 **Local pre-merge equivalents:**
 

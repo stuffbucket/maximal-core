@@ -1,5 +1,5 @@
 /* eslint-disable require-atomic-updates */
-import { afterEach, describe, expect, it, mock } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test"
 import { Hono } from "hono"
 
 import {
@@ -15,13 +15,24 @@ import {
 } from "~/lib/models/refresh-models"
 import { state } from "~/lib/runtime-state/state"
 
-afterEach(() => {
+function resetPrimeState(): void {
   _resetRefreshInFlightForTests()
   _resetPrimeStateForTests()
-  // The on-demand prime reads modelsCached(); leave the cache empty for the
-  // next test so a stray primed catalog can't mask a "not primed" branch.
+  // The on-demand prime reads modelsCached(); leave the cache empty so a stray
+  // primed catalog can't mask a "not primed" branch.
   state.models = undefined
-})
+}
+
+// Both halves are load-bearing. The single-flight guard and the prime cooldown
+// are module-level globals shared with every other file in the Bun worker: any
+// earlier file that drove `staleRefreshMiddleware` (e.g. a real-server route
+// test) stamps `lastPrimeAttemptMs` with wall-clock time, and this file's fixed
+// `now: () => 1_000_000_000` then reads as inside the cooldown. `afterEach`
+// alone only cleaned up *after* the first test ran, so the first-executed test
+// inherited the previous file's state — invisible until `--randomize` made the
+// first-executed test something other than a pure `isStale` case.
+beforeEach(resetPrimeState)
+afterEach(resetPrimeState)
 
 describe("isStale", () => {
   it("returns false when the cache hasn't been primed yet", () => {

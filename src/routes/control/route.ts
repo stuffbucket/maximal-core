@@ -13,6 +13,8 @@ import type { Context, Hono as HonoApp } from "hono"
 import { Hono } from "hono"
 import { z } from "zod"
 
+import type { ClientRosterReader } from "~/lib/http/active-clients"
+
 import {
   cancelDeviceFlow,
   getAuthStatus,
@@ -48,6 +50,8 @@ import { emitQuitRequest, emitUpdateRequest } from "~/lib/start/boot-status"
 import { getTokenUsageSummary } from "~/lib/token-usage"
 import { getUpdateStatus } from "~/lib/update/update-check"
 
+import type { ControlRpcDeps } from "./rpc"
+
 import {
   createControlRpcMethods,
   SUPPORTED_PROTOCOL_VERSION,
@@ -62,6 +66,13 @@ export interface ControlRoutesOptions {
   getRequestIp?: (c: Context) => string | null
   /** Injectable hub (tests pass a fresh one; default is the wired singleton). */
   hub?: ControlHub<ControlSnapshot>
+  /**
+   * Injectable active-client roster. The default reads the process-global
+   * tracker in `~/lib/http/active-clients`, which every request through the
+   * auth middleware writes to — so a route test that did not inject would be
+   * asserting on state owned by whatever else ran first in the same process.
+   */
+  listClients?: ClientRosterReader
 }
 
 /** Validated rather than cast: `c.req.json()` returns `any`, and asserting a
@@ -85,7 +96,7 @@ function registerEventStream(app: HonoApp, hub: HubAccessor): void {
 }
 
 /** Read endpoints — each mirrors a live topic and shares its type. */
-function registerReads(app: HonoApp): void {
+function registerReads(app: HonoApp, listClients: ClientRosterReader): void {
   app.get("/auth", (c) => c.json(getAuthStatus()))
 
   app.get("/accounts", async (c) => {
@@ -117,7 +128,7 @@ function registerReads(app: HonoApp): void {
   app.get("/config", (c) => c.json(getConfig()))
 
   app.get("/clients", (c) => {
-    const clients = listActiveClients()
+    const clients = listClients()
     return c.json({ clients, total: clients.length })
   })
 
@@ -248,8 +259,8 @@ function registerAccountActions(
  * account actions use — and they call the SAME underlying operations, so the two
  * surfaces cannot diverge while both exist.
  */
-function registerRpc(app: HonoApp, hub: HubAccessor, mutex: AsyncMutex): void {
-  const dispatch = createRpcHandler(createControlRpcMethods({ hub, mutex }))
+function registerRpc(app: HonoApp, deps: ControlRpcDeps): void {
+  const dispatch = createRpcHandler(createControlRpcMethods(deps))
 
   app.post("/rpc", async (c) => {
     // A client that pins a version we don't speak gets told so explicitly,
@@ -277,6 +288,7 @@ function registerRpc(app: HonoApp, hub: HubAccessor, mutex: AsyncMutex): void {
 
 export function createControlRoutes(options: ControlRoutesOptions = {}): Hono {
   const getRequestIp = options.getRequestIp ?? defaultGetRequestIp
+  const listClients = options.listClients ?? listActiveClients
   // Resolved lazily so importing this module doesn't eagerly build the wired
   // hub (with its flush timer). Tests inject their own.
   const hub: HubAccessor = () => options.hub ?? getControlHub()
@@ -291,12 +303,12 @@ export function createControlRoutes(options: ControlRoutesOptions = {}): Hono {
   })
 
   registerEventStream(app, hub)
-  registerReads(app)
+  registerReads(app, listClients)
   registerAuthActions(app)
   registerSettingsEndpoints(app)
   registerShellSignals(app)
   registerAccountActions(app, hub, new AsyncMutex())
-  registerRpc(app, hub, new AsyncMutex())
+  registerRpc(app, { hub, mutex: new AsyncMutex(), listClients })
 
   return app
 }

@@ -17,6 +17,7 @@
  */
 import {
   afterAll,
+  afterEach,
   beforeEach,
   describe,
   expect,
@@ -208,6 +209,15 @@ function baseOptions(
 }
 
 beforeEach(() => {
+  resetState()
+})
+
+// `state` is a process-global shared with every other file in the Bun worker,
+// and this file writes to it (`runServer({ rateLimit })` sets
+// `state.rateLimitSeconds`, which gates /responses and /chat/completions with a
+// 429). Resetting only `beforeEach` left whatever the last-executed test wrote
+// in place for every later file — a `--randomize`-only 429 with no local cause.
+afterEach(() => {
   resetState()
 })
 
