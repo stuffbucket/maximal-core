@@ -1,275 +1,169 @@
 # Release runbook
 
-Single source of truth for shipping a release. The flow is
-release-please-driven and mostly automatic — the one human action is
-merging the release PR (step 1). Every other step is a CI link to watch or
-a recovery command.
+Single source of truth for shipping a release.
+
+**This repo has no release automation.** `release-please.yml` and `release.yml`
+do not exist in `.github/workflows/`, nothing reads `release-please-config.json`
+or `.release-please-manifest.json`, and every tag so far was cut by hand. If you
+came here from an older revision of this file, or from a doc that describes a
+release PR opening itself: that pipeline was inherited from
+[`stuffbucket/maximal`](https://github.com/stuffbucket/maximal) in the core
+split and was never carried over. Do not go looking for it.
+
+What exists instead is deliberate and manual, in five steps.
 
 ---
 
-## Pre-flight (optional — CI already gates the PR)
+## The model: a milestone is a release
 
-CI runs these on every PR, so a green release PR already means they pass.
-Re-run locally only if you want to sanity-check before merging:
+A release is a **GitHub milestone whose title is the tag** — `v0.2.1`, `v0.3.0`.
+Assigning a PR to a milestone pre-selects the release it ships in, at the moment
+the PR is opened rather than when someone later assembles notes from a commit
+range. Whatever is in the milestone is what ships, and it is reviewable in the
+GitHub UI before the tag exists.
+
+`bun run release:notes vX.Y.Z` reads the milestone and emits the notes. It
+refuses to emit on a PR title it cannot parse, an unmerged PR, or a milestone
+that does not exist, rather than quietly shipping wrong notes.
+
+### Choosing the version
+
+Pre-1.0, and non-negotiably:
+
+| Change | Bump | Example |
+|---|---|---|
+| `fix:` | patch | `0.2.0` → `0.2.1` |
+| `feat:` | patch | `0.2.1` → `0.2.2` |
+| `feat!:` / `fix!:` / `BREAKING CHANGE:` | **minor** | `0.2.2` → `0.3.0` |
+
+`feat:` cutting a *patch* is the pre-1.0 convention `release-please-config.json`
+declares (`bump-minor-pre-major` + `bump-patch-for-minor-pre-major`). It is kept
+because the reason for it is load-bearing:
+
+> A consumer's `^0.2.0` resolves to `>=0.2.0 <0.3.0`. A breaking change released
+> as a patch is therefore **auto-installed** on a routine `npm update`. Minor is
+> the only bump that puts it out of range and forces the upgrade to be a
+> deliberate, coordinated act.
+
+`maximal-core` publishes contracts consumed outside this repo — `./supervisor`
+(the ready-line parser), `./control-contract`, and the `/v1` route table. A
+change to any of those is breaking even when nothing throws at build time, and
+belongs in a minor. When in doubt, minor: an over-cautious bump costs a
+coordinated upgrade, an under-cautious one ships a silent break.
+
+---
+
+## 1. Assign the PRs
+
+Every PR gets a milestone. The title must be a single valid Conventional Commit
+— squash-merge uses it as the commit subject, and it is the only thing that
+reaches the changelog. Mark a breaking change with `!`; that is what emits the
+`BREAKING CHANGES` block and what tells the reader the bump is a minor.
+
+```sh
+gh pr edit <n> --milestone vX.Y.Z
+gh pr list --json number,title,milestone \
+  --jq '.[] | "#\(.number)  [\(.milestone.title // "none")]  \(.title)"'
+```
+
+## 2. Pre-flight
+
+CI (`ci.yml`) gates every PR, so a green milestone is already most of this.
+`check:deep` is a strict superset of what CI runs:
 
 ```sh
 bun install
-bun run lint
-bun run typecheck
-bun test
-bun run build
+bun run check:deep        # lint, typecheck, casts:check, tests, knip, build
+bun run e2e               # seam + feed + lifecycle harnesses
 ```
 
-## 1. Cut the release — merge the release PR
-
-**Releases are release-please-driven and hands-off. There is no manual
-tagging.** Conventional-commit `feat:`/`fix:` changes merged to `main`
-accrue into an open **`chore(main): release X.Y.Z`** PR (release-please
-bumps the version + writes `CHANGELOG.md`). Cutting the release is one
-action: **merge that PR.**
-
-On merge, `release-please.yml` does the rest automatically:
-
-1. **Tags** `vX.Y.Z` (tag only — it does *not* create the GitHub Release;
-   `release.yml` owns that, see *Why tag-only* in `release-please.yml`).
-2. **Auto-dispatches `release.yml`** for the tag. A tag pushed by the
-   default `GITHUB_TOKEN` does **not** fire `release.yml`'s `push: tags`
-   trigger (GitHub's anti-loop guard suppresses it), so release-please
-   dispatches it explicitly via `workflow_dispatch`, which isn't
-   suppressed.
-3. **Flips the merged PR's label** `autorelease: pending → tagged` so the
-   *next* release PR can open. (release-please normally does this in its
-   `github-release` step, which this pipeline skips — so a dedicated step
-   does it instead. Without it, the next release PR is blocked.)
-
-So the only human action is the merge. `release.yml` then builds, verifies,
-publishes, and the post-publish `homebrew-tap` job bumps the formula — watch
-it in step 2.
-
-> **Version note (pre-1.0).** release-please is configured to bump *patch*
-> even for `feat:`, so a feature ships as `0.4.x+1`. To force a version, put
-> `Release-As: X.Y.Z` in a commit body (e.g. the squash-merge of the feature
-> PR) *before* the release PR is cut.
-
-### Fallback: manual tag (emergency only)
-
-If release-please is unavailable, `release:manual` (bumpp) cuts + publishes
-from a developer machine:
+## 3. Generate the notes
 
 ```sh
-bun run release:manual   # bumpp prompts version; commits, tags, pushes; bun publish
+bun run release:notes vX.Y.Z                  # CHANGELOG block
+bun run release:notes vX.Y.Z --release-body   # GitHub Release body
 ```
 
-A `GITHUB_TOKEN`-pushed tag still won't auto-fire `release.yml` — dispatch it
-by hand (`--ref` MUST be the tag, and `tag` is a required input):
+Exit codes: `0` clean, `1` problems found (nothing written — fix them, or
+`--force` to emit the well-formed subset anyway), `2` fatal (no such milestone,
+empty milestone, no usable PRs).
+
+Paste the changelog block into `CHANGELOG.md` directly under `# Changelog`. The
+output is byte-compatible with the release-please format the archived history
+uses, so there is no format seam.
+
+## 4. Bump, tag, push
 
 ```sh
-gh workflow run release.yml --ref vX.Y.Z -f tag=vX.Y.Z
+bun run release:manual    # bumpp prompts for the version; commits, tags, pushes
 ```
 
-## 2. Watch CI: `release` workflow
-
-Wait for these jobs to all turn green. Each produces release assets:
-
-| Job | Runner | Produces |
-|---|---|---|
-| `release` | ubuntu-latest | npm publish, `SBOM.cdx.json`, GitHub release notes |
-| `binaries` (matrix × 2) | ubuntu-latest | `*-darwin-arm64.tar.gz`, `*-windows-x64.zip` (+ `.sha256` each) |
-| `checksums` | ubuntu-latest | `SHA256SUMS` |
-| `smoke` | windows-2022 | passes/fails — exec validation of the windows-x64 binary |
-
-The installer jobs are part of the same `release.yml` run (no separate
-`installers.yml` dispatch). `publish` gates on all of them via `needs:`,
-so a slow Apple notarization just delays publish — it can't leave a
-healthy build stuck as a draft on a wall-clock timeout:
-
-| Job | Runner | Produces |
-|---|---|---|
-| `macos-dmg` | ubuntu-latest → dispatches the private `stuffbucket/macos-builder` (self-hosted arm64 mac, holds the Apple secrets) | `*-darwin-arm64.dmg` (+ `.sha256`) — **signed + notarized + stapled** by the builder |
-| `homebrew-tap` | ubuntu-latest (post-publish) | bumps `stuffbucket/homebrew-tap/Formula/maximal.rb` (see §5) |
-| `windows-installer` | ubuntu-latest | `install.ps1` (+ `.sha256`) |
-| `windows-msi` | windows-2022 | `*-windows-x64.msi` (+ `.sha256`) |
-| `windows-msi-verify` | windows-2022 | gate only — silently installs the MSI, asserts install/registry/PATH, runs the installed binary, uninstalls, asserts clean removal |
-
-If any job fails, the release stays a draft (never a half-published
-"Latest"). Recover with **Actions → the release run → "Re-run failed
-jobs"**, then re-run `publish`. The macOS bundle alone can also be
-rebuilt from a developer Mac (§3) if the self-hosted runner is offline.
-
-## 3. Build and attach the polished `.dmg` (legacy — superseded by `macos-dmg`)
-
-The `macos-dmg` job (step 2) produces the signed + notarized `.dmg`
-automatically by dispatching the private `stuffbucket/macos-builder` (or
-re-run `macos-build.yml` manually: `gh workflow run macos-build.yml --ref
-main -f tag=vX.Y.Z`). The steps below remain documented for an emergency
-build from a developer Mac if the self-hosted builder is offline.
-
-Run from any Apple Silicon developer Mac with this checkout. Auto-
-detects the latest tag from `git describe`:
+Or by hand, if you want the commit message under your own control:
 
 ```sh
-git fetch --tags
-bun run release:dmg
+# package.json version MUST match the tag — see the gate below
+git commit -am "chore: release X.Y.Z"
+git tag -a vX.Y.Z -m "vX.Y.Z — <one-line summary>"
+git push && git push origin vX.Y.Z
 ```
 
-This:
-1. Downloads `*-darwin-arm64.tar.gz` for the latest tag.
-2. Verifies SHA-256.
-3. Assembles `maximal.app` from `build/macos/app-template/`.
-4. Runs `npx create-dmg` (Mac-only — uses `hdiutil`).
-5. Uploads `*-darwin-arm64.dmg` + `.sha256` to the GitHub release.
+> **Use `-a`.** A lightweight tag (plain `git tag`) drops the annotation, and
+> `git tag -f` without `-a` silently downgrades an annotated tag to one.
 
-To build without uploading (e.g. for local testing):
+> **Gate: the tag must match `package.json`.** Nothing checks this. It has
+> already gone wrong once — `v0.1.1` was tagged while `package.json` still read
+> `0.1.0` (`git show v0.1.1:package.json`). Milestones make the tag a commitment
+> made *in advance*, which widens the window. Verify before pushing:
+>
+> ```sh
+> test "v$(node -p 'require("./package.json").version')" = "vX.Y.Z" \
+>   && echo ok || echo MISMATCH
+> ```
+
+> **Never move a published tag.** Retagging does not re-resolve a consumer's
+> `bun.lock` — it pins the old commit SHA, so `bun install --force` reinstalls
+> the *old* tree and only `bun update` re-resolves. A moved tag means two
+> machines can hold different code under one version.
+
+## 5. Build the artifact and publish
 
 ```sh
-bun run package-dmg --tag v0.1.0
-# → dist-release/maximal-v0.1.0-darwin-arm64.dmg
+bun run build:binary      # compiled, signable Mach-O / PE per target
+bun run verify:build      # asserts x-maximal-version matches the build
+bun run e2e:binary        # the e2e suite against the compiled artifact
 ```
-
-## 4. Pre-publish smoke (manual, macOS-only)
-
-CI smokes the windows-x64 binary. There's no CI Mach-O smoke under the
-public-repo runner policy. Replace it with one developer-Mac check:
 
 ```sh
-gh release download v0.1.0 --pattern '*-darwin-arm64.tar.gz' --dir /tmp/smoke
-tar -xzf /tmp/smoke/maximal-v0.1.0-darwin-arm64.tar.gz -C /tmp/smoke
-/tmp/smoke/maximal debug --json | jq '.version, .git'
+gh release create vX.Y.Z --title "vX.Y.Z — <summary>" \
+  --notes "$(bun run release:notes vX.Y.Z --release-body)"
 ```
 
-If the JSON parses with the right version + commit, the binary is
-loadable. (The `release:dmg` step above also unpacks and copies the
-binary into the `.app`, which is its own loose smoke — but `debug
---json` is the explicit assertion.)
-
-## 5. Homebrew formula (automated)
-
-The `homebrew-tap` job in `release.yml` does this automatically after
-`publish`: it renders the formula from `build/homebrew/maximal.rb` with the
-just-released version + per-arch SHAs (`bun run render-formula`) and pushes
-it to **`stuffbucket/homebrew-tap/Formula/maximal.rb`**. Users then:
-
-```sh
-brew install stuffbucket/tap/maximal     # taps stuffbucket/tap automatically
-brew update && brew upgrade maximal       # later
-```
-
-Gating: the job needs the `HOMEBREW_TAP_TOKEN` secret (a fine-grained PAT
-with Contents:write on `stuffbucket/homebrew-tap`). If it's unset the job
-warns and skips — the release still publishes, but the formula won't bump
-until someone re-runs `render-formula` by hand. The formula is
-**Apple-Silicon-only** (no Intel build).
-
-To re-render manually (e.g. the token was missing during the run):
-
-```sh
-bun run render-formula --org stuffbucket --version X.Y.Z \
-  --output ../homebrew-tap/Formula/maximal.rb
-# then commit + push in the tap repo
-```
-
-## 6. Announce
-
-The Pages site (`docs/index.html`) auto-fetches the latest release via
-the GitHub API at page load — no manual update needed there.
-
-**Re-running a failed Pages deploy — dispatch fresh, never re-run failed jobs.**
-If a `deploy-pages.yml` run fails at the deploy step, trigger a brand-new run:
-
-```sh
-gh workflow run deploy-pages.yml --ref main
-```
-
-Do **not** use `gh run rerun <id> --failed` / the UI "re-run failed jobs" button
-on a Pages deploy. `actions/deploy-pages` refuses to deploy a run that has more
-than one artifact named `github-pages`, and a re-run re-uploads the artifact
-without removing the prior copy — so each re-run drives the count 1→2→3 and fails
-harder (issue #239). The workflow now deletes any stale `github-pages` artifact
-before upload to keep re-runs safe, but a fresh dispatch is still the clean,
-guaranteed-single-artifact path. (The specific error, "Multiple artifacts named
-github-pages", is only visible in the run's **Annotations** — the deploy step's
-generic "Deployment failed, try again later" can mask it.)
-
-Internal wiki post / chat announcement is outside this runbook.
+Attach the binaries if the release ships them.
 
 ---
 
-## Recovery
+## What this repo does *not* have
 
-`release.yml` is built to be re-run. A failed build leaves the release a
-**draft** (the `publish` job gates on every build via `needs:`), so nothing
-half-publishes. To recover:
+Listed so nobody re-derives it from a stale doc:
 
-- **Re-run failed jobs:** Actions UI → the `release.yml` run → "Re-run
-  failed jobs". The installers are all jobs *inside* `release.yml`
-  (`binaries`, `macos-dmg`, `windows-installer`, `windows-msi`,
-  `checksums`, …) — there is no separate `installers` workflow.
-- **Self-heal:** the auto-dispatch step in `release-please.yml` re-fires
-  `release.yml` on the next push to `main` (or a manual `release-please`
-  dispatch) whenever the current version's tag exists but its release is
-  still a draft. So a transient flake often fixes itself on the next
-  commit.
-- **Full re-run is idempotent.** The `release` job reuses an existing
-  draft; asset uploads use `gh release upload --clobber`; `publish` flips
-  draft→published exactly once and no-ops if already published; the
-  per-tag `concurrency` group serializes re-runs so two can't race.
-- **Manual dispatch** (if needed): `gh workflow run release.yml --ref
-  vX.Y.Z -f tag=vX.Y.Z` (the `--ref` must be the tag).
-- **Pull a release:** `gh release delete vX.Y.Z` + `git push --delete
-  origin vX.Y.Z`. Only works while it's a **draft** — an
-  already-published release is immutable (see below): the tag is frozen,
-  re-cutting it won't work, **bump to a new patch version instead.**
+- No `release-please.yml`, no `release.yml`, no auto-opened release PR, no
+  `autorelease:` labels. `release-please-config.json` and
+  `.release-please-manifest.json` are inert — kept only because they record the
+  pre-1.0 bump convention above.
+- No `Release-As:` handling. Nothing reads the trailer; the milestone title
+  carries that intent now. (Commit `867dfc4` used one and a human honoured it
+  by hand.)
+- No CI signing, notarization, stapling, DMG packaging, checksums, Homebrew tap,
+  Windows MSI, or Pages deploy. `build:binary` produces a **signable** artifact;
+  it does not sign it.
+- No gate that the tag matches `package.json`, that a PR carries a milestone, or
+  that a breaking change was bumped as a minor. All three are conventions this
+  document asserts and a human upholds.
 
-<!-- NOTE: "Immutable releases" section added by the release-immutability
-     task. If another agent is editing this runbook, sequence around this
-     anchor to keep merges clean. -->
+## See also
 
-## Immutable releases
-
-This repo has **GitHub Immutable Releases enabled** (a repository setting,
-turned on 2026-06). Inspect or toggle it with:
-
-```sh
-gh api repos/stuffbucket/maximal/immutable-releases             # {"enabled":true,...}
-gh api --method PUT  repos/stuffbucket/maximal/immutable-releases    # enable  → 204
-gh api --method DELETE repos/stuffbucket/maximal/immutable-releases  # disable → 204
-```
-
-**What it guarantees:** once a release is *published*, its assets and its
-Git tag are frozen — assets can't be added, replaced, or deleted, and the
-tag can't be moved. This is a supply-chain protection: what you publish is
-exactly what consumers verify against `SHA256SUMS`.
-
-**Why our flow is already compatible:** GitHub's recommended pattern is
-precisely what `release.yml` does — create the release as a **draft**,
-attach *all* assets to the draft, then flip draft→published last.
-Immutability locks at **publish time**, not at creation, so every
-`gh release upload --clobber` in the upstream jobs (`release`, `binaries`,
-`checksums`, `macos-dmg`, `windows-installer`, `windows-msi`) runs while
-the release is still a draft and is unaffected. The `publish` job gates on
-all of them via `needs:`, so no asset write lands after publish in the
-happy path. The post-publish jobs (`homebrew-tap`, `redeploy-site`) only
-*read* the release — they never mutate it.
-
-**The one behavioral change:** you can no longer `--clobber` or otherwise
-patch a release **after** it's published. The "Re-build the DMG" /
-`gh release upload --clobber` recovery above only works while the release
-is still a draft — i.e. before `publish` succeeds, or while a failed-job
-re-run keeps it a draft. If you find a bad asset on an already-published
-release, **do not try to patch it — cut a new patch version instead.**
-Deleting and re-pushing the same tag won't help either, because the tag
-itself is frozen.
-
-## Open questions
-
-- **Cert plumbing for A4** is still **DEFERRED** for the *raw binaries* —
-  the bun-compiled `*-darwin-arm64.tar.gz` / `*-windows-x64.zip` (and
-  Windows `signtool`) ship **unsigned** (see the `DEFERRED A4` stubs in
-  `release.yml`). The macOS **`.dmg` is already signed + notarized** via
-  the private `macos-builder`; A4 is only about signing the loose
-  binaries. When the cred set lands, those gates flip to `if: …`.
-- **`REPOMAN_APP_ID`** (a GitHub App token) is unset, so release-please
-  tags via `GITHUB_TOKEN` — which is why the auto-dispatch + label-flip
-  steps in `release-please.yml` exist (step 1). Provisioning the app
-  would let release-please fire `release.yml` natively and own the label,
-  removing both shims.
+- [`docs/architecture.md`](architecture.md) → _Release & PR conventions_
+- [`scripts/ops/release-notes.ts`](../scripts/ops/release-notes.ts) — the
+  generator, and the rationale in its header comment
+- [`docs/archive/CHANGELOG-maximal.md`](archive/CHANGELOG-maximal.md) — the
+  frozen pre-split history

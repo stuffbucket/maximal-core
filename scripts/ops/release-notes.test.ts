@@ -325,9 +325,30 @@ describe("rendering", () => {
 })
 
 describe("CHANGELOG.md format parity", () => {
-  // Guard: the generated block must be indistinguishable from what is already
-  // in the file, so a release can be pasted straight in.
-  const changelogPath = path.join(import.meta.dir, "..", "..", "CHANGELOG.md")
+  // Guard: the generated block must be indistinguishable from what
+  // release-please wrote, so a release can be pasted straight in.
+  //
+  // The fixture is the ARCHIVED parent-repo changelog, not the live
+  // CHANGELOG.md. Two reasons: the archive is frozen, so this assertion cannot
+  // be broken by cutting a release; and the live file no longer contains any
+  // release-please output to compare against, having been reset at the split.
+  const changelogPath = path.join(
+    import.meta.dir,
+    "..",
+    "..",
+    "docs",
+    "archive",
+    "CHANGELOG-maximal.md",
+  )
+
+  /** The first `## [x.y.z](…)` block, located rather than sliced at a fixed
+   *  offset — the archive carries a prose header above the entries. */
+  const firstBlock = (text: string): Array<string> => {
+    const lines = text.split("\n")
+    const start = lines.findIndex((l) => l.startsWith("## ["))
+    expect(start).toBeGreaterThanOrEqual(0)
+    return lines.slice(start)
+  }
 
   test("generated headings all appear verbatim in the existing CHANGELOG", async () => {
     const existing = await fs.readFile(changelogPath, "utf8")
@@ -342,7 +363,7 @@ describe("CHANGELOG.md format parity", () => {
 
   test("a generated block matches the shape of a real CHANGELOG block", async () => {
     const existing = await fs.readFile(changelogPath, "utf8")
-    const real = existing.split("\n").slice(2, 9).join("\n")
+    const real = firstBlock(existing)
     const generated = renderChangelog(
       buildReleaseNotes({
         tag: "v0.4.41",
@@ -359,9 +380,7 @@ describe("CHANGELOG.md format parity", () => {
       }),
     )
     // Same header line, same two blank lines, same heading, same first bullet.
-    expect(generated.split("\n").slice(0, 5)).toEqual(
-      real.split("\n").slice(0, 5),
-    )
+    expect(generated.split("\n").slice(0, 5)).toEqual(real.slice(0, 5))
   })
 })
 

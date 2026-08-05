@@ -24,9 +24,9 @@ bun run knip         # find unused exports/files
 bun run mutate       # Stryker; configure module under test in stryker.conf.*
 
 # Release tooling
-bun run release:manual  # local fallback cut (bumpp + bun publish). Primary
-                        # release path is release-please: merge the auto-opened
-                        # release PR → tag → release.yml builds/publishes.
+bun run release:notes v0.2.1  # milestone -> CHANGELOG-shaped Markdown
+                              # --release-body for a GitHub Release body
+bun run release:manual        # cut the version (bumpp + bun publish)
 
 # Ops tooling under scripts/ops/ (own tsconfig + test run)
 bun run check:ops    # typecheck:ops + test:ops
