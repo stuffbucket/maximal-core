@@ -2279,12 +2279,13 @@ var init_package = __esm(() => {
       "tsconfig.json"
     ],
     scripts: {
+      "bindings:check": "bun scripts/ops/check-bindings.ts",
       build: "bun build src/main.ts --target=bun --outdir dist",
       "build:binary": "bun scripts/dev/build-binary.ts",
       "build:lib": "tsup",
       casts: "bun run scripts/find-casts.ts",
       "casts:check": "bun run scripts/find-casts.ts --check",
-      "check:deep": "bun run check:fast && bun run casts:check && bun test && bun run knip && bun run build && bun run typecheck:downstream",
+      "check:deep": "bun run check:fast && bun run casts:check && bun test && bun run knip && bun run build && bun run typecheck:downstream && bun run bindings:check",
       "check:fast": "bun run lint:fast && bun run typecheck && bun run lint:all",
       "check:ops": "bun run typecheck:ops && bun run test:ops",
       "deps:check": "depcruise --config .dependency-cruiser.cjs src tests",
@@ -2319,7 +2320,7 @@ var init_package = __esm(() => {
       "pre-commit": "bunx lint-staged"
     },
     "lint-staged": {
-      "*": [
+      "!dist/**": [
         "bun run lint --fix",
         "bash scripts/secret-scan.sh"
       ]

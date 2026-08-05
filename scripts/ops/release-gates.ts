@@ -136,10 +136,11 @@ export function isAdjacent(
 /**
  * The smallest bump a PR may legally ship in.
  *
- * Pre-1.0 (`current[0] === 0`) this repo follows the release-please convention
- * `release-please-config.json` still declares — `bump-minor-pre-major` +
- * `bump-patch-for-minor-pre-major`, i.e. feat/fix → patch, breaking → minor —
- * because `^0.2.0` is `>=0.2.0 <0.3.0` and only a minor leaves that range.
+ * Pre-1.0 (`current[0] === 0`) the rule is feat/fix → patch, breaking → minor,
+ * because `^0.2.0` is `>=0.2.0 <0.3.0` and only a minor leaves that range. This
+ * function is the executable record of that convention (with the *Choosing the
+ * version* table in `docs/release-runbook.md` as its prose counterpart); the
+ * inert release-please config that used to declare it is gone.
  *
  * At 1.0 that convention stops being the safe one: `^1.2.0` is `>=1.2.0 <2.0.0`
  * so it is MAJOR that leaves the range, and a minor no longer protects anyone.
