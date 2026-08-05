@@ -38,6 +38,18 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:notes` output is inserted here -->
 
+## [0.4.0](https://github.com/stuffbucket/maximal-core/compare/v0.3.2...v0.4.0) (2026-08-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* resolve the Anthropic key env-first and fully revert the Claude Desktop profile ([#27](https://github.com/stuffbucket/maximal-core/issues/27)) ([b1554a2](https://github.com/stuffbucket/maximal-core/commit/b1554a25bec07c19808817728d901cf6f923e38b))
+
+
+### Bug Fixes
+
+* resolve the Anthropic key env-first and fully revert the Claude Desktop profile ([#27](https://github.com/stuffbucket/maximal-core/issues/27)) ([b1554a2](https://github.com/stuffbucket/maximal-core/commit/b1554a25bec07c19808817728d901cf6f923e38b))
+
 ## [0.3.2](https://github.com/stuffbucket/maximal-core/compare/v0.3.1...v0.3.2) (2026-08-05)
 
 
