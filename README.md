@@ -227,8 +227,11 @@ THIRD-PARTY-LICENSE        Bundled-dependency license pointer (npm SBOM).
 milestone whose title is the tag**: assigning a PR to `vX.Y.Z` pre-selects its
 release, so what ships is reviewable before the tag exists. `bun run
 release:notes vX.Y.Z` turns the milestone into changelog-shaped Markdown, and
-`bun run release:manual` (bumpp) cuts the version. Tagging is a deliberate
-human step — this repo has no release automation.
+`bun run release:manual` cuts the version — it refuses a dirty tree, refuses a
+Bun that does not match `.bun-version`, then bumps, rebuilds `dist/` and stages
+it into the release commit, tags, and pushes. Cutting a release is a deliberate
+human step; pushing the tag is what builds and publishes the binaries
+(`release-artifacts.yml`).
 
 ## Status
 
