@@ -9,24 +9,32 @@
  * Every `@ts-expect-error` here is a two-way tripwire: it fails if the error
  * stops happening as well as if a new one appears.
  */
-import { awaitReadyLine } from "@stuffbucket/maximal-core/supervisor"
+import {
+  awaitReadyLine,
+  type ParsedReadyLine,
+  type ReadyLine,
+} from "@stuffbucket/maximal-core/supervisor"
 
 import { expectAssignable } from "./assert.js"
 
 /**
- * FINDING (maximal-core, published surface): `ReadyLine` is used in the public
- * signatures of `awaitReadyLine` and `parseReadyLine` but is NOT re-exported
- * from the `supervisor` entrypoint, so a consumer cannot name the type it is
- * handed — it has to reconstruct it from the return type, as below. Pinned with
- * an expect-error so that exporting it later trips this file and this comment
- * gets deleted along with the workaround.
+ * Both contract types are nameable by a consumer. This started life as an
+ * expect-error pinning the opposite — `ReadyLine` appeared in the public
+ * signatures of `awaitReadyLine` and `parseReadyLine` but was not re-exported,
+ * so a consumer had to reconstruct it from the return type. That gap is closed;
+ * these assertions keep it closed.
+ *
+ * The two are distinct on purpose: `ReadyLine` is what the engine EMITS
+ * (`v >= 1`), `ParsedReadyLine` is what the parser RETURNS (either version,
+ * normalised). The parser's type is the wider one, so it must be assignable to
+ * the emitter's — that direction is what keeps the change source-compatible.
  */
-export type NotExported =
-  // @ts-expect-error `ReadyLine` is not exported from the supervisor entrypoint.
-  import("@stuffbucket/maximal-core/supervisor").ReadyLine
+export type ReadyLineShape = ReadyLine
+export type ParsedShape = ParsedReadyLine
 
-/** What a consumer is currently forced to write instead. */
-export type ReadyLineShape = Awaited<ReturnType<typeof awaitReadyLine>>
+export function nameableContractTypes(parsed: ParsedReadyLine): void {
+  expectAssignable<ReadyLine>(parsed)
+}
 
 export async function negatives(
   stdout: AsyncIterable<Uint8Array>,

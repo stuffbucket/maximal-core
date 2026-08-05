@@ -102,6 +102,14 @@ export default [
       "contrib/**",
       "docs/**",
       "scripts/**",
+      // The downstream contract fixture is compiled by its OWN tsconfig, on
+      // purpose: it must not resolve the root's `~/*` -> src/* alias, or it
+      // would typecheck against engine source instead of the published
+      // exports map and pass with the contract broken. That isolation means
+      // the root project cannot type these files, so type-aware rules see
+      // every value as `error`-typed. `downstream/check.ts` (the runner) IS
+      // in the root project and stays linted.
+      "downstream/src/**",
       // shell/src (the browser UI) IS linted (#357). Its non-source
       // siblings are not: build output, the Rust/Tauri crate, generated
       // wordmark tooling, and the HTML entry dir.
