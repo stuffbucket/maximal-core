@@ -5,8 +5,9 @@
  * This repo has NO release automation. `docs/release-runbook.md` still
  * describes a release-please pipeline (`release-please.yml` / `release.yml`)
  * that was inherited from the parent repo and never carried over: neither
- * workflow exists in `.github/workflows/`, and nothing runs
- * `release-please-config.json`. So the notes that release-please used to write
+ * workflow exists in `.github/workflows/`, and the config files that would have
+ * driven them have since been deleted as dead weight. So the notes that
+ * release-please used to write
  * have to come from somewhere else. Here, the somewhere else is a **GitHub
  * milestone whose title is the tag** (e.g. `v0.2.1`): whatever is in the
  * milestone is what ships, which makes the release contents reviewable in the
