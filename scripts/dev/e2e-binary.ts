@@ -22,9 +22,10 @@
  * — even from the same commit — is a different file than the one users get.
  * The provided binary is never deleted.
  *
- * POSIX only. `e2e:lifecycle` spawns `sleep` as its decoy parent, so this
- * harness cannot run on a Windows runner; `verify:artifact` is the portable
- * subset.
+ * Runs on macOS and Windows. It was POSIX-only until `e2e:lifecycle` stopped
+ * spawning `sleep` as its decoy parent; the one thing that still does not port
+ * is graceful SIGTERM, which Windows has no way to deliver — see the
+ * portability note in `scripts/dev/e2e-lifecycle.ts`.
  */
 import { mkdtempSync, rmSync } from "node:fs"
 import { spawnSync } from "node:child_process"

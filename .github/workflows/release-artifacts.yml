@@ -18,14 +18,21 @@
 # floating `macos-latest`/`windows-latest` label that silently changed arch would
 # otherwise degrade this back into an unverified cross-compile.
 #
-# ## Why the two legs verify different amounts
+# ## What each leg verifies, and the one asymmetry left
 #
-# macOS runs `verify:artifact` AND the full `e2e:binary` suite. Windows runs
-# `verify:artifact` only: `e2e:lifecycle` spawns POSIX `sleep` as its decoy
-# parent process and cannot run there. Closing that gap means making the
-# lifecycle harness portable, which is a separate change with its own risk — it
-# is not silently pretended away here. `verify:artifact` still proves the
-# Windows binary boots, serves, reports the right version, and stops.
+# Both legs run `verify:artifact` AND the full `e2e:binary` suite. Until v0.3.2
+# the Windows leg ran `verify:artifact` only, because `e2e:lifecycle` spawned
+# POSIX `sleep` as the decoy parent its watchdog check has to kill. The decoy is
+# now `process.execPath --eval` — the Bun already running the harness — so seam,
+# feed and lifecycle all run on both runners.
+#
+# What remains is not a harness gap and cannot be closed here: **Windows has no
+# SIGTERM.** `child.kill("SIGTERM")` is `TerminateProcess`, so on the Windows leg
+# the shutdown assertions in `verify:artifact` and `e2e:lifecycle` prove the
+# binary is terminable, not that it drained; the graceful path (Claude Code
+# revert, pidfile removal, session-sentinel clear) is only observed on macOS.
+# The parent-death watchdog — the check the lifecycle harness exists for — exits
+# through userspace `process.exit(0)` and is observed on both.
 #
 # ## Ordering, and what a failure leaves behind
 #
@@ -105,14 +112,11 @@ jobs:
             arch: arm64
             asset: darwin-arm64
             binary: maximal
-            # Only the host-arch leg can run the behavioural suite.
-            suite: true
           - runner: windows-latest
             target: bun-windows-x64
             arch: x86_64
             asset: windows-x64
             binary: maximal.exe
-            suite: false
     steps:
       - uses: actions/checkout@v6
         with:
@@ -191,7 +195,6 @@ jobs:
           bun run verify:artifact -- "--binary=$OUT" "--expect-version=$EXPECTED"
 
       - name: End-to-end suite against the artifact
-        if: matrix.suite
         env:
           OUT: dist-release/${{ matrix.binary }}
         run: |
@@ -226,7 +229,11 @@ jobs:
           fi
           cat "dist-release/$name.sha256line"
 
-      - uses: actions/upload-artifact@v4
+      # v7 / v8 (publish job) are the first majors declaring `using: node24`.
+      # The v4 pins were still on node20 and every run logged a deprecation
+      # warning while the runner forced them onto node24 anyway. Inputs used
+      # here are unchanged across the bump.
+      - uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.asset }}
           # Only the named binary and its checksum line. `--sourcemap` also drops
@@ -247,7 +254,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: staging
           pattern: release-*

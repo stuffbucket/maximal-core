@@ -2290,6 +2290,7 @@ var init_package = __esm(() => {
       "check:ops": "bun run typecheck:ops && bun run test:ops",
       "deps:check": "depcruise --config .dependency-cruiser.cjs src tests",
       dev: "bun run --watch ./src/main.ts",
+      "dev:stale-check": "bun scripts/dev/verify-build.ts",
       e2e: "bun run e2e:seam && bun run e2e:feed && bun run e2e:lifecycle",
       "e2e:binary": "bun scripts/dev/e2e-binary.ts",
       "e2e:feed": "bun scripts/dev/e2e-feed.ts",
@@ -2314,7 +2315,6 @@ var init_package = __esm(() => {
       "typecheck:downstream": "bun downstream/check.ts",
       "typecheck:ops": "tsc -p scripts/ops/tsconfig.json",
       "verify:artifact": "bun scripts/dev/verify-artifact.ts",
-      "verify:build": "bun scripts/dev/verify-build.ts",
       "watch:drift": "bun scripts/ops/watch-external-drift.ts"
     },
     "simple-git-hooks": {
@@ -13616,7 +13616,7 @@ function finalize(ctx, schema) {
     result.$schema = "http://json-schema.org/draft-07/schema#";
   } else if (ctx.target === "draft-04") {
     result.$schema = "http://json-schema.org/draft-04/schema#";
-  } else if (ctx.target === "openapi-3.0") {}
+  } else if (ctx.target === "openapi-3.0") {} else {}
   if (ctx.external?.uri) {
     const id = ctx.external.registry.get(schema)?.id;
     if (!id)
@@ -13877,7 +13877,7 @@ var formatMap, stringProcessor = (schema, ctx, _json, _params) => {
     if (val === undefined) {
       if (ctx.unrepresentable === "throw") {
         throw new Error("Literal `undefined` cannot be represented in JSON Schema");
-      }
+      } else {}
     } else if (typeof val === "bigint") {
       if (ctx.unrepresentable === "throw") {
         throw new Error("BigInt literals cannot be represented in JSON Schema");
