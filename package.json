@@ -74,6 +74,7 @@
     "prepack": "bun run build && bun run build:lib",
     "prepare": "simple-git-hooks",
     "release:manual": "bumpp && bun publish --access public",
+    "release:notes": "bun scripts/ops/release-notes.ts",
     "sbom": "bun scripts/sbom.ts",
     "scan:secrets": "trufflehog filesystem . --no-verification --fail --no-update --exclude-paths .trufflehog-exclude",
     "start": "NODE_ENV=production bun run ./src/main.ts",
