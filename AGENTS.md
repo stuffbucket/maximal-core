@@ -44,10 +44,16 @@ Each rule states the prohibition; the linked doc is its only elaboration.
 - **Never `git stash pop` in a shared working tree.** It merges another
   in-flight agent's stash into yours. Isolate first —
   [`docs/architecture.md`](docs/architecture.md) → _Parallel-agent convention_.
-- **Never leave a `mock.module` unrestored.** Bun leaks module mocks forward
-  across files, so it breaks a *sibling* test on CI only. Lint-enforced by
-  `mockModuleLeakGuard`; prefer injectable options over mocking a shared module
-  at all — [`docs/dev/testing-strategy.md`](docs/dev/testing-strategy.md) §5.1.
+- **Do not `mock.module` a shared module — inject instead.** Bun evaluates every
+  test file's body before any test runs, so a mock installed at module scope is
+  already linked by every sibling that imports it. Restoring in `afterAll` is
+  not a weak mitigation, it is *not a mitigation* — teardown runs long after the
+  binding was taken. Use a DI seam (`__setServeForTests`,
+  `__setBootSecretsForTests`); `mockModuleLeakGuard` catches only some shapes —
+  [`docs/dev/testing-strategy.md`](docs/dev/testing-strategy.md) §5.1.
+- **Reset module-level state in BOTH `beforeEach` and `afterEach`.** A singleton
+  reset only on the way in leaks to the next file; only on the way out inherits
+  from the previous one. Both bugs shipped here — §5.6.
 - **A PR title must be a single valid Conventional Commit.** Squash-merge uses
   it as the commit subject, and the release notes are generated from PR titles,
   so the title is the only thing that reaches the changelog. Mark a breaking
