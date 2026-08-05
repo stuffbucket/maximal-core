@@ -352,6 +352,13 @@ jobs:
         if: github.event_name == 'push' || inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
+          # This job never checks the repo out — it only downloads artifacts —
+          # so `gh` has no git remote to infer the repository from and every
+          # call dies with "not a git repository". GH_REPO supplies it once for
+          # all of them, which is cheaper than a checkout we otherwise do not
+          # need. Found the hard way on the v0.3.2 tag: the draft was never
+          # created and the run went red after a successful build.
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.ref || github.ref_name }}
         run: |
           set -uo pipefail
