@@ -37,6 +37,14 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           queries: security-and-quality
+          # `.github/codeql/codeql-config.yml` is inert unless it is named here —
+          # `init` has no convention that discovers it by path. Without this
+          # input the file's `paths-ignore` never applied, so every analysis
+          # scanned the force-tracked `dist/` bundle (7.3 MB of inlined
+          # dependencies) alongside `src/`. ADR-0001 cites this config as the
+          # home for rule-wide exclusions; that claim was only true once the
+          # config was actually wired in.
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4

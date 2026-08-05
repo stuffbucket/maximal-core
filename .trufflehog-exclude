@@ -1,13 +1,26 @@
-# Paths excluded from `bun run scan:secrets` (full-repo scan).
-# One glob per line. CI and the pre-commit hook honor the same set.
+# Paths excluded from `bun run scan:secrets` — and from NOTHING ELSE.
+#
+# This file has exactly one reader: the `scan:secrets` script in package.json,
+# which is a manual, on-demand full-repo scan. It is not run by CI and not run
+# by the pre-commit hook. Specifically:
+#
+#   - CI (.github/workflows/secret-scan.yml) runs the trufflesecurity/trufflehog
+#     action against the PR diff with `--results=verified,unknown`. It passes no
+#     `--exclude-paths` and never reads this file.
+#   - The pre-commit hook (lint-staged -> scripts/secret-scan.sh) scans only the
+#     staged paths it is handed. It never reads this file either — despite its
+#     own failure message telling you to "add the path to .trufflehog-exclude",
+#     which does nothing for the hook. Use SKIP_SECRET_SCAN=1 for that path.
+#
+# The previous header here claimed "CI and the pre-commit hook honor the same
+# set." Neither did. Adding a path below suppresses it in `bun run scan:secrets`
+# only.
+#
+# One glob per line.
 node_modules
 dist
 dist-build
 dist-release
-shell/dist
-shell/node_modules
-shell/src-tauri/target
-shell/src-tauri/binaries
 .claude/worktrees
 .claude/logs
 bun.lock
