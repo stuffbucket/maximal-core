@@ -281,9 +281,10 @@ missing-module error.
 `mock.module` is the famous case, but it is a *special case* of a wider one:
 anything held at module scope is shared by every test file in the Bun worker.
 `src/` is full of legitimate process-global singletons — an active-clients Map, a
-single-flight guard, a prime cooldown, a models cache — and each is one shared
-mutable object for the whole run. Two symmetrical bugs follow, and this project
-has shipped both:
+single-flight guard, a prime cooldown, a models cache, and the whole `state`
+object — and each is one shared mutable object for the whole run. Two
+symmetrical bugs follow, and this project has shipped both (three times, in the
+one PR that added this section):
 
 - **A writer that resets only `beforeEach`** leaves whatever the *last-executed*
   test recorded visible to every later file. Under the declared order the file
@@ -301,7 +302,12 @@ has shipped both:
    injectable option (`ControlRoutesOptions.listClients`) so the assertion is
    about the code under test, and let a dedicated unit test own the real
    singleton.
-3. `bun test --randomize --seed N` is the detector. Run a spread of seeds — one
+3. Note the failure often surfaces nowhere near the leak. A leftover
+   `state.rateLimitSeconds` makes `checkRateLimit` 429 an unrelated
+   `/responses` test whose body assertion then fails on `undefined` — the stack
+   names the victim, never the writer. When a `--randomize` failure makes no
+   local sense, look for a global the file reads but never sets.
+4. `bun test --randomize --seed N` is the detector. Run a spread of seeds — one
    passing seed proves nothing, and the seed is printed in the run summary so any
    failure replays exactly.
 
