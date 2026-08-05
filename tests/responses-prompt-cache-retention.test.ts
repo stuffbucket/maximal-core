@@ -28,6 +28,14 @@ const originalState = {
   accountType: state.accountType,
   models: state.models,
   manualApprove: state.manualApprove,
+  // The rate-limit knobs live on the same process-global `state` and gate
+  // /responses (checkRateLimit throws 429). A file that leaves
+  // `rateLimitSeconds` set — tests/start-run-server.test.ts drives
+  // `runServer({ rateLimit })` — makes every request here 429 with no local
+  // cause. Own them explicitly rather than inheriting the run's leftovers.
+  rateLimitSeconds: state.rateLimitSeconds,
+  rateLimitWait: state.rateLimitWait,
+  lastRequestTimestamp: state.lastRequestTimestamp,
 }
 
 // Records every serialized request body sent to /responses so tests can assert
@@ -64,6 +72,9 @@ beforeEach(() => {
   state.vsCodeVersion = "1.0.0"
   state.accountType = "individual"
   state.manualApprove = false
+  state.rateLimitSeconds = undefined
+  state.rateLimitWait = false
+  state.lastRequestTimestamp = undefined
   state.models = {
     object: "list",
     data: [
@@ -85,6 +96,9 @@ afterEach(() => {
   state.accountType = originalState.accountType
   state.models = originalState.models
   state.manualApprove = originalState.manualApprove
+  state.rateLimitSeconds = originalState.rateLimitSeconds
+  state.rateLimitWait = originalState.rateLimitWait
+  state.lastRequestTimestamp = originalState.lastRequestTimestamp
   // A non-OK upstream in these tests sets the rejection sidecar; clear it so it
   // can't leak into a sibling file's getAuthStatus() (which folds it in).
   state.lastUpstreamRejection = undefined
