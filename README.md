@@ -157,10 +157,26 @@ port — it is not mounted there at all. Both bound ports are reported by the bo
 banner, the stdout ready-line, `/status`, and `server/discover`.
 
 A desktop shell consumes core as a **sidecar binary**, not a library: it spawns
-`maximal start --port 0`, reads the bound port off the stdout ready-line, and
-supervises the process. `./supervisor` publishes the helpers for that
-(`awaitReadyLine`, `sidecarSpawnEnv`); `./control-contract` publishes the wire
-types with no engine dependency.
+`maximal start`, reads the bound ports off the stdout ready-line, and supervises
+the process. It does **not** need to pass `--port 0`: the control plane is
+already ephemeral by default, and forcing the *public* port to be ephemeral
+too would defeat the split — third-party tools would have no stable `/v1` to
+find. Pass `--port 0` only when you deliberately want a private engine that
+serves nobody else.
+
+Read both ports off the ready-line rather than assuming either: `controlPort`
+for JSON-RPC, `proxyPort` to advertise `/v1` (it is not necessarily 4141, since
+a held port falls back).
+
+```
+@@MAXIMAL_READY@@ {"v":1,"controlPort":51234,"proxyPort":4141,"pid":99}
+```
+
+`./supervisor` publishes the helpers for that (`awaitReadyLine`,
+`parseReadyLine`, `sidecarSpawnEnv`) and owns the ready-line parser so hosts do
+not re-derive the format. It accepts the pre-#10 single-port line too, so a
+newer host can supervise an older engine. `./control-contract` publishes the
+wire types with no engine dependency.
 
 ## Layout
 
