@@ -6,7 +6,7 @@
  * Note: this is a one-shot convenience for users who haven't enabled the
  * Apps panel toggle yet. The settings.json approach (writing
  * env.ANTHROPIC_BASE_URL into ~/.claude/settings.json — see
- * src/lib/claude-code-settings.ts and ADR/PR #74) is the recommended
+ * src/apps/claude-code/config.ts and ADR/PR #74) is the recommended
  * persistent path; this flag remains for users who want a one-time
  * shell-snippet without touching their Claude settings file.
  */

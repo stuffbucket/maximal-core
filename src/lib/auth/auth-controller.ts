@@ -2,7 +2,7 @@
  * In-memory state machine for the GitHub device-code auth flow,
  * driven on-demand by the Settings UI via /settings/api/auth/github/*.
  *
- * Distinct from `src/lib/token.ts`'s `setupGitHubToken`, which is the
+ * Distinct from `src/lib/auth/token.ts`'s `setupGitHubToken`, which is the
  * legacy boot-time path: it opens the browser, copies to clipboard,
  * and blocks the calling promise until the poll completes. The
  * controller below does none of those — it returns immediately,

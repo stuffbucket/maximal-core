@@ -195,7 +195,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   // lives at …/Maximal.app/Contents/MacOS/maximal, off every default
   // PATH; symlink it into ~/.local/bin so `maximal` works in a
   // terminal. Idempotent + best-effort — never blocks boot. No-op for
-  // Homebrew/dev launches (not an .app bundle). See lib/cli-path.ts.
+  // Homebrew/dev launches (not an .app bundle). See lib/platform/cli-path.ts.
   const link = ensureCliSymlink()
   if (link.linked) {
     consola.info(`Linked CLI onto PATH: ${link.symlinkPath} → ${link.target}`)
