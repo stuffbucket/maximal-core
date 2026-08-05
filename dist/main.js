@@ -39535,6 +39535,7 @@ function relayToShell(emit, verb) {
 }
 function createControlRpcMethods(deps) {
   const { hub: hub2, mutex } = deps;
+  const listClients = deps.listClients ?? listActiveClients;
   const registry2 = {
     health: () => ({ ok: true, version: BUILD_VERSION }),
     "auth/status": () => getAuthStatus(),
@@ -39544,7 +39545,7 @@ function createControlRpcMethods(deps) {
     "usage/get": () => getTokenUsageSummary("day"),
     "config/get": () => getConfig(),
     "clients/list": () => {
-      const clients2 = listActiveClients();
+      const clients2 = listClients();
       return { clients: clients2, total: clients2.length };
     },
     "update/status": () => getUpdateStatus(),
@@ -57447,7 +57448,7 @@ async function readKey(c5) {
 function registerEventStream(app, hub2) {
   app.get("/events", (c5) => streamSubscription(c5, hub2));
 }
-function registerReads(app) {
+function registerReads(app, listClients) {
   app.get("/auth", (c5) => c5.json(getAuthStatus()));
   app.get("/accounts", async (c5) => {
     try {
@@ -57473,7 +57474,7 @@ function registerReads(app) {
   });
   app.get("/config", (c5) => c5.json(getConfig()));
   app.get("/clients", (c5) => {
-    const clients2 = listActiveClients();
+    const clients2 = listClients();
     return c5.json({ clients: clients2, total: clients2.length });
   });
   app.get("/update-status", async (c5) => {
@@ -57559,8 +57560,8 @@ function registerAccountActions(app, hub2, mutex) {
     }
   }));
 }
-function registerRpc(app, hub2, mutex) {
-  const dispatch2 = createRpcHandler(createControlRpcMethods({ hub: hub2, mutex }));
+function registerRpc(app, deps) {
+  const dispatch2 = createRpcHandler(createControlRpcMethods(deps));
   app.post("/rpc", async (c5) => {
     const pinned = unsupportedVersion(c5);
     if (pinned !== null) {
@@ -57572,6 +57573,7 @@ function registerRpc(app, hub2, mutex) {
 }
 function createControlRoutes(options = {}) {
   const getRequestIp = options.getRequestIp ?? defaultGetRequestIp;
+  const listClients = options.listClients ?? listActiveClients;
   const hub2 = () => options.hub ?? getControlHub();
   const app = new Hono2;
   app.use("*", async (c5, next2) => {
@@ -57581,12 +57583,12 @@ function createControlRoutes(options = {}) {
     await next2();
   });
   registerEventStream(app, hub2);
-  registerReads(app);
+  registerReads(app, listClients);
   registerAuthActions(app);
   registerSettingsEndpoints(app);
   registerShellSignals(app);
   registerAccountActions(app, hub2, new AsyncMutex);
-  registerRpc(app, hub2, new AsyncMutex);
+  registerRpc(app, { hub: hub2, mutex: new AsyncMutex, listClients });
   return app;
 }
 var keyBodySchema, controlRoutes;

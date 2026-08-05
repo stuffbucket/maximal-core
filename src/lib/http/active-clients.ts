@@ -28,6 +28,14 @@ export interface ActiveClient {
   ageSeconds: number
 }
 
+/**
+ * The read side, as a type. The tracker below is process-global by design (the
+ * auth middleware writes to it on every allowed request), so any consumer that
+ * must not depend on what the rest of the process did takes a reader of this
+ * shape as an option instead of importing {@link listActiveClients} directly.
+ */
+export type ClientRosterReader = (maxAgeSeconds?: number) => Array<ActiveClient>
+
 const MAX_AGE_MS = 5 * 60 * 1000
 
 const clients = new Map<string, ActiveClientRecord>()

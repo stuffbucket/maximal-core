@@ -6,7 +6,7 @@
  * lastSeenAt instead of duplicating, and humanizeUserAgent fallback.
  */
 
-import { beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import {
   __resetActiveClientsForTests,
@@ -16,6 +16,15 @@ import {
 } from "~/lib/http/active-clients"
 
 beforeEach(() => {
+  __resetActiveClientsForTests()
+})
+
+// The tracker is a process-global Map, so a residue left by the *last* test to
+// run in this file is visible to every later file in the same Bun worker. A
+// `beforeEach` reset alone left the file clean only by accident — it depended on
+// the last-declared test happening to record nothing, which `bun test
+// --randomize` does not preserve.
+afterEach(() => {
   __resetActiveClientsForTests()
 })
 

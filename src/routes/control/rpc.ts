@@ -11,6 +11,7 @@
  */
 import type { Context } from "hono"
 
+import type { ClientRosterReader } from "~/lib/http/active-clients"
 import type { RpcRegistry } from "~/lib/jsonrpc/dispatch"
 import type { ControlHub } from "~/lib/live/hub"
 import type { AsyncMutex } from "~/lib/live/mutex"
@@ -59,6 +60,10 @@ export const SUPPORTED_PROTOCOL_VERSION = String(CONTROL_PROTOCOL_VERSION)
 export interface ControlRpcDeps {
   hub: () => ControlHub<ControlSnapshot>
   mutex: AsyncMutex
+  /** Injectable active-client roster; defaults to the process-global tracker.
+   *  Mirrors `ControlRoutesOptions.listClients` so `GET /clients` and
+   *  `clients/list` cannot answer from different state. */
+  listClients?: ClientRosterReader
 }
 
 /** Both account methods take `{ key }`; validated once so the two call sites
@@ -94,6 +99,7 @@ function relayToShell(emit: () => boolean, verb: "quitting" | "upgrading") {
  */
 export function createControlRpcMethods(deps: ControlRpcDeps): RpcRegistry {
   const { hub, mutex } = deps
+  const listClients = deps.listClients ?? listActiveClients
 
   const registry: RpcRegistry = {
     health: () => ({ ok: true, version: BUILD_VERSION }),
@@ -107,7 +113,7 @@ export function createControlRpcMethods(deps: ControlRpcDeps): RpcRegistry {
     "usage/get": () => getTokenUsageSummary("day"),
     "config/get": () => getConfig(),
     "clients/list": () => {
-      const clients = listActiveClients()
+      const clients = listClients()
       return { clients, total: clients.length }
     },
     "update/status": () => getUpdateStatus(),

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
+import type { ActiveClient } from "~/lib/http/active-clients"
 import type { ControlSnapshot } from "~/lib/live/resources"
 
 import { frameEnvelopeSchema, type FrameEnvelope } from "~/lib/live/contract"
@@ -13,11 +14,19 @@ afterEach(() => {
 })
 
 function makeApp(
-  opts: { ip?: string; hub?: ControlHub<ControlSnapshot> } = {},
+  opts: {
+    ip?: string
+    hub?: ControlHub<ControlSnapshot>
+    clients?: Array<ActiveClient>
+  } = {},
 ): ReturnType<typeof createControlRoutes> {
   return createControlRoutes({
     getRequestIp: () => opts.ip ?? "127.0.0.1",
     hub: opts.hub,
+    // The real roster is a process-global tracker every authed request writes
+    // to; injecting it keeps this file's assertions about what the route does,
+    // not about what ran before it in the same worker.
+    listClients: () => opts.clients ?? [],
   })
 }
 
@@ -44,6 +53,26 @@ describe("control route — reads", () => {
     const res = await makeApp().request("/clients")
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ clients: [], total: 0 })
+  })
+
+  test("GET /clients totals the roster it is given", async () => {
+    const roster: Array<ActiveClient> = [
+      {
+        key: "k1|Cline/0.5",
+        label: "Cline",
+        userAgent: "Cline/0.5",
+        ageSeconds: 3,
+      },
+      {
+        key: "k2|curl/8",
+        label: "curl",
+        userAgent: "curl/8",
+        ageSeconds: 9,
+      },
+    ]
+    const res = await makeApp({ clients: roster }).request("/clients")
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ clients: roster, total: 2 })
   })
 
   test("GET /models returns a (possibly empty) catalog with a count", async () => {
