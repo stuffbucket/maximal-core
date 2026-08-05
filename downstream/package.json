@@ -1,0 +1,10 @@
+{
+  "name": "@stuffbucket/maximal-core-downstream-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Simulated downstream consumer. Typechecks against the published exports map of @stuffbucket/maximal-core — never against src/. Run with `bun downstream/check.ts`.",
+  "type": "module",
+  "dependencies": {
+    "@stuffbucket/maximal-core": "file:.."
+  }
+}

@@ -23,6 +23,16 @@
       "~/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*", "tests/**/*", "eslint.config.js", "tsup.config.ts"],
+  // `downstream/check.ts` is the runner for the downstream-contract typecheck and
+  // is checked here. `downstream/src/**` is deliberately NOT included: those files
+  // must only ever be compiled by downstream/tsconfig*.json, which has no `~/*`
+  // paths alias — resolving them through this config would defeat the fixture.
+  "include": [
+    "src/**/*",
+    "tests/**/*",
+    "eslint.config.js",
+    "tsup.config.ts",
+    "downstream/check.ts"
+  ],
   "exclude": ["node_modules", "dist", "build"]
 }
