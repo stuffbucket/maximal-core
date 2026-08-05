@@ -100,9 +100,32 @@ describe("parity with the real package.json", () => {
 
   // Same PATH limitation, same failure: a bare `simple-git-hooks` in `prepare`
   // exits 127 under the pack lifecycle and aborts the publish AFTER prepack has
-  // already rewritten dist/.
+  // already rewritten dist/. So the invocation must go through `bun x`.
+  //
+  // Not an equality assertion any more, because `prepare` also has to VERIFY
+  // its own result: `simple-git-hooks` catches every install error and exits 0
+  // (its cli.js `.catch(e => console.log(...))`), so a failed hook install
+  // reads as success and the pre-commit lint + secret scan silently stop
+  // existing. `prepare` therefore ends by checking the hook file is actually
+  // there, at `git rev-parse --git-path hooks` — which resolves through the
+  // common dir, so a linked worktree (where simple-git-hooks always fails,
+  // upstream bug: it joins `.git/hooks` onto cwd rather than the resolved git
+  // dir) still passes off the main checkout's hook.
   test("`prepare` resolves its binary through the interpreter too", () => {
-    expect(readScripts().prepare).toBe("bun x simple-git-hooks")
+    const prepare = readScripts().prepare
+    expect(prepare).toContain("bun x simple-git-hooks")
+    // No bare invocation anywhere in the chain.
+    expect(prepare).not.toMatch(/(?:^|[;&|]\s*)simple-git-hooks/)
+  })
+
+  // The other half of the same fix: `prepare` must not exit 0 when the hook
+  // was not installed. Guarded so it is a no-op outside a git repo, which is
+  // how a git-dependency or tarball install sees it.
+  test("`prepare` verifies the hook landed, and no-ops outside a git repo", () => {
+    const prepare = readScripts().prepare
+    expect(prepare).toContain("git rev-parse --git-path hooks")
+    expect(prepare).toContain("exit 0")
+    expect(prepare).toContain("/pre-commit")
   })
 
   // `engines.node` is a DECLARATION, not a gate: `bun install` ignores it

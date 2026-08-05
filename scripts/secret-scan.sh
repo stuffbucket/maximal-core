@@ -45,29 +45,52 @@ if [ "${#paths[@]}" -eq 0 ]; then
 fi
 
 # --no-verification: regex/entropy only, no network round-trip.
-# --results: trufflehog defaults to reporting only `verified` findings,
-#            which `--no-verification` then suppresses entirely. Include
-#            unverified + unknown so pre-commit fails on plausible
-#            secrets without phoning home.
+# --results: pinned rather than defaulted. trufflehog 3.96.0's own
+#            `--help` states the default is already
+#            `verified,unverified,unknown`, so this is currently a
+#            no-op — it is here so a future default change cannot
+#            silently narrow what we act on.
+# --fail: exit non-zero when anything is reported. MEASURED on
+#         trufflehog 3.96.0 against a planted high-entropy fake `ghp_`
+#         token, which the Github detector reports as UNVERIFIED:
+#
+#           --no-verification --fail                        -> 183
+#           --no-verification --fail --results=<all three>  -> 183
+#           --fail (verification on)                        -> 183
+#           --no-verification, no --fail                    -> 0
+#           --no-verification --fail, clean tree            -> 0
+#
+#         So `--fail` fires on unverified findings and combines fine
+#         with `--no-verification`. An earlier comment here claimed the
+#         opposite (that `--fail` only trips on *verified* findings, and
+#         that the default `--results` reports only verified ones);
+#         both claims were wrong for this version, and the second is
+#         contradicted by trufflehog's own `--help` text.
 # --no-update: don't phone home to check for a new trufflehog release.
 #
-# We don't use --fail because in this trufflehog version it only
-# exits non-zero on *verified* findings, which contradicts
-# --no-verification. Instead, capture output and fail if any
-# 'Found …result' line appears.
+# The `Found …result` grep below is kept as a fallback for older
+# trufflehog builds where `--fail` may not have behaved this way; on
+# 3.96.0 the exit code alone is sufficient. Note the `|| status=$?`:
+# under `set -e` a bare `output=$(trufflehog … --fail)` would abort the
+# script on exit 183 before anything was printed.
+status=0
 output=$(trufflehog filesystem "${paths[@]}" \
   --no-verification \
   --results=verified,unknown,unverified \
-  --no-update 2>&1)
-status=$?
+  --fail \
+  --no-update 2>&1) || status=$?
 echo "$output"
-if [ "$status" -ne 0 ]; then
-  exit "$status"
-fi
-if printf '%s\n' "$output" | grep -qE '^Found (verified|unverified|unknown) result'; then
+
+# 183 == "--fail was set and results were found". Any other non-zero
+# status is trufflehog itself failing, and is propagated as-is.
+if [ "$status" -eq 183 ] \
+  || printf '%s\n' "$output" | grep -qE '^Found (verified|unverified|unknown) result'; then
   echo "[secret-scan] ✖ blocked: secrets detected in staged changes" >&2
   echo "[secret-scan]   if this is a false positive, add the path to" >&2
   echo "[secret-scan]   .trufflehog-exclude or set SKIP_SECRET_SCAN=1" >&2
   exit 1
+fi
+if [ "$status" -ne 0 ]; then
+  exit "$status"
 fi
 exit 0
