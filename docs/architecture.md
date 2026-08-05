@@ -86,6 +86,23 @@ models use the native Messages API or fall back to Chat Completions.
 - `src/lib/auth/secrets.ts` — file-based provider keys at `~/.local/share/maximal/secrets/<name>` (mode 0600). Env wins; file fills in unset values.
 - `src/lib/runtime-state/cache.ts` — `Cache<K,V>` LRU wrapper with hit/miss/eviction metrics. Wrapped instances register globally for `/_debug/state`.
 
+### Port selection
+
+`src/lib/start/port.ts` decides what to bind, driven by `config.server.portPolicy`:
+
+| Policy | Behaviour |
+|---|---|
+| `next` (default) | Requested port busy → scan upward for the first usable one, up to `PORT_SCAN_LIMIT` (20). Announces the move. |
+| `fail` | Report who holds it and exit 1. The pre-policy behaviour. |
+| `replace` | Evict a *maximal* instance holding it, then bind. Never evicts a foreign process — that degrades to `fail`. |
+
+Two properties worth preserving:
+
+- **`--port 0` bypasses the policy entirely.** A supervised sidecar asks the OS to choose, so there is nothing to resolve. Every desktop-spawned engine takes this path.
+- **A port is usable only when nothing answers HTTP there *and* `isPortBindable` succeeds.** These answer different questions. An HTTP probe cannot see a non-HTTP listener, and one that resolves `::1` cannot see an app holding `127.0.0.1`. The bind test deliberately tries the *specific* loopback addresses rather than only the wildcard, because Node sets `SO_REUSEADDR` and a wildcard bind will otherwise succeed alongside a specific-address one — reporting free a port the engine would then be unreachable on for any IPv4-first client.
+
+`resolvePort` returns a decision and never exits; `portOrExit` is the single place that reports and exits. That split is what makes the policy testable without stubbing process globals.
+
 ## Control API + live event stream
 
 Core is headless: sign-in is CLI-only and the engine serves no UI. A decoupled

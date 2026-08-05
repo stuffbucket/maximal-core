@@ -134,6 +134,11 @@ export const AppConfigSchema = z
           .optional(),
       })
       .optional(),
+    server: z
+      .object({
+        portPolicy: z.enum(["next", "fail", "replace"]).optional(),
+      })
+      .optional(),
     ui: z
       .object({
         menuBarOnly: z.boolean().optional(),

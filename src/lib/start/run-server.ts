@@ -14,7 +14,11 @@ import { serve } from "srvx"
 import { removeLegacyShimIfPresent } from "~/apps/claude-code/detect"
 import { reconcileClaudeCodeOnBoot } from "~/apps/claude-code/reconcile"
 import { type AccountType } from "~/lib/auth/auth-types"
-import { mergeConfigWithDefaults } from "~/lib/config/config"
+import {
+  DEFAULT_PORT_POLICY,
+  getConfig,
+  mergeConfigWithDefaults,
+} from "~/lib/config/config"
 import { initProxyFromEnv } from "~/lib/http/proxy"
 import { ensureCliSymlink } from "~/lib/platform/cli-path"
 import { initOpencodeVersion } from "~/lib/platform/opencode"
@@ -34,7 +38,7 @@ import { initBootLogger, printReadyBanner } from "./boot-io"
 import { emitBootStatus, emitReadyLine } from "./boot-status"
 import { bootSecrets, bootstrapUpstream } from "./bootstrap"
 import { runClaudeCodeFlow } from "./claude-code-flow"
-import { maybeEvictRunning, probePort, reportPortBusyAndExit } from "./port"
+import { maybeEvictRunning, portOrExit, resolvePort } from "./port"
 import {
   markSessionRunning,
   staleSessionMarkerPresent,
@@ -82,19 +86,26 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   consola.start("Starting maximal…")
 
   // If --replace was passed, try to take over the port from a
-  // running instance before the regular probe.
+  // running instance before the regular probe. An explicit flag outranks the
+  // configured policy — the user said what they wanted on this run.
   if (options.replace) {
     emitBootStatus(`Taking over port ${options.port}…`)
     await maybeEvictRunning(options.port)
   }
 
-  // Bail out early if the port is already taken — much friendlier
-  // than crashing 5s later inside srvx with EADDRINUSE.
-  const portState = await probePort(options.port)
-  if (portState !== "free") reportPortBusyAndExit(options.port, portState)
-
-  // Ensure config is merged with defaults at startup
+  // Ensure config is merged with defaults at startup. Ahead of the port
+  // decision because that decision now reads `server.portPolicy` from it.
   mergeConfigWithDefaults()
+
+  // Resolve the port we will actually bind. Default policy moves to the next
+  // free port rather than refusing to start; `fail` restores the old behaviour.
+  // Port 0 passes through untouched — the OS is choosing.
+  const port = portOrExit(
+    await resolvePort(
+      options.port,
+      getConfig().server?.portPolicy ?? DEFAULT_PORT_POLICY,
+    ),
+  )
 
   const git = getGitVersion()
   consola.info(
@@ -130,7 +141,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   // Record the port we're about to bind so the control-surface Origin guard +
   // CORS (server.ts) know which localhost origin is "us" (§6). Set before the
   // bind since the server module reads it lazily, per-request.
-  state.boundPort = options.port
+  state.boundPort = port
 
   await ensurePaths()
   bootSecrets()
@@ -194,7 +205,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     : "InProcessFetchExecutor (search disabled; set OLLAMA_API_KEY)"
   consola.info(`Web-tools executor: ${executorName}`)
 
-  const serverUrl = `http://localhost:${options.port}`
+  const serverUrl = `http://localhost:${port}`
 
   if (options.claudeCode) {
     if (state.models) {
@@ -219,13 +230,13 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   const httpServer = serveImpl({
     fetch: server.fetch,
-    port: options.port,
+    port,
     bun: {
       idleTimeout: 0,
     },
   })
 
-  finalizeBoot(httpServer, options.port)
+  finalizeBoot(httpServer, port)
 }
 
 /**

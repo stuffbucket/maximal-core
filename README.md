@@ -100,6 +100,7 @@ and config are shared with the parent `maximal` app.
 | Knob | CLI | Env | File | Default |
 |---|---|---|---|---|
 | Listen port | `--port` | — | — | `4141` |
+| Busy-port policy | — | — | `config.server.portPolicy` | `next` |
 | Account type | `--account-type` | — | — | `individual` |
 | Verbose logging | `--verbose` | — | — | off |
 | Manual approval | `--manual` | — | — | off |
