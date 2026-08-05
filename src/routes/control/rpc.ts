@@ -11,10 +11,8 @@
  */
 import type { Context } from "hono"
 
-import { streamSSE } from "hono/streaming"
-
 import type { RpcRegistry } from "~/lib/jsonrpc/dispatch"
-import type { ControlHub, ControlSink } from "~/lib/live/hub"
+import type { ControlHub } from "~/lib/live/hub"
 import type { AsyncMutex } from "~/lib/live/mutex"
 import type { ControlSnapshot } from "~/lib/live/resources"
 
@@ -40,6 +38,7 @@ import {
   buildAppsList,
   buildModelsList,
 } from "~/lib/live/resources"
+import { streamSubscription } from "~/lib/live/stream-subscription"
 import { cacheModels } from "~/lib/platform/utils"
 import { emitQuitRequest, emitUpdateRequest } from "~/lib/start/boot-status"
 import { getTokenUsageSummary } from "~/lib/token-usage"
@@ -162,23 +161,7 @@ export function createControlRpcMethods(deps: ControlRpcDeps): RpcRegistry {
      * would race it.
      */
     "subscriptions/listen": (_params: unknown, c: Context) =>
-      streamSSE(c, async (stream) => {
-        const sink: ControlSink = {
-          write: async (frame) => {
-            await stream.write(frame)
-          },
-          close: () => {
-            // Resolved by the abort handler below.
-          },
-        }
-        const unsubscribe = await hub().subscribe(sink)
-        await new Promise<void>((resolve) => {
-          stream.onAbort(() => {
-            unsubscribe()
-            resolve()
-          })
-        })
-      }),
+      streamSubscription(c, hub),
 
     "app/quit": relayToShell(emitQuitRequest, "quitting"),
     "app/upgrade": relayToShell(emitUpdateRequest, "upgrading"),

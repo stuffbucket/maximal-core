@@ -11,7 +11,6 @@
 import type { Context, Hono as HonoApp } from "hono"
 
 import { Hono } from "hono"
-import { streamSSE } from "hono/streaming"
 import { z } from "zod"
 
 import {
@@ -34,7 +33,7 @@ import { listActiveClients } from "~/lib/http/active-clients"
 import { createRpcHandler } from "~/lib/jsonrpc/dispatch"
 import { controlError } from "~/lib/jsonrpc/errors"
 import { errorResponse } from "~/lib/jsonrpc/message"
-import { type ControlHub, type ControlSink } from "~/lib/live/hub"
+import { type ControlHub } from "~/lib/live/hub"
 import { AsyncMutex } from "~/lib/live/mutex"
 import {
   buildAccountsList,
@@ -43,6 +42,7 @@ import {
   type ControlSnapshot,
 } from "~/lib/live/resources"
 import { getControlHub } from "~/lib/live/service"
+import { streamSubscription } from "~/lib/live/stream-subscription"
 import { cacheModels } from "~/lib/platform/utils"
 import { emitQuitRequest, emitUpdateRequest } from "~/lib/start/boot-status"
 import { getTokenUsageSummary } from "~/lib/token-usage"
@@ -81,25 +81,7 @@ async function readKey(c: Context): Promise<string | null> {
  * rings frames. Every connect gets a fresh snapshot.
  */
 function registerEventStream(app: HonoApp, hub: HubAccessor): void {
-  app.get("/events", (c) => {
-    return streamSSE(c, async (stream) => {
-      const sink: ControlSink = {
-        write: async (frame) => {
-          await stream.write(frame)
-        },
-        close: () => {
-          // The handler resolves on abort below; nothing to do here.
-        },
-      }
-      const unsubscribe = await hub().subscribe(sink)
-      await new Promise<void>((resolve) => {
-        stream.onAbort(() => {
-          unsubscribe()
-          resolve()
-        })
-      })
-    })
-  })
+  app.get("/events", (c) => streamSubscription(c, hub))
 }
 
 /** Read endpoints — each mirrors a live topic and shares its type. */
