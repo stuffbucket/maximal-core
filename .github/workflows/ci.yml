@@ -55,22 +55,25 @@ jobs:
         # #14 removed `port` from ReadyLine with this whole job green.
         run: bun run typecheck:downstream
 
-      - name: Committed bindings are fresh
-        # The other half of maximal-core#8: dist/lib is force-tracked so a
-        # git-dependency install resolves the exports map with no build step,
-        # which means a consumer compiles against those committed files. #14
-        # changed src/lib/live/supervisor.ts, nothing regenerated them, and main
+      - name: Committed dist is fresh
+        # The other half of maximal-core#8. Both dist/lib and dist/main.js are
+        # force-tracked so a git-dependency install works with no build step:
+        # dist/lib backs the exports map a consumer compiles against, and
+        # dist/main.js IS the `bin` a consumer runs. #14 changed
+        # src/lib/live/supervisor.ts, nothing regenerated dist/lib, and main
         # shipped new runtime behaviour behind the old `{port, pid}` declaration.
         # The step above proves the published surface COMPILES; this one proves
-        # it is the surface src/ actually produces.
+        # it is the surface src/ actually produces — for the bundle too, where
+        # staleness does not mislead a compiler, it silently runs old code.
         #
         # Lives in ci.yml, not its own workflow: it must run on every PR that
-        # touches src/lib/**, and a path-filtered workflow that is also a
-        # required check never reports in the merge queue. It also reuses the
-        # install this job already did.
+        # touches src/**, and a path-filtered workflow that is also a required
+        # check never reports in the merge queue. It also reuses the install this
+        # job already did.
         #
-        # Rebuilds into a temp dir outside the repo, so dist/ is untouched and
-        # later steps see a clean tree.
+        # Rebuilds into temp dirs outside the repo and compares against git's
+        # INDEX, so dist/ is untouched and no earlier or later rebuild (the
+        # Downstream step above, the Build step below) can launder the result.
         run: bun run bindings:check
 
       - name: Guard boundary casts
