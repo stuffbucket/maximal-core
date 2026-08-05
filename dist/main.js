@@ -67218,7 +67218,8 @@ var MAX_CONSECUTIVE_FUNCTION_CALL_WHITESPACE = 20, FunctionCallArgumentsValidati
     }
   }
   return { nextCount: count2, exceeded: false };
-}, createResponsesStreamState = () => ({
+}, createResponsesStreamState = (estimatedInputTokens) => ({
+  estimatedInputTokens,
   messageStartSent: false,
   messageCompleted: false,
   nextContentBlockIndex: 0,
@@ -67520,7 +67521,8 @@ var MAX_CONSECUTIVE_FUNCTION_CALL_WHITESPACE = 20, FunctionCallArgumentsValidati
 }, messageStart = (state2, response) => {
   state2.messageStartSent = true;
   const inputCachedTokens = response.usage?.input_tokens_details?.cached_tokens;
-  const inputTokens = (response.usage?.input_tokens ?? 0) - (inputCachedTokens ?? 0);
+  const upstreamInput = response.usage?.input_tokens;
+  const inputTokens = upstreamInput === undefined ? state2.estimatedInputTokens ?? 0 : upstreamInput - (inputCachedTokens ?? 0);
   return [
     {
       type: "message_start",
@@ -68152,6 +68154,15 @@ var handleWithChatCompletions = async (c5, anthropicPayload, options) => {
     }
     recordUsage(usage);
   });
+}, estimateInputTokens = async (anthropicPayload, selectedModel) => {
+  if (!selectedModel)
+    return;
+  try {
+    const count2 = await getTokenCount(translateToOpenAI(anthropicPayload), selectedModel);
+    return count2.input > 0 ? count2.input : undefined;
+  } catch {
+    return;
+  }
 }, handleWithResponsesApi = async (c5, anthropicPayload, options) => {
   const { logger: logger3, selectedModel, ...requestOptions } = options;
   const responsesPayload = translateAnthropicMessagesToResponsesPayload(anthropicPayload);
@@ -68169,6 +68180,7 @@ var handleWithChatCompletions = async (c5, anthropicPayload, options) => {
   compactInputByLatestCompaction(responsesPayload);
   debugJson(logger3, "Translated Responses payload:", responsesPayload);
   const { vision, initiator } = getResponsesRequestOptions(responsesPayload);
+  const inputEstimate = estimateInputTokens(anthropicPayload, selectedModel);
   const response = await createResponses(responsesPayload, {
     vision,
     initiator,
@@ -68177,7 +68189,7 @@ var handleWithChatCompletions = async (c5, anthropicPayload, options) => {
   if (responsesPayload.stream && isAsyncIterable(response)) {
     logger3.debug("Streaming response from Copilot (Responses API)");
     return streamSSE(c5, async (stream3) => {
-      const streamState = createResponsesStreamState();
+      const streamState = createResponsesStreamState(await inputEstimate);
       let usage = {};
       try {
         for await (const chunk of response) {
@@ -68306,6 +68318,7 @@ var handleWithChatCompletions = async (c5, anthropicPayload, options) => {
 var init_api_flows = __esm(() => {
   init_streaming2();
   init_config();
+  init_tokenizer();
   init_logger();
   init_utils2();
   init_token_usage();

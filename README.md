@@ -179,9 +179,12 @@ THIRD-PARTY-LICENSE        Bundled-dependency license pointer (npm SBOM).
 
 ## Releasing
 
-`docs/release-runbook.md` is the canonical checklist. Releases are automated by
-release-please: conventional commits on `main` accrue into an open "release PR"
-that bumps the version and updates `CHANGELOG.md`; merging it tags `vX.Y.Z`.
+`docs/release-runbook.md` is the canonical checklist. A release is a **GitHub
+milestone whose title is the tag**: assigning a PR to `vX.Y.Z` pre-selects its
+release, so what ships is reviewable before the tag exists. `bun run
+release:notes vX.Y.Z` turns the milestone into changelog-shaped Markdown, and
+`bun run release:manual` (bumpp) cuts the version. Tagging is a deliberate
+human step — this repo has no release automation.
 
 ## Status
 

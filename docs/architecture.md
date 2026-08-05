@@ -197,16 +197,28 @@ decision itself is [ADR-0011](decisions/0011-mock-module-leakage-discipline.md).
 
 ## Release & PR conventions
 
-- **Release is driven by Conventional Commit *types*.** release-please
-  scans commits since the last tag; only `feat:` (minor) and `fix:`
-  (patch) cut a release. `test:`/`chore:`/`ci:`/`docs:`/`refactor:` are
-  release-silent. If release-please "isn't doing anything," it almost
-  certainly found no `feat`/`fix` commit — check the `release-pr` step
-  log for `No user facing commits found ... skipping` before assuming
-  it's broken.
+- **A release is a GitHub milestone whose title is the tag.** There is no
+  release automation in this repo — `release-please.yml` and `release.yml`
+  do not exist here, and nothing reads `release-please-config.json`. A PR
+  pre-selects its release by being assigned to the `vX.Y.Z` milestone;
+  whatever is in that milestone is what ships. `bun run release:notes
+  vX.Y.Z` turns it into changelog-shaped Markdown. See
+  [`docs/release-runbook.md`](release-runbook.md).
+- **The version is chosen by a human, up front.** Pre-1.0, `feat:` and
+  `fix:` both cut a **patch**, and a breaking change (`feat!:`) cuts a
+  **minor** — the pre-1.0 convention `release-please-config.json` still
+  declares (`bump-minor-pre-major` + `bump-patch-for-minor-pre-major`).
+  This matters more than it looks: `^0.2.0` means `>=0.2.0 <0.3.0`, so a
+  breaking change released as a patch is *auto-installed* by a downstream
+  consumer. Minor is the only thing that puts it out of range.
+- **Conventional Commit *types* still drive the notes.** They no longer
+  decide *whether* a release happens (the milestone does), but they decide
+  which section an entry lands in, and a `!` is what emits the
+  `BREAKING CHANGES` block. `release:notes` refuses to emit on a title it
+  cannot parse rather than silently dropping the entry.
 - **Squash-merge uses the PR *title* as the commit subject.** So the PR
   title must be a single valid Conventional Commit (`fix: …`, not
   `test+fix: …`). A non-standard type like `test+fix` parses as one
-  unrecognized token and release-please skips it — even if the diff
-  contains a real `fix:`. Title PRs accordingly; the body's individual
-  commit messages don't reach `main` through a squash.
+  unrecognized token, and since the notes are generated from PR titles it
+  is the title — not the body's individual commits, which a squash
+  discards — that has to be right.

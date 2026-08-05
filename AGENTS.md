@@ -48,8 +48,13 @@ Each rule states the prohibition; the linked doc is its only elaboration.
   `mockModuleLeakGuard`; prefer injectable options over mocking a shared module
   at all — [`docs/dev/testing-strategy.md`](docs/dev/testing-strategy.md) §5.1.
 - **A PR title must be a single valid Conventional Commit.** Squash-merge uses
-  it as the commit subject and release-please parses it —
+  it as the commit subject, and the release notes are generated from PR titles,
+  so the title is the only thing that reaches the changelog. Mark a breaking
+  change with `!` — that is what puts it in a minor rather than a patch, and a
+  breaking change shipped as a patch lands inside a consumer's `^0.y.z` range.
   [`docs/architecture.md`](docs/architecture.md) → _Release & PR conventions_.
+- **Assign every PR to a release milestone.** The milestone title is the tag
+  that will be cut; it is how a PR pre-selects the release it ships in.
 
 ## Read before you touch
 
