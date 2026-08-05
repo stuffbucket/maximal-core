@@ -31,7 +31,7 @@ import { startTokenUsageRetention } from "~/lib/token-usage"
 import { getGitVersion, shortSha } from "~/lib/update/version"
 
 import { initBootLogger, printReadyBanner } from "./boot-io"
-import { emitBootStatus } from "./boot-status"
+import { emitBootStatus, emitReadyLine } from "./boot-status"
 import { bootSecrets, bootstrapUpstream } from "./bootstrap"
 import { runClaudeCodeFlow } from "./claude-code-flow"
 import { maybeEvictRunning, probePort, reportPortBusyAndExit } from "./port"
@@ -208,6 +208,9 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   emitBootStatus("Starting the server…")
   printReadyBanner(serverUrl)
+  // After the bind, never before: a supervisor treats this line as "connectable
+  // now" and would otherwise race a socket that isn't listening yet.
+  emitReadyLine({ port: options.port, pid: process.pid })
 
   const { server } = await import("~/server")
 

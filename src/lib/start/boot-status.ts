@@ -11,8 +11,10 @@
  *
  * All are no-ops for plain CLI users — gated on the parent-pid env the shell sets
  * when it spawns the sidecar — so their terminal never sees a marker. MUST stay in
- * sync with the `BOOT_STATUS_MARKER` / `QUIT_REQUEST_MARKER` / `UPDATE_REQUEST_MARKER`
- * constants in shell/src-tauri/src/lib.rs.
+ * `READY_MARKER` — the structured `{port,pid}` ready-line a supervisor parses to
+ * discover an ephemeral port (maximal-core#3); see `emitReadyLine`.
+ *
+ * All marker constants MUST stay in sync with the supervisor that parses them.
  */
 
 export const BOOT_STATUS_MARKER = "@@MAXIMAL_STATUS@@"
@@ -20,6 +22,36 @@ export const BOOT_STATUS_MARKER = "@@MAXIMAL_STATUS@@"
 export function emitBootStatus(message: string): void {
   if (!process.env.MAXIMAL_SIDECAR_PARENT_PID) return
   process.stdout.write(`${BOOT_STATUS_MARKER} ${message}\n`)
+}
+
+export const READY_MARKER = "@@MAXIMAL_READY@@"
+
+/** What a supervisor needs to reach and manage a freshly-spawned sidecar. */
+export interface ReadyLine {
+  /** The port actually bound. Load-bearing: a supervisor asks for port 0 to get
+   *  an ephemeral port, so this is the only way it learns where to connect. */
+  port: number
+  /** The sidecar's pid — the key a client uses to invalidate cached
+   *  `server/discover` results when the process is replaced (maximal-core#8). */
+  pid: number
+}
+
+/**
+ * Announce readiness on stdout as a single structured line (maximal-core#3).
+ *
+ * This exists because a supervised sidecar binds an **ephemeral** port rather
+ * than a fixed 4141, so the supervisor cannot know the URL in advance and
+ * polling a guessed port is a race. Emitted only once the server is actually
+ * accepting connections — a supervisor that connects on this line must not find
+ * a closed socket.
+ *
+ * Gated on the parent-pid env like every other marker, so a plain CLI user's
+ * terminal never sees it.
+ */
+export function emitReadyLine(ready: ReadyLine): boolean {
+  if (!process.env.MAXIMAL_SIDECAR_PARENT_PID) return false
+  process.stdout.write(`${READY_MARKER} ${JSON.stringify(ready)}\n`)
+  return true
 }
 
 export const QUIT_REQUEST_MARKER = "@@MAXIMAL_QUIT@@"
