@@ -151,8 +151,9 @@ git push && git push origin vX.Y.Z
 Pushing the tag fires [`release-artifacts.yml`](../.github/workflows/release-artifacts.yml).
 It builds `bun-darwin-arm64` on a macOS arm64 runner and `bun-windows-x64` on a
 Windows x64 runner — **natively, because every check it runs executes the
-binary** — verifies each one, and attaches both plus `SHA256SUMS` and
-`ARTIFACTS.md` to the release for the tag.
+binary** — verifies each one with `verify:artifact` *and* the full `e2e:binary`
+suite, and attaches both plus `SHA256SUMS` and `ARTIFACTS.md` to the release for
+the tag.
 
 > **Wait for it to go green before you run `gh release create`.** The workflow
 > creates the release itself, **as a draft**, if none exists — so the order that
@@ -185,13 +186,14 @@ bun run verify:artifact -- --binary=dist-bin/maximal   # --version, boot, x-maxi
 bun run e2e:binary -- --binary=dist-bin/maximal        # seam + feed + lifecycle vs that exact file
 ```
 
-> **`bun run verify:build` is not this check and never was.** It probes a proxy
-> already *running* on your machine and compares the `+<sha>` an `app:dev` build
-> embeds in `x-maximal-version` against `origin/main`. A release binary embeds no
-> `+<sha>`, so it reports `UNKNOWN` and exits 1 on every release artifact, by
-> construction. It answers "is my dev sidecar stale"; `verify:artifact` answers
-> "is this file the release it claims to be". Earlier revisions of this step
-> listed `verify:build` here. That was wrong.
+> **`bun run dev:stale-check` is not this check and never was.** It probes a
+> proxy already *running* on your machine and compares the `+<sha>` an `app:dev`
+> build embeds in `x-maximal-version` against `origin/main`. A release binary
+> embeds no `+<sha>`, so it reports `UNKNOWN` and exits 1 on every release
+> artifact, by construction. It answers "is my dev sidecar stale";
+> `verify:artifact` answers "is this file the release it claims to be". It was
+> called `verify:build` until v0.3.3 and earlier revisions of this step listed
+> it here. That was wrong; the rename is the fix.
 
 ### The binaries are unsigned, and that is not a formality
 
@@ -321,10 +323,15 @@ Listed so nobody re-derives it from a stale doc:
   `release-artifacts.yml` publishes it with a `SHA256SUMS`; neither signs it,
   and there is no Apple or Authenticode credential in this repo to sign it with.
   See [step 5](#the-binaries-are-unsigned-and-that-is-not-a-formality).
-- No verification that the Windows binary passes the behavioural e2e suite.
-  `e2e:lifecycle` spawns POSIX `sleep` as its decoy parent, so the Windows leg
-  of `release-artifacts.yml` runs `verify:artifact` only — boot, serve, version
-  header, clean shutdown. Making the lifecycle harness portable is the fix.
+- No proof that the Windows binary shuts down *gracefully*. Both legs of
+  `release-artifacts.yml` now run `verify:artifact` and the full `e2e:binary`
+  suite — the lifecycle harness stopped spawning POSIX `sleep` as its decoy
+  parent and uses the Bun that is already running it. What is left is a platform
+  limit, not a harness gap: Windows has no SIGTERM, `child.kill("SIGTERM")` is
+  `TerminateProcess`, and nothing in Node or Bun can deliver a graceful stop to
+  a child there. So the Windows shutdown checks prove the process is terminable;
+  the drain path (Claude Code revert, pidfile removal, session sentinel) is only
+  exercised on macOS. The parent-death watchdog is exercised on both.
 - No check that a tag is *annotated*. `release-tag-check.yml` compares the
   version and nothing else; `-a` is still on you.
 - No prerelease support anywhere. `vX.Y.Z-rc.1` is not a release tag to any of

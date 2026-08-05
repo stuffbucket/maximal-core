@@ -1,18 +1,26 @@
 #!/usr/bin/env bun
 /**
- * verify-build.ts — "build-readiness" check. Confirms the proxy CURRENTLY
- * running on a host was built from the commit you intend to test, and that the
- * config flags a live test needs are set. Bridges the gap between "merged to
- * main" and "in the running sidecar binary" — there is no automatic link, and
- * a stale `app:dev` build silently omits everything merged since it was built.
+ * `bun run dev:stale-check` — is the sidecar CURRENTLY RUNNING on this machine
+ * built from the commit I think it is?
+ *
+ * **This does not verify a build artifact, and it cannot gate a release.** It
+ * was called `verify:build` until v0.3.3, sat next to `verify:artifact`, and got
+ * reached for on release binaries because of it. It takes no file path: it
+ * probes a live proxy, so with nothing running it exits 2 and with a release
+ * binary running it exits 1 — a release build embeds no `+<sha>`, so the verdict
+ * is `UNKNOWN` by construction. `bun run verify:artifact -- --binary=<path>` is
+ * the check for a shipped file. Nothing here is on any release path.
+ *
+ * What it IS for: the dev loop. There is no automatic link between "merged to
+ * main" and "in the binary my host is running", and a stale `app:dev` build
+ * silently omits everything merged since it was built.
  *
  * How the running commit is known: the sidecar embeds
  * `${pkg.version}-dev+${sha.slice(0,8)}` as `BUILD_VERSION` at compile time via
- * `bun build --compile --define __MAXIMAL_VERSION__=...` (see
- * scripts/build-sidecar.ts). The proxy echoes it on every response as the
- * `x-maximal-version` header (src/server.ts). So the header's `+<sha>` suffix
- * IS the source commit the binary was built from — that is exactly what we
- * compare against origin/main.
+ * `bun build --compile --define __MAXIMAL_VERSION__=...`. The proxy echoes it on
+ * every response as the `x-maximal-version` header (src/server.ts). So the
+ * header's `+<sha>` suffix IS the source commit the binary was built from —
+ * that is exactly what we compare against origin/main.
  *
  * What it reports:
  *   - PASS  : running build sha == origin/main  (nothing merged is missing)
@@ -20,18 +28,21 @@
  *             rebuild needed (`bun run app:dev`)
  *   - AHEAD : running sha is ahead of / diverged from origin/main (local work
  *             or origin/main not fetched) — informational
- *   - UNKNOWN: header/sha unparseable, or origin/main not resolvable
+ *   - UNKNOWN: header/sha unparseable (a release build), or origin/main not
+ *             resolvable
  * Plus a config check: is `promptCacheRetention` set to "24h" (needed to test
- * #252 /responses prefix-cache retention end-to-end)?
+ * #252 /responses prefix-cache retention end-to-end)? It reads the developer's
+ * own app-data `config.json` — another reason this is a workstation tool and
+ * not a CI one.
  *
  * The number-crunching (sha parse, verdict) is pure and exported for tests;
  * the live I/O (one version-header fetch, one git call, one config-file read)
  * is thin. No mock.module anywhere (ADR-0011) — deps are injected.
  *
  * Usage:
- *   bun run verify:build                       # against http://127.0.0.1:4141
- *   bun run verify:build -- --base-url http://127.0.0.1:4142
- *   MAXIMAL_BASE_URL=http://127.0.0.1:4142 bun run verify:build
+ *   bun run dev:stale-check                       # against http://127.0.0.1:4141
+ *   bun run dev:stale-check -- --base-url http://127.0.0.1:4142
+ *   MAXIMAL_BASE_URL=http://127.0.0.1:4142 bun run dev:stale-check
  *
  * Exit codes: 0 PASS, 1 STALE/UNKNOWN, 2 proxy unreachable.
  */
@@ -337,27 +348,44 @@ export function parseArgs(argv: Array<string>): { baseUrl: string } {
 
 function printUnreachable(baseUrl: string): void {
   console.error("")
-  console.error(`  No live proxy at ${baseUrl} — cannot verify the build.`)
+  console.error(`  No live proxy at ${baseUrl} — nothing to check.`)
   console.error("")
-  console.error("  Start (or point at) a running proxy, then retry:")
+  console.error("  This inspects a RUNNING proxy, not a built file. Start one:")
   console.error("")
   console.error("    bun run app:dev            # rebuild + relaunch the sidecar")
-  console.error("    bun run verify:build       # then re-run this check")
+  console.error("    bun run dev:stale-check    # then re-run this check")
   console.error("")
   console.error(
     "  Or target another host/port with --base-url / MAXIMAL_BASE_URL.",
   )
   console.error("")
+  console.error(
+    "  Looking to verify a release binary? That is a different tool:",
+  )
+  console.error("    bun run verify:artifact -- --binary=<path>")
+  console.error("")
 }
 
 function printReport(report: VerifyReport): void {
   console.log("")
-  console.log("  Build readiness")
+  console.log("  Dev sidecar freshness")
   console.log("  " + "─".repeat(60))
   console.log(`  Proxy:   ${report.baseUrl}`)
   console.log(`  Running: ${report.runningVersion ?? "<unreachable>"}`)
   console.log(`  Verdict: ${report.verdict.verdict}`)
   console.log(`           ${report.verdict.message}`)
+  if (report.proxyReachable && report.runningSha === null) {
+    // The single most common way to land here is pointing this at a release
+    // build, which embeds no `+<sha>` and therefore can never report PASS.
+    console.log("")
+    console.log(
+      "  A release build embeds no +<sha>, so this can only ever say UNKNOWN",
+    )
+    console.log(
+      "  about one. To check a shipped artifact instead, run:",
+    )
+    console.log("    bun run verify:artifact -- --binary=<path>")
+  }
   console.log("")
   const cfg = report.config
   console.log("  Config flags (for live tests):")

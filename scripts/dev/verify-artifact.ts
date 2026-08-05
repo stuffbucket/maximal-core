@@ -1,13 +1,14 @@
 /**
  * Verify a *shipped* binary — the exact file that will be uploaded to a release.
  *
- * ## Why this is not `verify:build`
+ * ## Why this is not the dev-loop staleness check
  *
- * `scripts/dev/verify-build.ts` looks like the release check its name implies
- * and is not one. It takes no artifact: it probes a proxy already *running* on
- * the developer's machine, extracts the `+<sha>` suffix an `app:dev` build
- * embeds in `x-maximal-version`, and compares that commit to `origin/main`. A
- * release binary is built by `buildBinary()` with `__MAXIMAL_VERSION__` set to
+ * `scripts/dev/verify-build.ts` (`bun run dev:stale-check`) used to be called
+ * `verify:build`, which read like the release check its name implied and is not
+ * one. It takes no artifact: it probes a proxy already *running* on the
+ * developer's machine, extracts the `+<sha>` suffix an `app:dev` build embeds
+ * in `x-maximal-version`, and compares that commit to `origin/main`. A release
+ * binary is built by `buildBinary()` with `__MAXIMAL_VERSION__` set to
  * package.json's version and **no `+<sha>` suffix**, so the check reports
  * `UNKNOWN` and exits 1 on every release artifact, by construction. It also
  * reads the developer's own `config.json` to report a flag one E2E scenario
@@ -25,14 +26,16 @@
  *      parses (`~/lib/live/supervisor`).
  *   3. `GET /status` returns 200 with `x-maximal-version` equal to that same
  *      version. This is the assertion docs/release-runbook.md always claimed
- *      `verify:build` made.
+ *      the staleness check made.
  *   4. `SIGTERM` stops it. A release artifact that will not shut down is one a
- *      host cannot quit.
+ *      host cannot quit. On Windows there is no SIGTERM to send — `kill()` is
+ *      `TerminateProcess` — so this check proves the process is terminable
+ *      there, not that it drained.
  *
  * Deliberately cross-platform and network-free: it must give the same verdict
  * on a Windows runner as on macOS, and it must not need a GitHub token. The
- * deeper behavioural suite is `e2e:binary --binary=<path>`, which is POSIX-only
- * (`e2e:lifecycle` spawns `sleep`).
+ * deeper behavioural suite is `e2e:binary --binary=<path>`, which now runs on
+ * both platforms too.
  *
  * Usage:
  *   bun run verify:artifact -- --binary dist-bin/maximal
