@@ -37956,6 +37956,9 @@ var init_rate_limit = __esm(() => {
 // src/routes/streaming-predicates.ts
 var isNonStreaming = (response) => Object.hasOwn(response, "choices"), isAsyncIterable = (value) => Boolean(value) && typeof value[Symbol.asyncIterator] === "function";
 
+// src/routes/untrusted-frame.ts
+var asRecord3 = (value) => typeof value === "object" && value !== null ? value : undefined, readNestedUsage = (frame, key) => asRecord3(asRecord3(frame)?.[key])?.usage, readUsage = (frame) => asRecord3(frame)?.usage;
+
 // src/services/copilot/agent-initiator.ts
 var messagesInitiator = (payload) => {
   let isInitiateRequest = false;
@@ -38258,8 +38261,8 @@ async function handleCompletion(c5) {
     for await (const chunk of response) {
       debugJson(logger2, "Streaming chunk:", chunk);
       const parsedChunk = parseChatCompletionChunk(chunk);
-      if (parsedChunk?.usage) {
-        usage = normalizeOpenAIUsage(parsedChunk.usage);
+      if (asRecord3(parsedChunk)?.usage) {
+        usage = normalizeOpenAIUsage(readUsage(parsedChunk));
       }
       await stream3.writeSSE(chunk);
     }
@@ -67264,7 +67267,7 @@ var MAX_CONSECUTIVE_FUNCTION_CALL_WHITESPACE = 20, FunctionCallArgumentsValidati
   openBlocks: new Set,
   blockHasDelta: new Set,
   functionCallStateByOutputIndex: new Map
-}), translateResponsesStreamEvent = (rawEvent, state2) => {
+}), translateResponsesStreamEvent = (rawEvent, state2) => asRecord3(rawEvent) ? dispatchResponsesStreamEvent(rawEvent, state2) : [], dispatchResponsesStreamEvent = (rawEvent, state2) => {
   const eventType = rawEvent.type;
   switch (eventType) {
     case "response.created": {
@@ -67309,6 +67312,9 @@ var MAX_CONSECUTIVE_FUNCTION_CALL_WHITESPACE = 20, FunctionCallArgumentsValidati
     }
   }
 }, handleResponseCreated = (rawEvent, state2) => {
+  if (!asRecord3(rawEvent.response)) {
+    return [];
+  }
   return messageStart(state2, rawEvent.response);
 }, handleOutputItemAdded = (rawEvent, state2) => {
   const events2 = new Array;
@@ -67338,6 +67344,9 @@ var MAX_CONSECUTIVE_FUNCTION_CALL_WHITESPACE = 20, FunctionCallArgumentsValidati
 }, handleOutputItemDone = (rawEvent, state2) => {
   const events2 = new Array;
   const item = rawEvent.item;
+  if (!asRecord3(item)) {
+    return events2;
+  }
   const itemType = item.type;
   const outputIndex = rawEvent.output_index;
   if (itemType === "compaction") {
@@ -67526,6 +67535,11 @@ var MAX_CONSECUTIVE_FUNCTION_CALL_WHITESPACE = 20, FunctionCallArgumentsValidati
   const response = rawEvent.response;
   const events2 = new Array;
   closeAllOpenBlocks(state2, events2);
+  if (!asRecord3(response)) {
+    events2.push(buildErrorEvent(`Upstream sent ${rawEvent.type} with no response body; the stream cannot be completed.`));
+    state2.messageCompleted = true;
+    return events2;
+  }
   const anthropic = translateResponsesResultToAnthropic(response);
   events2.push({
     type: "message_delta",
@@ -67541,7 +67555,8 @@ var MAX_CONSECUTIVE_FUNCTION_CALL_WHITESPACE = 20, FunctionCallArgumentsValidati
   const response = rawEvent.response;
   const events2 = new Array;
   closeAllOpenBlocks(state2, events2);
-  const message = response.error?.message ?? "The response failed due to an unknown error.";
+  const errorMessage = asRecord3(asRecord3(response)?.error)?.message;
+  const message = typeof errorMessage === "string" ? errorMessage : "The response failed due to an unknown error.";
   events2.push(buildErrorEvent(message));
   state2.messageCompleted = true;
   return events2;
@@ -67677,6 +67692,9 @@ var MAX_CONSECUTIVE_FUNCTION_CALL_WHITESPACE = 20, FunctionCallArgumentsValidati
   return blockIndex;
 }, extractFunctionCallDetails = (rawEvent) => {
   const item = rawEvent.item;
+  if (!asRecord3(item)) {
+    return;
+  }
   const itemType = item.type;
   if (itemType !== "function_call") {
     return;
@@ -67863,21 +67881,21 @@ function isToolBlockOpen(state2) {
 }
 function translateChunkToAnthropicEvents(chunk, state2) {
   const events2 = [];
-  if (chunk.choices.length === 0) {
+  const translatable = readTranslatableChoice(chunk);
+  if (!translatable) {
     return events2;
   }
-  const choice = chunk.choices[0];
-  const { delta } = choice;
+  const { choice, delta } = translatable;
   handleMessageStart(state2, events2, chunk);
   handleThinkingText(delta, state2, events2);
   handleContent(delta, state2, events2);
   handleToolCalls(delta, state2, events2);
-  handleFinish(choice, state2, { events: events2, chunk });
+  handleFinish(choice, state2, { events: events2, chunk, delta });
   return events2;
 }
 function handleFinish(choice, state2, context) {
-  const { events: events2, chunk } = context;
-  if (choice.finish_reason && choice.finish_reason.length > 0) {
+  const { events: events2, chunk, delta } = context;
+  if (typeof choice.finish_reason === "string" && choice.finish_reason.length > 0) {
     if (state2.contentBlockOpen) {
       const toolBlockOpen = isToolBlockOpen(state2);
       context.events.push({
@@ -67887,7 +67905,7 @@ function handleFinish(choice, state2, context) {
       state2.contentBlockOpen = false;
       state2.contentBlockIndex++;
       if (!toolBlockOpen) {
-        handleReasoningOpaque(choice.delta, events2, state2);
+        handleReasoningOpaque(delta, events2, state2);
       }
     }
     events2.push({
@@ -67909,10 +67927,13 @@ function handleFinish(choice, state2, context) {
   }
 }
 function handleToolCalls(delta, state2, events2) {
-  if (delta.tool_calls && delta.tool_calls.length > 0) {
+  if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
     closeThinkingBlockIfOpen(state2, events2);
     handleReasoningOpaqueInToolCalls(state2, events2, delta);
     for (const toolCall of delta.tool_calls) {
+      if (!asRecord3(toolCall)) {
+        continue;
+      }
       if (toolCall.id && toolCall.function?.name) {
         if (state2.contentBlockOpen) {
           events2.push({
@@ -68113,6 +68134,20 @@ function closeThinkingBlockIfOpen(state2, events2) {
     state2.thinkingBlockOpen = false;
   }
 }
+var readTranslatableChoice = (chunk) => {
+  const choices = asRecord3(chunk)?.choices;
+  if (!Array.isArray(choices) || choices.length === 0) {
+    return;
+  }
+  const choice = asRecord3(choices[0]);
+  if (!choice) {
+    return;
+  }
+  return {
+    choice,
+    delta: asRecord3(choice.delta) ?? {}
+  };
+};
 var init_stream_translation = __esm(() => {
   init_non_stream_translation();
   init_utils5();
@@ -68173,8 +68208,8 @@ var handleWithChatCompletions = async (c5, anthropicPayload, options) => {
           continue;
         }
         const chunk = JSON.parse(rawEvent.data);
-        if (chunk.usage) {
-          usage = normalizeOpenAIUsage(chunk.usage);
+        if (asRecord3(chunk)?.usage) {
+          usage = normalizeOpenAIUsage(readUsage(chunk));
         }
         const events2 = translateChunkToAnthropicEvents(chunk, streamState);
         for (const event of events2) {
@@ -68240,11 +68275,14 @@ var handleWithChatCompletions = async (c5, anthropicPayload, options) => {
             continue;
           }
           debugLazy(logger3, () => ["Responses raw stream event:", data]);
-          const responseEvent = JSON.parse(data);
-          if (responseEvent.type === "response.completed" || responseEvent.type === "response.failed" || responseEvent.type === "response.incomplete") {
-            usage = normalizeResponsesUsage(responseEvent.response.usage);
+          const frame = readResponsesFrame(data);
+          if (!frame) {
+            continue;
           }
-          const events2 = translateResponsesStreamEvent(responseEvent, streamState);
+          if (frame.usage) {
+            usage = frame.usage;
+          }
+          const events2 = translateResponsesStreamEvent(frame.event, streamState);
           for (const event of events2) {
             const eventData = JSON.stringify(event);
             debugLazy(logger3, () => ["Translated Anthropic event:", eventData]);
@@ -68319,9 +68357,9 @@ var handleWithChatCompletions = async (c5, anthropicPayload, options) => {
           debugLazy(logger3, () => ["Messages raw stream event:", data]);
           const parsedEvent = parseAnthropicStreamEvent(data);
           if (parsedEvent?.type === "message_start") {
-            usage = mergeAnthropicUsage(usage, normalizeAnthropicUsage(parsedEvent.message.usage));
+            usage = mergeAnthropicUsage(usage, normalizeAnthropicUsage(readNestedUsage(parsedEvent, "message")));
           } else if (parsedEvent?.type === "message_delta") {
-            usage = mergeAnthropicUsage(usage, normalizeAnthropicUsage(parsedEvent.usage));
+            usage = mergeAnthropicUsage(usage, normalizeAnthropicUsage(readUsage(parsedEvent)));
           }
           await stream3.writeSSE({
             event: eventName,
@@ -68345,7 +68383,22 @@ var handleWithChatCompletions = async (c5, anthropicPayload, options) => {
   fallbackSessionId: options.fallbackSessionId,
   model: options.model,
   sessionId: getMetadataSessionId(options.payload)
-}), getMetadataSessionId = (payload) => parseUserIdMetadata(payload.metadata?.user_id).sessionId, parseAnthropicStreamEvent = (data) => {
+}), getMetadataSessionId = (payload) => parseUserIdMetadata(payload.metadata?.user_id).sessionId, readResponsesFrame = (data) => {
+  if (data === "[DONE]") {
+    return null;
+  }
+  const event = JSON.parse(data);
+  if (!asRecord3(event)) {
+    return null;
+  }
+  if (event.type === "response.completed" || event.type === "response.failed" || event.type === "response.incomplete") {
+    return {
+      event,
+      usage: normalizeResponsesUsage(readNestedUsage(event, "response"))
+    };
+  }
+  return { event };
+}, parseAnthropicStreamEvent = (data) => {
   try {
     return JSON.parse(data);
   } catch {
@@ -68372,7 +68425,15 @@ var init_api_flows = __esm(() => {
 });
 
 // src/lib/runtime-state/subagent.ts
-var subagentMarkerPrefix = "__SUBAGENT_MARKER__";
+var subagentMarkerPrefix = "__SUBAGENT_MARKER__", subagentMarkerSchema;
+var init_subagent = __esm(() => {
+  init_zod();
+  subagentMarkerSchema = exports_external.object({
+    session_id: exports_external.string().min(1),
+    agent_id: exports_external.string().min(1),
+    agent_type: exports_external.string().min(1)
+  }).loose();
+});
 
 // src/routes/messages/subagent-marker.ts
 var parseSubagentMarkerFromFirstUser = (payload) => {
@@ -68411,21 +68472,24 @@ var parseSubagentMarkerFromFirstUser = (payload) => {
       continue;
     }
     const markerJson = reminderContent.slice(markerIndex + subagentMarkerPrefix.length).trim();
-    try {
-      const parsed = JSON.parse(markerJson);
-      if (!parsed.session_id || !parsed.agent_id || !parsed.agent_type) {
-        searchFrom = reminderEnd + endTag.length;
-        continue;
-      }
-      return parsed;
-    } catch {
+    const parsed = subagentMarkerSchema.safeParse(safeJsonParse(markerJson));
+    if (!parsed.success) {
       searchFrom = reminderEnd + endTag.length;
       continue;
     }
+    return parsed.data;
   }
   return null;
+}, safeJsonParse = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return;
+  }
 };
-var init_subagent_marker = () => {};
+var init_subagent_marker = __esm(() => {
+  init_subagent();
+});
 
 // src/routes/messages/warmup.ts
 import { randomUUID as randomUUID9 } from "crypto";
@@ -71930,18 +71994,20 @@ var logger5, streamProviderMessages = ({
   try {
     const parsed = JSON.parse(data);
     if (parsed.type === "message_start") {
-      adjustInputTokens(providerConfig, parsed.message.usage);
+      const messageUsage = readNestedUsage(parsed, "message");
+      adjustInputTokens(providerConfig, messageUsage);
       return {
         data: JSON.stringify(parsed),
-        model: parsed.message.model,
-        usage: normalizeAnthropicUsage(parsed.message.usage)
+        model: asRecord3(parsed.message)?.model,
+        usage: normalizeAnthropicUsage(messageUsage)
       };
     }
     if (parsed.type === "message_delta") {
-      adjustInputTokens(providerConfig, parsed.usage);
+      const deltaUsage = readUsage(parsed);
+      adjustInputTokens(providerConfig, deltaUsage);
       return {
         data: JSON.stringify(parsed),
-        usage: normalizeAnthropicUsage(parsed.usage)
+        usage: normalizeAnthropicUsage(deltaUsage)
       };
     }
     return { data: JSON.stringify(parsed), usage: {} };
@@ -72048,20 +72114,36 @@ var init_route9 = __esm(() => {
 });
 
 // src/routes/responses/stream-id-sync.ts
-var createStreamIdTracker = () => ({
+var asOutputItemFrame = (value) => {
+  if (typeof value !== "object" || value === null)
+    return;
+  const item = value.item;
+  if (typeof item !== "object" || item === null)
+    return;
+  return value;
+}, readOutputIndex = (frame) => typeof frame.output_index === "number" ? frame.output_index : undefined, createStreamIdTracker = () => ({
   outputItems: new Map
 }), fixStreamIds = (data, event, tracker) => {
   if (!data)
     return data;
-  const parsed = JSON.parse(data);
+  let parsed;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    return data;
+  }
   switch (event) {
     case "response.output_item.added": {
-      return handleOutputItemAdded2(parsed, tracker);
+      const frame = asOutputItemFrame(parsed);
+      return frame ? handleOutputItemAdded2(frame, tracker) : data;
     }
     case "response.output_item.done": {
-      return handleOutputItemDone2(parsed, tracker);
+      const frame = asOutputItemFrame(parsed);
+      return frame ? handleOutputItemDone2(frame, tracker) : data;
     }
     default: {
+      if (typeof parsed !== "object" || parsed === null)
+        return data;
       return handleItemId(parsed, tracker);
     }
   }
@@ -72071,20 +72153,22 @@ var createStreamIdTracker = () => ({
     while (randomSuffix.length < 16) {
       randomSuffix += Math.random().toString(36).slice(2);
     }
-    parsed.item.id = `oi_${parsed.output_index}_${randomSuffix.slice(0, 16)}`;
+    parsed.item.id = `oi_${String(parsed.output_index)}_${randomSuffix.slice(0, 16)}`;
   }
-  const outputIndex = parsed.output_index;
-  tracker.outputItems.set(outputIndex, parsed.item.id);
+  const outputIndex = readOutputIndex(parsed);
+  if (outputIndex !== undefined) {
+    tracker.outputItems.set(outputIndex, parsed.item.id);
+  }
   return JSON.stringify(parsed);
 }, handleOutputItemDone2 = (parsed, tracker) => {
-  const outputIndex = parsed.output_index;
-  const originalId = tracker.outputItems.get(outputIndex);
+  const outputIndex = readOutputIndex(parsed);
+  const originalId = outputIndex === undefined ? undefined : tracker.outputItems.get(outputIndex);
   if (originalId) {
     parsed.item.id = originalId;
   }
   return JSON.stringify(parsed);
 }, handleItemId = (parsed, tracker) => {
-  const outputIndex = parsed.output_index;
+  const outputIndex = readOutputIndex(parsed);
   if (outputIndex !== undefined) {
     const itemId = tracker.outputItems.get(outputIndex);
     if (itemId) {
@@ -72161,7 +72245,7 @@ var createResponses2, logger7, RESPONSES_ENDPOINT2 = "/responses", handleRespons
         debugJson(logger7, "Responses stream chunk:", chunk);
         const parsedEvent = parseResponsesStreamEvent(chunk);
         if (parsedEvent?.type === "response.completed" || parsedEvent?.type === "response.failed" || parsedEvent?.type === "response.incomplete") {
-          usage = normalizeResponsesUsage(parsedEvent.response.usage);
+          usage = normalizeResponsesUsage(readNestedUsage(parsedEvent, "response"));
         }
         const processedData = fixStreamIds(chunk.data ?? "", chunk.event, idTracker);
         await stream3.writeSSE({

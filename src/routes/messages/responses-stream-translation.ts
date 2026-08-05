@@ -1,4 +1,5 @@
 import { type AnthropicStreamEventData } from "~/lib/models/anthropic-types"
+import { asRecord } from "~/routes/untrusted-frame"
 import {
   type ResponseCompletedEvent,
   type ResponseCreatedEvent,
@@ -102,7 +103,27 @@ export const createResponsesStreamState = (
   functionCallStateByOutputIndex: new Map(),
 })
 
+/**
+ * Boundary tolerance for the `casts-keep: … translator tolerates missing
+ * fields` sites that feed this function.
+ *
+ * `rawEvent` is a `JSON.parse` of an upstream SSE frame cast to
+ * `ResponseStreamEvent`; nothing checked it. Three of the handlers below
+ * dereference a required sub-object — `rawEvent.response` on the terminal
+ * events, `rawEvent.item` on the output-item events — and a frame that carries
+ * the discriminating `type` without the body it implies used to throw there,
+ * aborting the rest of the stream. Each such handler now returns a defined
+ * outcome instead; unknown `type`s already returned `[]`.
+ *
+ * Exercised in `tests/stream-boundary-tolerance.test.ts`.
+ */
 export const translateResponsesStreamEvent = (
+  rawEvent: ResponseStreamEvent,
+  state: ResponsesStreamState,
+): Array<AnthropicStreamEventData> =>
+  asRecord(rawEvent) ? dispatchResponsesStreamEvent(rawEvent, state) : []
+
+const dispatchResponsesStreamEvent = (
   rawEvent: ResponseStreamEvent,
   state: ResponsesStreamState,
 ): Array<AnthropicStreamEventData> => {
@@ -167,6 +188,9 @@ const handleResponseCreated = (
   rawEvent: ResponseCreatedEvent,
   state: ResponsesStreamState,
 ): Array<AnthropicStreamEventData> => {
+  if (!asRecord(rawEvent.response)) {
+    return []
+  }
   return messageStart(state, rawEvent.response)
 }
 
@@ -210,6 +234,9 @@ const handleOutputItemDone = (
 ): Array<AnthropicStreamEventData> => {
   const events = new Array<AnthropicStreamEventData>()
   const item = rawEvent.item
+  if (!asRecord(item)) {
+    return events
+  }
   const itemType = item.type
   const outputIndex = rawEvent.output_index
 
@@ -482,6 +509,21 @@ const handleResponseCompleted = (
   const events = new Array<AnthropicStreamEventData>()
 
   closeAllOpenBlocks(state, events)
+
+  // A terminal frame whose `response` body never arrived (truncation, an
+  // upstream shape change) used to throw here and abort the stream. Terminate
+  // it deliberately instead: the turn is over either way, and an `error` event
+  // is a defined outcome a client can act on.
+  if (!asRecord(response)) {
+    events.push(
+      buildErrorEvent(
+        `Upstream sent ${rawEvent.type} with no response body; the stream cannot be completed.`,
+      ),
+    )
+    state.messageCompleted = true
+    return events
+  }
+
   const anthropic = translateResponsesResultToAnthropic(response)
   events.push(
     {
@@ -506,8 +548,11 @@ const handleResponseFailed = (
   const events = new Array<AnthropicStreamEventData>()
   closeAllOpenBlocks(state, events)
 
+  const errorMessage = asRecord(asRecord(response)?.error)?.message
   const message =
-    response.error?.message ?? "The response failed due to an unknown error."
+    typeof errorMessage === "string" ? errorMessage : (
+      "The response failed due to an unknown error."
+    )
 
   events.push(buildErrorEvent(message))
   state.messageCompleted = true
@@ -751,6 +796,9 @@ const extractFunctionCallDetails = (
   rawEvent: ResponseOutputItemAddedEvent,
 ): FunctionCallDetails | undefined => {
   const item = rawEvent.item
+  if (!asRecord(item)) {
+    return undefined
+  }
   const itemType = item.type
   if (itemType !== "function_call") {
     return undefined

@@ -24,6 +24,7 @@ import {
   withCopilotCost,
 } from "~/lib/token-usage"
 import { isNonStreaming } from "~/routes/streaming-predicates"
+import { asRecord, readUsage } from "~/routes/untrusted-frame"
 import {
   createChatCompletions,
   type ChatCompletionChunk,
@@ -107,8 +108,8 @@ export async function handleCompletion(c: Context) {
     for await (const chunk of response) {
       debugJson(logger, "Streaming chunk:", chunk)
       const parsedChunk = parseChatCompletionChunk(chunk)
-      if (parsedChunk?.usage) {
-        usage = normalizeOpenAIUsage(parsedChunk.usage)
+      if (asRecord(parsedChunk)?.usage) {
+        usage = normalizeOpenAIUsage(readUsage(parsedChunk))
       }
       await stream.writeSSE(chunk as SSEMessage)
     }
@@ -126,7 +127,11 @@ const parseChatCompletionChunk = (
   }
 
   try {
-    // casts-keep: trusted Copilot SSE chunk; translator tolerates missing fields
+    // The only field ever read off this value is `.usage`, and only via
+    // `normalizeOpenAIUsage`, which optional-chains every access. The frame
+    // itself is forwarded verbatim and never translated, so nothing here can
+    // throw on a malformed body.
+    // casts-keep: only `.usage` is read, via total readers; tolerance proven in tests/stream-boundary-tolerance.test.ts
     return JSON.parse(data) as ChatCompletionChunk
   } catch {
     return null

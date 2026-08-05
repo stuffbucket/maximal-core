@@ -42,6 +42,7 @@ import {
   getResponsesRequestOptions,
 } from "~/routes/responses/utils"
 import { isAsyncIterable, isNonStreaming } from "~/routes/streaming-predicates"
+import { asRecord, readNestedUsage, readUsage } from "~/routes/untrusted-frame"
 import {
   createChatCompletions,
   type ChatCompletionChunk,
@@ -135,10 +136,12 @@ export const handleWithChatCompletions = async (
           continue
         }
 
-        // casts-keep: trusted Copilot SSE chunk; translator tolerates missing fields
+        // Read only through `translateChunkToAnthropicEvents` and
+        // `normalizeOpenAIUsage`, both total over a malformed frame.
+        // casts-keep: reached only through total readers; tolerance proven in tests/stream-boundary-tolerance.test.ts
         const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-        if (chunk.usage) {
-          usage = normalizeOpenAIUsage(chunk.usage)
+        if (asRecord(chunk)?.usage) {
+          usage = normalizeOpenAIUsage(readUsage(chunk))
         }
         const events = translateChunkToAnthropicEvents(chunk, streamState)
 
@@ -255,20 +258,15 @@ export const handleWithResponsesApi = async (
 
           debugLazy(logger, () => ["Responses raw stream event:", data])
 
-          // casts-keep: trusted Copilot SSE chunk; translator tolerates missing fields
-          const responseEvent = JSON.parse(data) as ResponseStreamEvent
-          if (
-            responseEvent.type === "response.completed"
-            || responseEvent.type === "response.failed"
-            || responseEvent.type === "response.incomplete"
-          ) {
-            usage = normalizeResponsesUsage(responseEvent.response.usage)
+          const frame = readResponsesFrame(data)
+          if (!frame) {
+            continue
+          }
+          if (frame.usage) {
+            usage = frame.usage
           }
 
-          const events = translateResponsesStreamEvent(
-            responseEvent,
-            streamState,
-          )
+          const events = translateResponsesStreamEvent(frame.event, streamState)
           for (const event of events) {
             const eventData = JSON.stringify(event)
             debugLazy(logger, () => ["Translated Anthropic event:", eventData])
@@ -388,12 +386,12 @@ export const handleWithMessagesApi = async (
           if (parsedEvent?.type === "message_start") {
             usage = mergeAnthropicUsage(
               usage,
-              normalizeAnthropicUsage(parsedEvent.message.usage),
+              normalizeAnthropicUsage(readNestedUsage(parsedEvent, "message")),
             )
           } else if (parsedEvent?.type === "message_delta") {
             usage = mergeAnthropicUsage(
               usage,
-              normalizeAnthropicUsage(parsedEvent.usage),
+              normalizeAnthropicUsage(readUsage(parsedEvent)),
             )
           }
           await stream.writeSSE({
@@ -439,11 +437,53 @@ const getMetadataSessionId = (
   payload: AnthropicMessagesPayload,
 ): string | null => parseUserIdMetadata(payload.metadata?.user_id).sessionId
 
+/**
+ * Decode one `/responses` SSE frame into the event to translate plus, on a
+ * terminal frame, the usage to record.
+ *
+ * `null` means "nothing translatable in this frame": the `[DONE]` sentinel —
+ * which `JSON.parse` throws on, and which the two sibling stream loops both
+ * special-case — or a body that parsed to something other than an object.
+ * Both used to reach `.type` and abort the rest of the stream.
+ */
+const readResponsesFrame = (
+  data: string,
+): { event: ResponseStreamEvent; usage?: UsageTokens } | null => {
+  if (data === "[DONE]") {
+    return null
+  }
+
+  // Only `.type` is read directly, and only after the `asRecord` check below;
+  // the body is reached via `readNestedUsage` and
+  // `translateResponsesStreamEvent`, both total over a malformed frame.
+  // casts-keep: `.type` read behind an asRecord check, body via total readers; tolerance proven in tests/stream-boundary-tolerance.test.ts
+  const event = JSON.parse(data) as ResponseStreamEvent
+  if (!asRecord(event)) {
+    return null
+  }
+
+  if (
+    event.type === "response.completed"
+    || event.type === "response.failed"
+    || event.type === "response.incomplete"
+  ) {
+    return {
+      event,
+      usage: normalizeResponsesUsage(readNestedUsage(event, "response")),
+    }
+  }
+
+  return { event }
+}
+
 const parseAnthropicStreamEvent = (
   data: string,
 ): AnthropicStreamEventData | null => {
   try {
-    // casts-keep: trusted Copilot SSE chunk; translator tolerates missing fields
+    // Only `.type` is read off this value (through `?.`); usage is read through
+    // `readNestedUsage`/`readUsage`, both total, and the frame itself is
+    // forwarded verbatim.
+    // casts-keep: only `.type` read via `?.`, usage via total readers; tolerance proven in tests/stream-boundary-tolerance.test.ts
     return JSON.parse(data) as AnthropicStreamEventData
   } catch {
     return null

@@ -79,7 +79,7 @@ export class UnsupportedNodeSqliteRuntimeError extends Error {
 
 async function openBunDatabase(dbPath: string): Promise<SqliteDatabase> {
   const specifier = ["bun", "sqlite"].join(":")
-  // casts-keep: dynamic import() of a trusted runtime module; constructor shape, not a data boundary
+  // casts-keep: module namespace from import("bun:sqlite"), a runtime built-in — a namespace object is not parseable data, so there is nothing to validate; guarded by isBunRuntime() at the only call site
   const sqlite = (await import(specifier)) as {
     Database: new (filename: string) => SqliteDatabase
   }
@@ -96,7 +96,7 @@ async function loadNodeSqliteModule(): Promise<{
 
   const specifier = ["node", "sqlite"].join(":")
   try {
-    // casts-keep: dynamic import() of a trusted runtime module; constructor shape, not a data boundary
+    // casts-keep: module namespace from import("node:sqlite"), a runtime built-in — a namespace object is not parseable data; the one failure mode (module absent) is the catch below, rethrown as UnsupportedNodeSqliteRuntimeError
     return (await import(specifier)) as {
       DatabaseSync: new (location: string) => SqliteDatabase
     }

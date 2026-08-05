@@ -23,6 +23,7 @@ import {
   type UsageTokens,
 } from "~/lib/token-usage"
 import { stripUnsupportedTopLevelAnthropicFields } from "~/routes/messages/preprocess"
+import { asRecord, readNestedUsage, readUsage } from "~/routes/untrusted-frame"
 import { forwardProviderMessages } from "~/services/providers/anthropic-proxy"
 
 const logger = createHandlerLogger("provider-messages-handler")
@@ -150,21 +151,26 @@ const parseProviderStreamEvent = (
   providerConfig: ResolvedProviderConfig,
 ): { data: string; model?: string; usage: UsageTokens } | null => {
   try {
-    // casts-keep: trusted Copilot SSE chunk; translator tolerates missing fields
+    // Only `.type` is read off this value; usage is read through
+    // `readNestedUsage`/`readUsage`, both total. This whole body also sits
+    // inside the catch below, which logs and forwards the frame unchanged.
+    // casts-keep: only `.type` read, usage via total readers, whole body inside the catch below; tolerance proven in tests/stream-boundary-tolerance.test.ts
     const parsed = JSON.parse(data) as AnthropicStreamEventData
     if (parsed.type === "message_start") {
-      adjustInputTokens(providerConfig, parsed.message.usage)
+      const messageUsage = readNestedUsage(parsed, "message")
+      adjustInputTokens(providerConfig, messageUsage)
       return {
         data: JSON.stringify(parsed),
-        model: parsed.message.model,
-        usage: normalizeAnthropicUsage(parsed.message.usage),
+        model: asRecord(parsed.message)?.model as string | undefined,
+        usage: normalizeAnthropicUsage(messageUsage),
       }
     }
     if (parsed.type === "message_delta") {
-      adjustInputTokens(providerConfig, parsed.usage)
+      const deltaUsage = readUsage(parsed)
+      adjustInputTokens(providerConfig, deltaUsage)
       return {
         data: JSON.stringify(parsed),
-        usage: normalizeAnthropicUsage(parsed.usage),
+        usage: normalizeAnthropicUsage(deltaUsage),
       }
     }
     return { data: JSON.stringify(parsed), usage: {} }

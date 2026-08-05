@@ -2,6 +2,7 @@ import type { AnthropicMessagesPayload } from "~/lib/models/anthropic-types"
 
 import {
   subagentMarkerPrefix,
+  subagentMarkerSchema,
   type SubagentMarker,
 } from "~/lib/runtime-state/subagent"
 
@@ -59,20 +60,27 @@ const parseSubagentMarkerFromSystemReminder = (
       .slice(markerIndex + subagentMarkerPrefix.length)
       .trim()
 
-    try {
-      // casts-keep: required fields presence-guarded below before use
-      const parsed = JSON.parse(markerJson) as SubagentMarker
-      if (!parsed.session_id || !parsed.agent_id || !parsed.agent_type) {
-        searchFrom = reminderEnd + endTag.length
-        continue
-      }
-
-      return parsed
-    } catch {
+    // Parsed against the shared schema, not cast: the marker comes from another
+    // program, and the presence check this replaced was truthiness rather than
+    // type — see `subagentMarkerSchema`.
+    const parsed = subagentMarkerSchema.safeParse(safeJsonParse(markerJson))
+    if (!parsed.success) {
       searchFrom = reminderEnd + endTag.length
       continue
     }
+
+    return parsed.data
   }
 
   return null
+}
+
+/** `JSON.parse` that yields `undefined` instead of throwing, so a reminder
+ *  carrying a truncated marker just falls through to the next one. */
+const safeJsonParse = (text: string): unknown => {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
 }

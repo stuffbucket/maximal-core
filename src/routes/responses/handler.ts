@@ -25,6 +25,7 @@ import {
   withCopilotCost,
 } from "~/lib/token-usage"
 import { isAsyncIterable } from "~/routes/streaming-predicates"
+import { readNestedUsage } from "~/routes/untrusted-frame"
 import {
   createResponses as defaultCreateResponses,
   type ResponsesPayload,
@@ -175,7 +176,12 @@ export const handleResponses = async (c: Context) => {
           || parsedEvent?.type === "response.failed"
           || parsedEvent?.type === "response.incomplete"
         ) {
-          usage = normalizeResponsesUsage(parsedEvent.response.usage)
+          // `readNestedUsage`, not `parsedEvent.response.usage`: this loop has
+          // no `try` around it, so a terminal frame without a `response` body
+          // would dead-end the stream with no error event at all.
+          usage = normalizeResponsesUsage(
+            readNestedUsage(parsedEvent, "response"),
+          )
         }
 
         const processedData = fixStreamIds(
@@ -220,7 +226,9 @@ const parseResponsesStreamEvent = (
   }
 
   try {
-    // casts-keep: trusted Copilot SSE chunk; translator tolerates missing fields
+    // Only `.type` is read off this value (through `?.`); every other field it
+    // reaches goes through `readNestedUsage`, which is total.
+    // casts-keep: only `.type` read via `?.`, body via readNestedUsage (total); tolerance proven in tests/stream-boundary-tolerance.test.ts
     return JSON.parse(data) as ResponseStreamEvent
   } catch {
     return null
