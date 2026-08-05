@@ -1,0 +1,33 @@
+/**
+ * Downstream-consumer typecheck config — `moduleResolution: "NodeNext"`.
+ *
+ * Same fixture sources, stricter resolver. Bundler resolution is forgiving about
+ * things Node ESM is not (missing `types` conditions, extensionless relative
+ * specifiers, `main`-vs-`exports` fallbacks), so a package can typecheck under
+ * Bundler and still fail for a plain `tsc`/Node consumer. Running both is the
+ * cheapest way to keep the exports map honest for BOTH consumer shapes: the
+ * Electron renderer (bundled) and a Node host that resolves the package itself.
+ *
+ * Also does not extend ../tsconfig.json — see tsconfig.json for why.
+ */
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "noEmit": true,
+    "incremental": false,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": false,
+    "types": []
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"]
+}

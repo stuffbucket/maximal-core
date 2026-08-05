@@ -1,0 +1,42 @@
+/**
+ * Downstream-consumer typecheck config — `moduleResolution: "Bundler"`.
+ *
+ * DELIBERATELY does NOT extend ../tsconfig.json. The root config maps `~/*` to
+ * `./src/*`; if this fixture inherited that alias it could resolve engine source
+ * directly and would pass even with a completely broken `exports` map, which is
+ * the one thing it exists to catch. Every option below is restated rather than
+ * inherited, and `paths` is absent on purpose — see `src/no-src-reach.ts`, which
+ * asserts that both `~/…` and a deep `dist/`-bypassing import fail to resolve.
+ *
+ * Mirrors what an Electron/Vite consumer runs (bundler resolution, ESM,
+ * `verbatimModuleSyntax`). A stricter Node-ESM variant lives in
+ * tsconfig.nodenext.json; `check.ts` runs both.
+ */
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "noEmit": true,
+    "incremental": false,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedIndexedAccess": true,
+    // A consumer's own tsc checks OUR .d.ts as a declaration file, so leave lib
+    // checking ON for the package under test. Third-party .d.ts noise (zod) is
+    // not what we are testing, but zod ships clean and skipping would also skip
+    // errors inside dist/lib/*.d.ts — which is exactly the surface under test.
+    "skipLibCheck": false,
+    // No "types": pull in NO ambient globals. A contract that only typechecks
+    // because @types/node or @types/bun happened to be present is not a contract
+    // a browser-renderer consumer can rely on.
+    "types": []
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"]
+}

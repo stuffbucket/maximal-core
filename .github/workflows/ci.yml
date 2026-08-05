@@ -48,6 +48,13 @@ jobs:
       - name: Run type check
         run: bun run typecheck
 
+      - name: Downstream contract typecheck
+        # Compiles a simulated consumer against the published exports map
+        # (maximal-core#4). Nothing else here proves a downstream package can
+        # resolve and compile against ./supervisor and ./control-contract —
+        # #14 removed `port` from ReadyLine with this whole job green.
+        run: bun run typecheck:downstream
+
       - name: Guard boundary casts
         # Fail on a NEW unvalidated any→concrete boundary cast. The known-safe
         # set is annotated in-place with `// casts-keep: <reason>`; see

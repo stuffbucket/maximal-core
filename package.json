@@ -55,7 +55,7 @@
     "build:lib": "tsup",
     "casts": "bun run scripts/find-casts.ts",
     "casts:check": "bun run scripts/find-casts.ts --check",
-    "check:deep": "bun run check:fast && bun run casts:check && bun test && bun run knip && bun run build",
+    "check:deep": "bun run check:fast && bun run casts:check && bun test && bun run knip && bun run build && bun run typecheck:downstream",
     "check:fast": "bun run lint:fast && bun run typecheck && bun run lint:all",
     "check:ops": "bun run typecheck:ops && bun run test:ops",
     "deps:check": "depcruise --config .dependency-cruiser.cjs src tests",
@@ -81,6 +81,7 @@
     "start": "NODE_ENV=production bun run ./src/main.ts",
     "test:ops": "cd scripts/ops && bun test",
     "typecheck": "tsc",
+    "typecheck:downstream": "bun downstream/check.ts",
     "typecheck:ops": "tsc -p scripts/ops/tsconfig.json",
     "verify:build": "bun scripts/dev/verify-build.ts",
     "watch:drift": "bun scripts/ops/watch-external-drift.ts"
