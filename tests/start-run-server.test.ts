@@ -51,15 +51,14 @@ await mock.module("~/lib/http/proxy", () => ({
   initProxyFromEnv: initProxyFromEnvMock,
 }))
 
-const ensureSecretsDirMock = mock(() => {})
-const loadSecretIntoEnvMock = mock(() => ({ source: "unset" as const }))
-const realSecretsModule = await import("~/lib/auth/secrets")
-await mock.module("~/lib/auth/secrets", () => ({
-  ...realSecretsModule,
-  ensureSecretsDir: ensureSecretsDirMock,
-  loadSecretIntoEnv: loadSecretIntoEnvMock,
-  SECRET_DEFS: [] as Array<unknown>,
-}))
+// `~/lib/auth/secrets` is NOT mocked. Stubbing it to keep boot off disk also
+// replaced `SECRET_DEFS` — a shared data table `~/debug` and
+// tests/anthropic-key-precedence.test.ts read — and Bun evaluates every test
+// file's module body up front, before any `afterAll` runs, so the restore below
+// could never protect a sibling that linked the stub. The boot step is
+// neutralized through the `__setBootSecretsForTests` DI seam instead (wired
+// below, after import).
+const bootSecretsMock = mock(() => {})
 
 const cacheModelsMock = mock(() => Promise.resolve())
 const cacheVSCodeVersionMock = mock(() => Promise.resolve())
@@ -143,12 +142,15 @@ globalThis.fetch = (() =>
 // --- Module under test (imported after mocks are wired) -----------
 
 const { state } = await import("~/lib/runtime-state/state")
-const { runServer, start, __setServeForTests } = await import("~/start")
+const { runServer, start, __setServeForTests, __setBootSecretsForTests } =
+  await import("~/start")
 
-// Inject the port-avoiding serve stub through the DI seam (no module mock).
+// Inject the port-avoiding serve stub and the no-op secrets boot through the DI
+// seams (no module mocks).
 __setServeForTests(
   serveMock as unknown as Parameters<typeof __setServeForTests>[0],
 )
+__setBootSecretsForTests(bootSecretsMock)
 const { getAuthStatus, signOut, __resetAuthControllerForTests } =
   await import("~/lib/auth/auth-controller")
 const { stopCopilotOnlineRetry } =
@@ -508,14 +510,21 @@ describe("start.run — citty args → runServer options", () => {
 // stubs. Bun's `mock.restore()` only undoes function spies, not module
 // mocks, so we re-`mock.module` each one back to the captured real
 // module reference.
+//
+// Note this restore is a best-effort backstop, NOT a guarantee: Bun evaluates
+// every test file's module body during startup, before any test — and therefore
+// before any `afterAll` — runs, so a sibling that statically imports one of
+// these modules has already bound whatever was installed here. Anything a
+// sibling reads passively (a `const` table, not a function it calls) must use a
+// DI seam instead; see `__setBootSecretsForTests` above.
 afterAll(async () => {
   stopCopilotOnlineRetry()
   globalThis.fetch = realFetch
   __setServeForTests(null)
+  __setBootSecretsForTests(null)
   mock.restore()
   await mock.module("~/lib/platform/paths", () => realPathsModule)
   await mock.module("~/lib/http/proxy", () => realProxyModule)
-  await mock.module("~/lib/auth/secrets", () => realSecretsModule)
   await mock.module("~/lib/platform/utils", () => realUtilsModule)
   await mock.module("~/lib/auth/token", () => realTokenModule)
   await mock.module("~/lib/auth/github-token-store", () => realStoreModule)

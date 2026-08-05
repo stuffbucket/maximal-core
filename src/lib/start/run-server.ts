@@ -63,6 +63,20 @@ export function __setServeForTests(fn: ServeFn | null): void {
   serveImpl = fn ?? serve
 }
 
+// Same seam, same reason, for the file-secrets boot step. `bootSecrets` creates
+// the secrets dir and materializes `secrets/*` into process.env, so an
+// in-process runServer test has to neutralize it — but the obvious way,
+// `mock.module("~/lib/auth/secrets", …)`, also replaces `SECRET_DEFS`, the
+// canonical secret table that `~/debug` and sibling test files read. That stub
+// forward-leaked and emptied `SECRET_DEFS` for any file linked after it.
+type BootSecretsFn = typeof bootSecrets
+let bootSecretsImpl: BootSecretsFn = bootSecrets
+
+/** Test-only: swap the file-secrets boot step. Pass `null` to restore the real one. */
+export function __setBootSecretsForTests(fn: BootSecretsFn | null): void {
+  bootSecretsImpl = fn ?? bootSecrets
+}
+
 export interface RunServerOptions {
   port: number
   verbose: boolean
@@ -158,7 +172,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.controlPort = controlPortRequested
 
   await ensurePaths()
-  bootSecrets()
+  bootSecretsImpl()
 
   // Crash-detection: did the previous run exit ungracefully (skipped
   // initiateShutdown AND the `exit` safety net — i.e. SIGKILL, power
