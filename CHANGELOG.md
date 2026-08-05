@@ -38,6 +38,34 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:notes` output is inserted here -->
 
+## [0.4.1](https://github.com/stuffbucket/maximal-core/compare/v0.4.0...v0.4.1) (2026-08-05)
+
+
+### Features
+
+* **release:** rebuild and stage dist/ inside the release commit ([#33](https://github.com/stuffbucket/maximal-core/issues/33)) ([be3b598](https://github.com/stuffbucket/maximal-core/commit/be3b5982b9895b23847a032074709dc5db6d2b92))
+
+
+### Bug Fixes
+
+* **config:** enforce the guards that only looked enforced ([#37](https://github.com/stuffbucket/maximal-core/issues/37)) ([6777bce](https://github.com/stuffbucket/maximal-core/commit/6777bce866c4b12b391d82e6fb0806eda540b001))
+
+
+### Continuous Integration
+
+* **release:** enforce the pinned Bun in prepack ([#32](https://github.com/stuffbucket/maximal-core/issues/32)) ([0d6ae48](https://github.com/stuffbucket/maximal-core/commit/0d6ae482a331c147b44688c991d7325f83d67e9e))
+
+
+### Documentation
+
+* describe what release:manual actually does now ([#35](https://github.com/stuffbucket/maximal-core/issues/35)) ([4bfafff](https://github.com/stuffbucket/maximal-core/commit/4bfafffaebe190dd0f059bcbd8039ffad5ad4148))
+* stop recommending the mock restore that cannot work ([#36](https://github.com/stuffbucket/maximal-core/issues/36)) ([3329819](https://github.com/stuffbucket/maximal-core/commit/3329819906796de97a531e1a0f47540497a2479e))
+
+
+### Tests
+
+* fix order-dependent flakes and correct the mock.module leak guard ([#34](https://github.com/stuffbucket/maximal-core/issues/34)) ([8e7a7a4](https://github.com/stuffbucket/maximal-core/commit/8e7a7a4f83d2d7c7de6b489a6ed32cf7bcf8ba3f))
+
 ## [0.4.0](https://github.com/stuffbucket/maximal-core/compare/v0.3.2...v0.4.0) (2026-08-05)
 
 
