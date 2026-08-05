@@ -62,6 +62,14 @@ export interface AwaitReadyOptions {
 
 const DEFAULT_READY_TIMEOUT_MS = 30_000
 
+/** Emit whole lines left in the buffer behind the ready marker. */
+function flushTrailing(buffer: string, onLine?: (line: string) => void): void {
+  if (!onLine) return
+  for (const line of buffer.split("\n")) {
+    if (line.trim()) onLine(line)
+  }
+}
+
 /**
  * Read the sidecar's stdout until it announces readiness.
  *
@@ -74,6 +82,12 @@ const DEFAULT_READY_TIMEOUT_MS = 30_000
  * marker can straddle two reads. A supervisor that split on chunks rather than
  * newlines would drop the line intermittently under load, which is exactly the
  * kind of bug that only shows up on a slow machine.
+ *
+ * **The stream is left open.** Iteration is manual rather than `for await`,
+ * because exiting a `for await` calls `iterator.return()`, which destroys a Node
+ * Readable — closing the read end of the pipe so the sidecar dies with `EPIPE`
+ * on its very next log line. The host keeps ownership and must continue draining
+ * stdout after this resolves, or the pipe buffer fills and the child blocks.
  */
 export async function awaitReadyLine(
   stdout: AsyncIterable<Uint8Array | string>,
@@ -91,25 +105,32 @@ export async function awaitReadyLine(
 
   const scan = async (): Promise<ReadyLine> => {
     const decoder = new TextDecoder()
+    const iterator = stdout[Symbol.asyncIterator]()
     let buffer = ""
-    for await (const chunk of stdout) {
+    for (;;) {
+      const next = await iterator.next()
+      if (next.done === true) throw new SidecarExitedError()
+      const chunk = next.value
       buffer +=
         typeof chunk === "string" ? chunk : (
-          decoder.decode(chunk, {
-            stream: true,
-          })
+          decoder.decode(chunk, { stream: true })
         )
       let newline = buffer.indexOf("\n")
       while (newline >= 0) {
         const line = buffer.slice(0, newline)
         buffer = buffer.slice(newline + 1)
         const ready = parseReadyLine(line)
-        if (ready) return ready
+        if (ready) {
+          // Surface anything already buffered behind the marker so a boot line
+          // sharing the chunk isn't silently dropped, then return WITHOUT
+          // calling iterator.return() — that would destroy the stream.
+          flushTrailing(buffer, options.onLine)
+          return ready
+        }
         if (line.trim()) options.onLine?.(line)
         newline = buffer.indexOf("\n")
       }
     }
-    throw new SidecarExitedError()
   }
 
   try {

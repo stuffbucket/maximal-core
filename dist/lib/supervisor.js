@@ -27,6 +27,12 @@ function parseReadyLine(line) {
   }
 }
 var DEFAULT_READY_TIMEOUT_MS = 3e4;
+function flushTrailing(buffer, onLine) {
+  if (!onLine) return;
+  for (const line of buffer.split("\n")) {
+    if (line.trim()) onLine(line);
+  }
+}
 async function awaitReadyLine(stdout, options = {}) {
   const timeoutMs = options.timeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
   let timer;
@@ -38,22 +44,26 @@ async function awaitReadyLine(stdout, options = {}) {
   });
   const scan = async () => {
     const decoder = new TextDecoder();
+    const iterator = stdout[Symbol.asyncIterator]();
     let buffer = "";
-    for await (const chunk of stdout) {
-      buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk, {
-        stream: true
-      });
+    for (; ; ) {
+      const next = await iterator.next();
+      if (next.done === true) throw new SidecarExitedError();
+      const chunk = next.value;
+      buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
       let newline = buffer.indexOf("\n");
       while (newline >= 0) {
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
         const ready = parseReadyLine(line);
-        if (ready) return ready;
+        if (ready) {
+          flushTrailing(buffer, options.onLine);
+          return ready;
+        }
         if (line.trim()) options.onLine?.(line);
         newline = buffer.indexOf("\n");
       }
     }
-    throw new SidecarExitedError();
   };
   try {
     return await Promise.race([scan(), timeout]);

@@ -208,9 +208,6 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   emitBootStatus("Starting the server…")
   printReadyBanner(serverUrl)
-  // After the bind, never before: a supervisor treats this line as "connectable
-  // now" and would otherwise race a socket that isn't listening yet.
-  emitReadyLine({ port: options.port, pid: process.pid })
 
   const { server } = await import("~/server")
 
@@ -228,7 +225,22 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     },
   })
 
-  finalizeBoot(httpServer)
+  finalizeBoot(httpServer, options.port)
+}
+
+/**
+ * The port actually bound.
+ *
+ * With `--port 0` the caller asked for an ephemeral port, so `options.port` is
+ * `0` and useless — the real one is only knowable after the bind. A supervisor
+ * that trusted the requested port would try to connect to port 0 and get
+ * EADDRNOTAVAIL, which is the exact failure the ready-line exists to prevent.
+ */
+function boundPort(httpServer: ReturnType<ServeFn>, requested: number): number {
+  const url = (httpServer as { url?: string }).url
+  if (!url) return requested
+  const parsed = Number(new URL(url).port)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : requested
 }
 
 /**
@@ -239,7 +251,21 @@ export async function runServer(options: RunServerOptions): Promise<void> {
  * present-on-next-boot sentinel means the last exit was ungraceful — see the
  * `staleSession` check), then install the shutdown handlers.
  */
-function finalizeBoot(httpServer: ReturnType<ServeFn>): void {
+function finalizeBoot(
+  httpServer: ReturnType<ServeFn>,
+  requested: number,
+): void {
+  // Re-record the bound port now that it is knowable: under `--port 0` the
+  // pre-bind value was 0, which would make the Origin guard compare every
+  // localhost origin against the wrong port and reject the UI.
+  const port = boundPort(httpServer, requested)
+  state.boundPort = port
+
+  // Emitted here, after the bind and never before: a supervisor treats this
+  // line as "connectable now" and would otherwise race a socket that is not
+  // listening yet.
+  emitReadyLine({ port, pid: process.pid })
+
   void writePidfile()
   reconcileClaudeCodeOnBoot()
   markSessionRunning()

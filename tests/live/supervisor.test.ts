@@ -102,6 +102,33 @@ describe("awaitReadyLine", () => {
   })
 })
 
+describe("awaitReadyLine — stream ownership", () => {
+  test("leaves the stream open: a `for await` exit would kill the sidecar", async () => {
+    // Regression. Exiting a `for await` calls iterator.return(), which destroys a
+    // Node Readable — closing the read end of the pipe so the sidecar dies with
+    // EPIPE on its very next log line. Found by spawning the real binary; no
+    // unit test with a plain generator can catch it, so assert it explicitly.
+    const { Readable } = await import("node:stream")
+    const stream = new Readable({ read() {} })
+    stream.push(`${READY}\n`)
+
+    const ready = await awaitReadyLine(stream)
+    expect(ready.port).toBe(51234)
+    // The assertion that matters: destroying this is what kills the sidecar.
+    expect(stream.destroyed).toBe(false)
+    expect(stream.readableEnded).toBe(false)
+    stream.destroy()
+  })
+
+  test("a boot line sharing the ready chunk is surfaced, not dropped", async () => {
+    const seen: Array<string> = []
+    await awaitReadyLine(chunks(`${READY}\ntrailing line\n`), {
+      onLine: (line) => seen.push(line),
+    })
+    expect(seen).toContain("trailing line")
+  })
+})
+
 describe("sidecarSpawnEnv", () => {
   test("sets the gate the markers depend on", () => {
     // Without this the sidecar emits no markers at all, and a supervisor waits

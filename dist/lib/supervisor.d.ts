@@ -60,6 +60,12 @@ interface AwaitReadyOptions {
  * marker can straddle two reads. A supervisor that split on chunks rather than
  * newlines would drop the line intermittently under load, which is exactly the
  * kind of bug that only shows up on a slow machine.
+ *
+ * **The stream is left open.** Iteration is manual rather than `for await`,
+ * because exiting a `for await` calls `iterator.return()`, which destroys a Node
+ * Readable — closing the read end of the pipe so the sidecar dies with `EPIPE`
+ * on its very next log line. The host keeps ownership and must continue draining
+ * stdout after this resolves, or the pipe buffer fills and the child blocks.
  */
 declare function awaitReadyLine(stdout: AsyncIterable<Uint8Array | string>, options?: AwaitReadyOptions): Promise<ReadyLine>;
 /** Env a host must set when spawning the sidecar. Without the parent pid the
