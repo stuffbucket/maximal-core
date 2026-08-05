@@ -145,21 +145,43 @@ properties:
    lines (now token-free) — a caller cannot obtain the token or the
    finalized request. An unrecognized host gets no credential (safe
    default: a typo'd host fails unauthenticated rather than leaking).
-3. **The invariant is enforced, not just documented.** An ESLint
-   `no-restricted-syntax` rule (`eslint.config.js`,
+3. **The invariant is enforced, not just documented — on the shapes it
+   can see.** An ESLint `no-restricted-syntax` rule (`eslint.config.js`,
    `credential-attachment-single-mechanism`) fails CI if any file outside
-   `send-request.ts` hand-builds a `Bearer …` / `token …` auth string or
-   attaches an `x-api-key` header. A new endpoint that tries to attach
-   its own token cannot merge; it must route through the mechanism.
-   (`web-tools/executor.ts` forwards a separate sandbox key and
-   `setup.ts` sends a dummy loopback key — both allowlisted.)
+   `send-request.ts` hand-builds a `Bearer …` / `token …` auth string by
+   interpolation or concatenation, or names an `Authorization` /
+   `x-api-key` header in an object literal, in `.set()`/`.append()`, or
+   on the left of an assignment. A new endpoint that tries to attach its
+   own token in one of those forms cannot merge.
+
+   It is a tripwire, not a proof: a header name held in a variable, or a
+   header record assembled elsewhere and spread into `fetch`, needs the
+   *value* of an expression rather than its shape and is not statically
+   detectable. `eslint.config.js` lists both the covered and the
+   uncoverable forms; read it before trusting the guarantee.
+
+   Until 2026-08 the rule matched only two of the six covered shapes, so
+   `headers.set("x-api-key", t)` — the form `send-request.ts` itself
+   uses — was invisible to it. Widening it surfaced one real second
+   attachment site (below).
+
+   Allowlisted, each for a stated reason:
+   `routes/messages/web-tools/executor.ts` (a separate sandbox key, not
+   a GitHub/Copilot token) and `lib/platform/replace-running.ts` (the
+   `--replace` takeover POSTs `/_internal/shutdown` to 127.0.0.1 with
+   the operator's own *inbound* API key as `x-api-key`; `sendRequest`
+   infers the credential from the destination host and loopback maps to
+   none). `setup.ts` was allowlisted for a dummy loopback key it no
+   longer sends; the entry was removed.
 
 Least-privilege routing (each credential reaches exactly one host; no
 host receives two credentials) was already true and is preserved — the
 mechanism centralizes it rather than changing it.
 
 Out of scope / follow-ups: the web-tools executor's sandbox credential
-is not yet a `Credential` domain.
+is not yet a `Credential` domain, and `lib/platform/replace-running.ts`
+still attaches the inbound API key by hand for the loopback `--replace`
+takeover.
 
 Update (defect #230): the `GET /token` endpoint (`routes/token/route.ts`)
 that returned the raw Copilot token has been DELETED. The claim that it

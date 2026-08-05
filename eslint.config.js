@@ -2,15 +2,62 @@ import config from "@echristian/eslint-config"
 
 // The single-mechanism invariant (ADR-0001): a credential token becomes an
 // Authorization / x-api-key header in EXACTLY one file, `src/lib/http/send-request.ts`.
-// This rule bans hand-building an auth string (`Bearer …`, `token …`) anywhere
-// else, so "one mechanism" can't silently regress — a new endpoint that tries
-// to attach its own token fails CI and is pushed toward sendRequest().
+// This rule bans hand-attaching a credential anywhere else, so "one mechanism"
+// can't silently regress — a new endpoint that tries to attach its own token
+// fails CI and is pushed toward sendRequest().
 //
-// We ban ATTACHMENT (constructing the auth value), not token READS: presence
-// guards (`if (!state.copilotToken)`), fallback resolution, and lifecycle
-// writes are all legitimate reads and far too numerous to allowlist. The leak
-// vector the goal targets is a request leaving with a hand-attached token —
-// that's the template-literal below.
+// We ban ATTACHMENT (building the auth value, or naming the auth header), not
+// token READS: presence guards (`if (!state.copilotToken)`), fallback
+// resolution, and lifecycle writes are all legitimate reads and far too
+// numerous to allowlist. The leak vector is a request leaving with a
+// hand-attached token.
+//
+// SHAPES COVERED. Each was probed against a fixture of positives and negatives
+// and then against the whole of `src/**`, which yields hits in exactly the
+// three files listed in `ignores` and nowhere else:
+//
+//   `Bearer ${t}` / `token ${t}`   template interpolation
+//   "Bearer " + t                  string concatenation
+//   { Authorization: v }           object literal, identifier key
+//   { "x-api-key": v }             object literal, string key
+//   headers.set("x-api-key", v)    Headers setter — also .append()
+//   headers["x-api-key"] = v       member assignment — also `.authorization =`
+//
+// Only the first and the fourth used to be covered. The consequence was that
+// `send-request.ts` — the reference implementation this rule exists to make
+// unique — attaches via `headers.set(...)` (lines 87/94/104/116/118), a shape
+// the guard could not see; any other file could have done the same silently.
+// The old rule also carried a dead selector, `Property[key.name='x-api-key']`:
+// `x-api-key` is not a valid identifier, so that key is always a string
+// literal and `key.name` never exists on it.
+//
+// SHAPES NOT COVERED, and not coverable by a selector. The rule does not claim
+// otherwise and neither do its messages, which say "this shape" rather than
+// implying the set is closed:
+//
+//   - a header name held in a variable:      headers.set(name, value)
+//   - a name assembled at runtime:           headers.set("x-" + kind, value)
+//   - a record built elsewhere and spread:   fetch(url, { headers: authHeaders })
+//   - a credential crossing a function boundary as an opaque
+//     Record<string, string> / Headers
+//
+// Deciding those needs the VALUE of an expression, not its shape; ESLint sees
+// only shape. Treat this rule as a tripwire on the common forms, not a proof.
+//
+// Precision note: the object-literal selectors are scoped to
+// `ObjectExpression >` on purpose. Without it they also match ObjectPattern,
+// so `const { authorization } = headers` — a read — would fail the build, and a
+// rule that fires on legitimate code gets suppressed and then enforces nothing.
+//
+// `ignores` is exhaustive and minimal: with it emptied, the widened rule hits
+// those three files and nothing else in `src/**`. Two entries that used to sit
+// here were removed because they no longer named a violation — `src/setup.ts`
+// (its smoke test now deliberately sends no x-api-key) and `**/*.test.ts`
+// (`files` is `src/**/*.ts`, and there are no tests under `src/`).
+const AUTH_HEADER = "/^(?:authorization|x-api-key)$/i"
+const ROUTE_HINT =
+  "Route the request through sendRequest() with a Credential; the token is attached inside src/lib/http/send-request.ts. See ADR-0001. (This rule matches common attachment SHAPES only — a header name held in a variable, or a header record built elsewhere and spread, is not statically detectable and will not be caught.)"
+
 const tokenAttachmentGuard = {
   name: "credential-attachment-single-mechanism",
   files: ["src/**/*.ts"],
@@ -21,10 +68,18 @@ const tokenAttachmentGuard = {
     // GitHub/Copilot token) to the web-tools service. Different credential
     // domain; not yet folded into sendRequest. Tracked as a follow-up.
     "src/routes/messages/web-tools/executor.ts",
-    // Loopback smoke test sends a DUMMY x-api-key ("anything") to its own
-    // server — not a real credential.
-    "src/setup.ts",
-    "**/*.test.ts",
+    // `--replace` takeover probe. POSTs /_internal/shutdown to the maximal
+    // instance already holding the port and attaches the operator's own
+    // configured inbound key (`getConfiguredApiKeys()[0]`, via
+    // `~/lib/start/port.ts`) as `headers["x-api-key"] = apiKey` on a raw
+    // injected fetch. This IS a second hand-rolled attachment site; the
+    // widened rule is what surfaced it, and the old rule could not see the
+    // member-assignment shape. Scoped down by two facts: the destination is
+    // 127.0.0.1 only, and the credential is the proxy's own INBOUND key, not a
+    // GitHub/Copilot token. Not folded into sendRequest() because sendRequest
+    // infers the credential from the destination host and loopback maps to
+    // none. Tracked as a follow-up.
+    "src/lib/platform/replace-running.ts",
   ],
   rules: {
     "no-restricted-syntax": [
@@ -32,14 +87,32 @@ const tokenAttachmentGuard = {
       {
         selector:
           "TemplateLiteral > TemplateElement[value.raw=/(?:Bearer |token )$/]",
-        message:
-          "Do not hand-build an Authorization value. Route the request through sendRequest() with a Credential; the token is attached inside src/lib/http/send-request.ts. See ADR-0001.",
+        message: `Do not hand-build an Authorization value by interpolation. ${ROUTE_HINT}`,
       },
       {
         selector:
-          "Property[key.value='x-api-key'], Property[key.name='x-api-key']",
-        message:
-          "Do not hand-attach an x-api-key header. Route the request through sendRequest() with a Credential ('anthropic'/'provider'); the key is attached inside src/lib/http/send-request.ts. See ADR-0001.",
+          'BinaryExpression[operator="+"][left.value=/(?:Bearer |token )$/]',
+        message: `Do not hand-build an Authorization value by concatenation. ${ROUTE_HINT}`,
+      },
+      {
+        selector: `ObjectExpression > Property[key.value=${AUTH_HEADER}]`,
+        message: `Do not hand-attach an Authorization / x-api-key header in an object literal. ${ROUTE_HINT}`,
+      },
+      {
+        selector: "ObjectExpression > Property[key.name=/^authorization$/i]",
+        message: `Do not hand-attach an Authorization header in an object literal. ${ROUTE_HINT}`,
+      },
+      {
+        selector: `CallExpression[callee.property.name=/^(?:set|append)$/][arguments.0.value=${AUTH_HEADER}]`,
+        message: `Do not hand-attach an Authorization / x-api-key header via .set()/.append(). ${ROUTE_HINT}`,
+      },
+      {
+        selector: `AssignmentExpression[left.property.value=${AUTH_HEADER}]`,
+        message: `Do not hand-attach an Authorization / x-api-key header by assignment. ${ROUTE_HINT}`,
+      },
+      {
+        selector: "AssignmentExpression[left.property.name=/^authorization$/i]",
+        message: `Do not hand-attach an Authorization header by assignment. ${ROUTE_HINT}`,
       },
     ],
   },
@@ -140,9 +213,11 @@ const mockModuleLeakGuard = {
 
 export default [
   ...config({
+    // Every entry here must name something that EXISTS in this repo. Ignores
+    // for absent trees (`.opencode/**`, `contrib/**`, `shell/**`, `site/**`,
+    // `landing/**` — all inherited from the pre-split repo) read as policy and
+    // enforce nothing; they were removed. Verify with `ls` before adding one.
     ignores: [
-      ".opencode/**",
-      "contrib/**",
       "docs/**",
       "scripts/**",
       // The downstream contract fixture is compiled by its OWN tsconfig, on
@@ -153,17 +228,7 @@ export default [
       // every value as `error`-typed. `downstream/check.ts` (the runner) IS
       // in the root project and stays linted.
       "downstream/src/**",
-      // shell/src (the browser UI) IS linted (#357). Its non-source
-      // siblings are not: build output, the Rust/Tauri crate, generated
-      // wordmark tooling, and the HTML entry dir.
-      "shell/dist/**",
-      "shell/node_modules/**",
-      "shell/src-tauri/**",
-      "shell/tools/**",
-      "shell/ui/**",
-      "site/**",
       ".dependency-cruiser.cjs",
-      "landing/**",
     ],
     prettier: {
       plugins: ["prettier-plugin-packagejson"],
