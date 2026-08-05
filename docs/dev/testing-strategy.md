@@ -36,9 +36,22 @@ costs human judgment only where judgment is actually required:
 **So the contract is:** a pure rename never requires *rethinking* this document —
 at most it re-points a reference.
 
-**Nothing enforces that mechanically.** There is no doc-reference parity test in
-this repo, so a renamed path named here goes stale silently. Re-verify the
-`src/…` paths and `bun run` scripts below against the tree when you touch them.
+**`tests/docs-reference-parity.test.ts` enforces the re-pointing half.** It
+walks `docs/**`, `README.md` and `AGENTS.md` and fails the build on four
+classes of dead reference: a `bun run <script>` with no such script in
+`package.json`, a backticked repo path that is not on disk, a relative markdown
+link that would 404 on GitHub, and a `*.yml` named as one of this repo's
+workflows but absent from `.github/workflows/`.
+
+It is tuned for **precision, not coverage** — a docs test that cries wolf gets
+suppressed, and then enforces nothing. It only reads inline code spans, skips
+anything holding a glob or a `<placeholder>`, skips paragraphs whose own point
+is that the named thing is *absent*, and skips document classes that exist to
+record a past state: `docs/archive/**`, `docs/decisions/**` (ADRs),
+`docs/spec/**` (PRDs), and any file or section carrying a `>` scope banner. So
+it will not catch every stale reference — but anything it does flag is real.
+Re-verify the `src/…` paths in the excluded classes by hand when you touch
+them.
 
 ---
 
