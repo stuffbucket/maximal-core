@@ -2305,7 +2305,7 @@ var init_package = __esm(() => {
       prepack: "bun scripts/ops/prepack.ts",
       prepare: "bun x simple-git-hooks",
       "release:check": "bun scripts/ops/release-gates.ts",
-      "release:manual": "bun run release:preflight && bumpp && bun publish --access public",
+      "release:manual": "bun scripts/ops/release.ts",
       "release:notes": "bun scripts/ops/release-notes.ts",
       "release:preflight": "bun scripts/ops/prepack.ts --check",
       sbom: "bun scripts/sbom.ts",

@@ -65,15 +65,13 @@ describe("parity with the real package.json", () => {
 
   // `bumpp` commits, tags and pushes before `bun publish` is reached, so the
   // assertion has to run ahead of it or the cheap failure becomes a public tag
-  // with nothing published behind it.
-  test("`release:manual` runs the preflight before bumpp tags anything", () => {
-    const scripts = readScripts()
-    expect(scripts["release:manual"]).toBe(
-      "bun run release:preflight && bumpp && bun publish --access public",
-    )
-    expect(scripts["release:manual"].indexOf("release:preflight")).toBeLessThan(
-      scripts["release:manual"].indexOf("bumpp"),
-    )
+  // with nothing published behind it. That ordering used to be a `&&` chain and
+  // is now `scripts/ops/release.ts`, which additionally has to guard the tree
+  // BEFORE `bumpp` and rebuild `dist/` INSIDE it — an order no chain can state.
+  // The ordering itself is asserted in `release.test.ts`; this only pins that
+  // `release:manual` still goes through the file that owns it.
+  test("`release:manual` routes through the wrapper that owns the ordering", () => {
+    expect(readScripts()["release:manual"]).toBe("bun scripts/ops/release.ts")
   })
 
   test("`release:preflight` asserts without building", () => {
