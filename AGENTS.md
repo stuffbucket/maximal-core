@@ -1,4 +1,64 @@
-Read [CLAUDE.md](./CLAUDE.md).
+# AGENTS.md
 
-Every tool that follows the [agents.md](https://agents.md) convention reads
-this file. Put all project context in `CLAUDE.md`. Do not add content here.
+`maximal-core` is a **headless** local proxy that exposes GitHub Copilot as
+OpenAI- and Anthropic-compatible HTTP endpoints. Bun + Hono + TypeScript.
+There is **no UI, no `shell/`, no frontend build** in this repo — a separate
+tier drives the engine over the loopback `/control` HTTP + SSE surface.
+
+## Every turn
+
+- **`bun run check:fast` after each edit** — oxlint + `tsc` + ESLint. This is
+  the inner loop.
+- **`bun run check:deep` before you call the task done** — adds `bun test` and
+  knip. If you touched `scripts/ops/`, also run `bun run check:ops`.
+- Single test file: `bun test tests/foo.test.ts`. Tests live in `tests/` as
+  `*.test.ts` on Bun's built-in runner.
+- Never report success on a command you did not run. If a check fails, say so
+  and show the output.
+
+## Writing code
+
+- Import through the `~/` alias for `src/` (`~/lib/errors/error`), never a deep
+  relative path.
+- Strict TS: no `any`, no unused locals or parameters.
+- `verbatimModuleSyntax` + `erasableSyntaxOnly` are on — type-only imports must
+  be `import type`, and enums, namespaces, and parameter properties will not
+  compile.
+- ESM only, no CommonJS. `camelCase` values, `PascalCase` types.
+- Route handlers catch and call `forwardError(c, error)`; throw `HTTPError`
+  from `~/lib/errors/error`.
+- Every API flow supports streaming (SSE via `streamSSE`) and non-streaming,
+  switching on `payload.stream`. Implement both.
+
+## Rules that cost a turn when broken
+
+Each rule states the prohibition; the linked doc is its only elaboration.
+
+- **Never `git stash pop` in a shared working tree.** It merges another
+  in-flight agent's stash into yours. Isolate first —
+  [`docs/architecture.md`](docs/architecture.md) → _Parallel-agent convention_.
+- **Never leave a `mock.module` unrestored.** Bun leaks module mocks forward
+  across files, so it breaks a *sibling* test on CI only. Lint-enforced by
+  `mockModuleLeakGuard`; prefer injectable options over mocking a shared module
+  at all — [`docs/dev/testing-strategy.md`](docs/dev/testing-strategy.md) §5.1.
+- **A PR title must be a single valid Conventional Commit.** Squash-merge uses
+  it as the commit subject and release-please parses it —
+  [`docs/architecture.md`](docs/architecture.md) → _Release & PR conventions_.
+
+## Read before you touch
+
+| Area | Read first |
+|---|---|
+| Routing, middleware, model dispatch, config, token store, control API, diagnostics | [`docs/architecture.md`](docs/architecture.md) |
+| Tests, especially mocks or mutation testing | [`docs/architecture.md`](docs/architecture.md) → _Testing gotchas_, then [`docs/dev/testing-strategy.md`](docs/dev/testing-strategy.md) |
+| Running scripts or setting up the dev environment | [`docs/commands.md`](docs/commands.md) |
+| Opening a PR or cutting a release | [`docs/architecture.md`](docs/architecture.md) → _Release & PR conventions_, then [`docs/release-runbook.md`](docs/release-runbook.md) |
+| Spawning parallel agents or using worktrees | [`docs/architecture.md`](docs/architecture.md) → _Parallel-agent convention_ |
+| Changing the pinned Bun version | [`docs/bun-version-policy.md`](docs/bun-version-policy.md) |
+| The Claude Code or Opencode plugin | [`docs/plugins.md`](docs/plugins.md) |
+| Dispatching or reviewing codegen feedback loops | [`docs/codegen-feedback-loops-practices.md`](docs/codegen-feedback-loops-practices.md) |
+
+Also available, unlinked above: `docs/decisions/` (ADRs), `docs/spec/`
+(feature specs), `docs/dev/`, `docs/admin/`, `docs/guide/`, and
+`CONTRIBUTORS.md` (domain experts to loop in per area). Search `docs/` before
+you ask or infer.

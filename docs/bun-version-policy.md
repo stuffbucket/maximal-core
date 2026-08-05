@@ -1,25 +1,21 @@
 # Bun version policy
 
-Pinned in `.bun-version` (read by `bun install` and Bun's own version
-manager) AND in `.github/workflows/ci.yml`. Both must move together —
-dev/CI drift is what got us a 22-test failure on a Bun `latest`
-regression once, and the pin is the antidote.
+Pinned in `.bun-version` — read by `bun install`, by Bun's own version
+manager, and at runtime by every CI workflow (`ci.yml`, `tooling-ci.yml`,
+`watch-external-drift.yml` each `cat .bun-version` into `setup-bun`). No
+workflow holds a copy of the version literal, so dev/CI drift is not
+representable — which is the point: drift is what got us a 22-test failure on
+a Bun `latest` regression once.
 
-The ops workflows under `scripts/ops/` — `tooling-ci.yml` and
-`watch-external-drift.yml` — instead read `.bun-version` at runtime (a
-`cat .bun-version` step feeding `setup-bun`), so they hold no copy to drift;
-only `.bun-version` and `ci.yml` need the manual bump below.
-
-Bump intentionally:
+Bump intentionally — edit `.bun-version`, nothing else:
 
 1. Pick the new Bun version (read its release notes — confirm no
    open regressions affecting our patterns: parallel test loading,
    module-export resolution, `with { type: "file" }` import
    attributes).
-2. Run the whole suite locally on the new version: `bun test`,
-   `bun run check:fast`, `bun run app:dev`.
-3. If green, update **both** `.bun-version` and the `bun-version`
-   field in `.github/workflows/ci.yml` in the same commit.
+2. Run the whole suite locally on the new version: `bun run check:deep`
+   and `bun run check:ops`.
+3. If green, commit the one-line `.bun-version` change.
 4. Watch the next CI run.
 
 Don't float `latest`. Bun ships fast; a release in a single afternoon

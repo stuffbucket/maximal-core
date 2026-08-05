@@ -116,47 +116,24 @@ multiplier (`src/lib/models/tokenizer.ts`).
 ## Parallel-agent convention
 
 This repo can collide on a shared working tree (lint-staged stash + concurrent
-merge ate a turn already). For parallel agents:
+merge ate a turn already). The `git stash pop` prohibition is in
+[`AGENTS.md`](../AGENTS.md); the isolation mechanics are:
 
 - **Spawned subagents:** pass `isolation: "worktree"` to the Agent tool.
 - **Sessions:** create a worktree manually with `git worktree add ../maximal-<task> -b agent/<task>`; clean up with `git worktree remove ../maximal-<task>` after merging back. `git worktree add` does **not** run `bun install`, so run it in the new tree if you need its node_modules.
-- **Never run `git stash pop` in a shared working tree.** It silently merges another in-flight worker's stash into your tree, and on conflict it leaves an inconsistent state that's easy to "clean up" by `rm`-ing files that aren't yours. If you need an isolated bisect, use a worktree. If you must inspect a stash, use `git stash show -p stash@{N}` (read-only) and never `pop` / `apply` outside an isolated tree.
+- **Inspecting a stash is fine** — `git stash show -p stash@{N}` is read-only. It is `pop`/`apply` outside an isolated tree that corrupts another worker's state.
 
 See also: `docs/codegen-feedback-loops-practices.md` → Dispatch and review loops.
 
 ## Testing gotchas
 
-- **`mock.module` persists forward across files in a run — now lint-enforced.**
-  Bun does not reset module mocks between test files, and CI orders files
-  differently than local, so an unrestored mock leaks its stub into a
-  *sibling* file that then reads stale state — the classic "green locally,
-  red on CI" (or vice-versa) failure. This bit us **four times** (the last
-  cost a long #229 debugging loop), so an ESLint rule (`mockModuleLeakGuard`
-  in `eslint.config.js`, scoped to `tests/**`) now **bans the fire-and-forget
-  forms**: `void mock.module(...)` and a bare `mock.module(...)` expression
-  statement both error.
-  - **Awaited is *not* automatically safe.** `await mock.module(...)` passes
-    the lint rule, but an awaited `afterAll` *restore* does **not** reliably
-    land before the next file's static imports on CI — so a module mock that
-    intercepts a *shared* module still leaks across files even when restored.
-    The rule catches the common footgun, not this one.
-  - **The durable fix is to not mock a shared module across files at all.**
-    Prefer the **real** module (the test preload redirects `COPILOT_API_HOME`
-    to a temp dir, and `getClaudeCodeSettingsPath()` honors `CLAUDE_CONFIG_DIR`
-    — so config/settings round-trips are already isolated), or **injectable
-    function options**. Only stub a module with no env/injection seam, keep the
-    wrapper behaviorally identical (spread `...actual`, forward `...rest`), and
-    prove via a sequential-import repro that it can't break a later file.
-- **Green tests can still test nothing.** Mutation testing (`bun run mutate`)
-  caught classification tests that passed without exercising the branch
-  they claimed to cover (the fixture hit a different code path that
-  returned the same value). For security-critical or branchy logic, run
-  Stryker and confirm the targeted mutants actually die — don't trust a
-  passing assertion alone. Every surviving mutant must land in exactly one of
-  three buckets — **killable** (write the test), **dead** (delete it / encode
-  the impossibility in types), or **proven-equivalent** (written proof + reason
-  to keep). See [`dev/testing-strategy.md`](dev/testing-strategy.md) §6 for the
-  disposition rule and the hot-path modules that warrant periodic sweeps.
+The rule is in [`AGENTS.md`](../AGENTS.md); the mechanism, the four incidents
+behind it, and the mutant-disposition procedure are in
+[`dev/testing-strategy.md`](dev/testing-strategy.md) §5.1 (module-mock leakage,
+`mockModuleLeakGuard`, why an awaited restore is still unsafe) and §6 (mutation
+testing — every surviving mutant is killable, dead, or proven-equivalent). The
+decision itself is [ADR-0011](decisions/0011-mock-module-leakage-discipline.md).
+
 
 ## Release & PR conventions
 
