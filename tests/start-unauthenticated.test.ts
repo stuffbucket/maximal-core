@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url"
 const cwd = fileURLToPath(new URL("../", import.meta.url))
 const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "maximal-unauth-"))
 const port = 4143 + Math.floor(Math.random() * 100)
+const controlPort = port + 1
 
 let proc: ReturnType<typeof Bun.spawn> | null = null
 
@@ -51,6 +52,11 @@ beforeAll(async () => {
       "start",
       "--port",
       String(port),
+      // /_debug moved to the private control listener (maximal-core#10), which
+      // is ephemeral by default. Pin it so the test knows where to look — and
+      // so this exercises the new flag end to end.
+      "--control-port",
+      String(controlPort),
       "--verbose", // unlocks /_debug/state
     ],
     cwd,
@@ -138,7 +144,8 @@ describe("start in unauthenticated mode", () => {
   })
 
   test("/_debug/state reports github_token_present: false", async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/_debug/state`)
+    // The control listener, not the public one — /_debug moved there (#10).
+    const res = await fetch(`http://127.0.0.1:${controlPort}/_debug/state`)
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
       runtime: { github_token_present: boolean }

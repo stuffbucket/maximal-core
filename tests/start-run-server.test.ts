@@ -391,15 +391,38 @@ describe("runServer — boot logger format", () => {
 })
 
 describe("runServer — server bind", () => {
-  test("calls srvx.serve with the configured port", async () => {
+  test("binds two listeners: public /v1 and the private control plane", async () => {
+    // maximal-core#10. Two calls, not one — and the second must be loopback-only
+    // and ephemeral, because the control plane is not for anything off-box and
+    // nothing external is meant to find it.
     const port = pickFreePort()
     await runServer(baseOptions({ port }))
-    expect(serveMock).toHaveBeenCalledTimes(1)
-    const [arg] = serveMock.mock.calls[0] as unknown as [
-      { port: number; bun: { idleTimeout: number } },
-    ]
-    expect(arg.port).toBe(port)
-    expect(arg.bun.idleTimeout).toBe(0)
+    expect(serveMock).toHaveBeenCalledTimes(2)
+
+    const calls = serveMock.mock.calls as unknown as Array<
+      [{ port: number; hostname?: string; bun: { idleTimeout: number } }]
+    >
+    const [publicArg] = calls[0]
+    const [controlArg] = calls[1]
+
+    expect(publicArg.port).toBe(port)
+    expect(publicArg.bun.idleTimeout).toBe(0)
+    // The public listener stays on all interfaces — unchanged behaviour.
+    expect(publicArg.hostname).toBeUndefined()
+
+    // 0 = OS-assigned. A supervisor reads the real value off the ready-line.
+    expect(controlArg.port).toBe(0)
+    expect(controlArg.hostname).toBe("127.0.0.1")
+    expect(controlArg.bun.idleTimeout).toBe(0)
+  })
+
+  test("an omitted control port becomes 0, never NaN", async () => {
+    // A programmatic caller that hands us `Number.parseInt(undefined)` must not
+    // reach the bind: NaN would surface much later as an unreachable control
+    // plane rather than as a startup error.
+    await runServer(baseOptions({ controlPort: Number.NaN }))
+    const calls = serveMock.mock.calls as unknown as Array<[{ port: number }]>
+    expect(calls[1][0].port).toBe(0)
   })
 })
 
@@ -431,7 +454,10 @@ describe("start.run — citty args → runServer options", () => {
     expect(state.githubToken).toBe("token-from-cli")
     expect(initProxyFromEnvMock).toHaveBeenCalled()
     // port gets parsed as number and forwarded to serve().
-    const [arg] = serveMock.mock.calls.at(-1) as unknown as [{ port: number }]
+    // `.at(-2)`: each runServer binds two listeners in order — public then
+    // control (maximal-core#10) — so the last call is the ephemeral control
+    // plane and the public port is the one before it.
+    const [arg] = serveMock.mock.calls.at(-2) as unknown as [{ port: number }]
     expect(arg.port).toBe(port)
   })
 
@@ -470,7 +496,8 @@ describe("start.run — citty args → runServer options", () => {
         "proxy-env": false,
       },
     })
-    const [arg] = serveMock.mock.calls.at(-1) as unknown as [{ port: number }]
+    // `.at(-2)` — the public listener; see the note above.
+    const [arg] = serveMock.mock.calls.at(-2) as unknown as [{ port: number }]
     expect(arg.port).toBe(4242)
     expect(typeof arg.port).toBe("number")
   })

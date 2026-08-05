@@ -35,7 +35,11 @@ import { startTokenUsageRetention } from "~/lib/token-usage"
 import { getGitVersion, shortSha } from "~/lib/update/version"
 
 import { initBootLogger, printReadyBanner } from "./boot-io"
-import { emitBootStatus, emitReadyLine } from "./boot-status"
+import {
+  emitBootStatus,
+  emitReadyLine,
+  READY_LINE_VERSION,
+} from "./boot-status"
 import { bootSecrets, bootstrapUpstream } from "./bootstrap"
 import { runClaudeCodeFlow } from "./claude-code-flow"
 import { maybeEvictRunning, portOrExit, resolvePort } from "./port"
@@ -73,6 +77,10 @@ export interface RunServerOptions {
   /** Evict any running instance on :4141 before binding. Optional —
    *  test fixtures + non-CLI callers can omit; treated as false. */
   replace?: boolean
+  /** Port for the private control plane (maximal-core#10). Defaults to 0 —
+   *  ephemeral — because nothing external is meant to find it; a supervisor
+   *  learns the bound value from the ready-line. */
+  controlPort?: number
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
@@ -106,6 +114,11 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       getConfig().server?.portPolicy ?? DEFAULT_PORT_POLICY,
     ),
   )
+
+  // The control plane is ephemeral by default, so there is nothing to contend
+  // for and no policy to apply — 0 goes straight through to the OS. A caller
+  // that pins it explicitly gets the same policy treatment as the public port.
+  const controlPortRequested = await resolveControlPort(options.controlPort)
 
   const git = getGitVersion()
   consola.info(
@@ -141,7 +154,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   // Record the port we're about to bind so the control-surface Origin guard +
   // CORS (server.ts) know which localhost origin is "us" (§6). Set before the
   // bind since the server module reads it lazily, per-request.
-  state.boundPort = port
+  state.proxyPort = port
+  state.controlPort = controlPortRequested
 
   await ensurePaths()
   bootSecrets()
@@ -218,25 +232,97 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   }
 
   emitBootStatus("Starting the server…")
-  printReadyBanner(serverUrl)
 
-  const { server } = await import("~/server")
+  logListening(bootLogger, serverUrl, executorName)
 
+  const { proxyServer, controlServer } = await bindListeners(
+    port,
+    controlPortRequested,
+  )
+
+  finalizeBoot({
+    proxyServer,
+    proxyRequested: port,
+    controlServer,
+    controlRequested: controlPortRequested,
+  })
+}
+
+/** One structured line the boot log is grepped for after the fact. */
+function logListening(
+  bootLogger: ReturnType<typeof initBootLogger>,
+  serverUrl: string,
+  executorName: string,
+): void {
   bootLogger.info(
     `listening url=${serverUrl} `
       + `executor=${executorName.split(" ")[0]} `
       + `auth=${hasGithubToken() ? "authenticated" : "unauthenticated"}`,
   )
+}
 
-  const httpServer = serveImpl({
-    fetch: server.fetch,
-    port,
-    bun: {
-      idleTimeout: 0,
-    },
-  })
+/**
+ * Bind both listeners (maximal-core#10).
+ *
+ * The public one carries `/v1` on a well-known port third-party tools hardcode.
+ * The control one carries the JSON-RPC surface on an ephemeral port only the
+ * supervisor learns, bound **loopback-only** — the router enforces that too (a
+ * remote caller gets 404), but binding to the loopback interface means a remote
+ * packet never reaches the router at all.
+ *
+ * Two `serve()` calls rather than one app with a path filter: the separation is
+ * the point, and a filter is something a later edit can quietly regress.
+ */
+async function bindListeners(
+  proxyPort: number,
+  controlPort: number,
+): Promise<{
+  proxyServer: ReturnType<ServeFn>
+  controlServer: ReturnType<ServeFn>
+}> {
+  const { publicApp, controlApp } = await import("~/server")
+  return {
+    proxyServer: serveImpl({
+      fetch: publicApp.fetch,
+      port: proxyPort,
+      bun: { idleTimeout: 0 },
+    }),
+    controlServer: serveImpl({
+      fetch: controlApp.fetch,
+      port: controlPort,
+      hostname: "127.0.0.1",
+      bun: { idleTimeout: 0 },
+    }),
+  }
+}
 
-  finalizeBoot(httpServer, port)
+/**
+ * Decide the control-plane port.
+ *
+ * A non-integer covers both "omitted" and a caller that handed us
+ * `Number.parseInt(undefined)`. Either way the answer is the same: let the OS
+ * choose. Silently binding NaN would surface much later as an unreachable
+ * control plane rather than as a startup error.
+ *
+ * An explicitly pinned port gets the same policy treatment as the public one,
+ * so `--control-port 9000` against a busy 9000 moves aside instead of failing.
+ */
+async function resolveControlPort(
+  requested: number | undefined,
+): Promise<number> {
+  if (
+    requested === undefined
+    || !Number.isInteger(requested)
+    || requested < 0
+  ) {
+    return 0
+  }
+  return portOrExit(
+    await resolvePort(
+      requested,
+      getConfig().server?.portPolicy ?? DEFAULT_PORT_POLICY,
+    ),
+  )
 }
 
 /**
@@ -262,24 +348,46 @@ function boundPort(httpServer: ReturnType<ServeFn>, requested: number): number {
  * present-on-next-boot sentinel means the last exit was ungraceful — see the
  * `staleSession` check), then install the shutdown handlers.
  */
-function finalizeBoot(
-  httpServer: ReturnType<ServeFn>,
-  requested: number,
-): void {
-  // Re-record the bound port now that it is knowable: under `--port 0` the
-  // pre-bind value was 0, which would make the Origin guard compare every
-  // localhost origin against the wrong port and reject the UI.
-  const port = boundPort(httpServer, requested)
-  state.boundPort = port
+interface FinalizeBootArgs {
+  proxyServer: ReturnType<ServeFn>
+  proxyRequested: number
+  controlServer: ReturnType<ServeFn>
+  controlRequested: number
+}
 
-  // Emitted here, after the bind and never before: a supervisor treats this
+function finalizeBoot({
+  proxyServer,
+  proxyRequested,
+  controlServer,
+  controlRequested,
+}: FinalizeBootArgs): void {
+  // Re-record both bound ports now that they are knowable: under `--port 0` the
+  // pre-bind value was 0, which would make the Origin guard compare every
+  // localhost origin against the wrong port and reject the UI. The control port
+  // is *always* ephemeral under a supervisor, so this is not an edge case there.
+  const proxyPort = boundPort(proxyServer, proxyRequested)
+  const controlPort = boundPort(controlServer, controlRequested)
+  state.proxyPort = proxyPort
+  state.controlPort = controlPort
+
+  // Emitted here, after both binds and never before: a supervisor treats this
   // line as "connectable now" and would otherwise race a socket that is not
   // listening yet.
-  emitReadyLine({ port, pid: process.pid })
+  emitReadyLine({
+    v: READY_LINE_VERSION,
+    controlPort,
+    proxyPort,
+    pid: process.pid,
+  })
+
+  // After the binds, not before: the control port is ephemeral by default, so a
+  // banner printed earlier could only have shown 0 — and this banner is the one
+  // place a CLI user can discover it.
+  printReadyBanner(proxyPort, controlPort)
 
   void writePidfile()
   reconcileClaudeCodeOnBoot()
   markSessionRunning()
   startTokenUsageRetention()
-  installShutdownHandlers(httpServer)
+  installShutdownHandlers(proxyServer, controlServer)
 }

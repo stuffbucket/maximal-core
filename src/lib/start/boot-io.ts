@@ -36,14 +36,19 @@ export function initBootLogger(
   return logger
 }
 
-export function printReadyBanner(serverUrl: string): void {
+export function printReadyBanner(proxyPort: number, controlPort: number): void {
+  const proxyUrl = `http://localhost:${proxyPort}`
+  const controlUrl = `http://127.0.0.1:${controlPort}`
   consola.box(
     [
-      `Proxy:   ${serverUrl}/v1`,
-      `Status:  ${serverUrl}/status`,
+      `Proxy:   ${proxyUrl}/v1`,
+      `Status:  ${proxyUrl}/status`,
+      `Control: ${controlUrl}/control/rpc`,
       ``,
       `Core is headless — point a client at the proxy, or drive it over`,
-      `the loopback control plane at ${serverUrl}/control/rpc.`,
+      `the control plane. The control port is separate and loopback-only`,
+      `(maximal-core#10); it is ephemeral unless you pass --control-port,`,
+      `so this line is the only place a CLI user can read it.`,
     ].join("\n"),
   )
 }

@@ -11,7 +11,7 @@ import {
 } from "~/lib/config/setup-status"
 import { forwardError } from "~/lib/errors/error"
 import { PRODUCT_ENDPOINTS } from "~/routes/product-api"
-import { server } from "~/server"
+import { publicApp } from "~/server"
 
 /**
  * Proof-of-shape tests for the maximal product OpenAPI surface.
@@ -46,7 +46,7 @@ interface SetupStatusBody {
 
 describe("GET /setup-status (post-OpenAPI-migration)", () => {
   test("returns 200 with the original response shape", async () => {
-    const res = await server.request("/setup-status")
+    const res = await publicApp.request("/setup-status")
     expect(res.status).toBe(200)
     expect(res.headers.get("content-type")).toContain("application/json")
 
@@ -74,7 +74,7 @@ describe("GET /setup-status (post-OpenAPI-migration)", () => {
 
 describe("GET /openapi.json (drift-binding)", () => {
   test("serves a valid product OpenAPI document", async () => {
-    const res = await server.request("/openapi.json")
+    const res = await publicApp.request("/openapi.json")
     expect(res.status).toBe(200)
     expect(res.headers.get("content-type")).toContain("application/json")
 
@@ -91,7 +91,7 @@ describe("GET /openapi.json (drift-binding)", () => {
   })
 
   test("exposes the /setup-status path bound to the SetupStatus schema", async () => {
-    const res = await server.request("/openapi.json")
+    const res = await publicApp.request("/openapi.json")
     const doc = (await res.json()) as {
       paths: Record<
         string,
@@ -122,7 +122,7 @@ describe("GET /openapi.json (drift-binding)", () => {
   })
 
   test("is scoped to the product surface only — no mirrored/completion endpoints", async () => {
-    const res = await server.request("/openapi.json")
+    const res = await publicApp.request("/openapi.json")
     const doc = (await res.json()) as { paths: Record<string, unknown> }
 
     // Exactly the product endpoints declared in the closed-world allowlist
@@ -140,7 +140,7 @@ describe("GET /openapi.json (drift-binding)", () => {
   test("is served without authentication (public spec)", async () => {
     // No Authorization header, no API key: a fresh install must reach the
     // doc. `/openapi.json` is in server.ts's allowUnauthenticatedPaths.
-    const res = await server.request("/openapi.json")
+    const res = await publicApp.request("/openapi.json")
     expect(res.status).toBe(200)
     expect(res.headers.get("content-type")).toContain("application/json")
   })
@@ -151,12 +151,12 @@ describe("product-API mount does not shadow sibling routes", () => {
     // `/status` is unauthenticated and served alongside the productApiRoutes
     // mount. If `server.route("/", productApiRoutes)` behaved as a catch-all
     // it would swallow this path; a 200 proves the mount is fall-through.
-    const res = await server.request("/status")
+    const res = await publicApp.request("/status")
     expect(res.status).toBe(200)
   })
 
   test("an unknown path still 404s (mount is not a catch-all)", async () => {
-    const res = await server.request("/definitely-not-a-route")
+    const res = await publicApp.request("/definitely-not-a-route")
     expect(res.status).toBe(404)
   })
 })
@@ -286,7 +286,7 @@ function emittedKeys(...samples: Array<Record<string, unknown>>): Set<string> {
 }
 
 async function fetchProductDoc(): Promise<ProductDoc> {
-  const res = await server.request("/openapi.json")
+  const res = await publicApp.request("/openapi.json")
   return (await res.json()) as ProductDoc
 }
 

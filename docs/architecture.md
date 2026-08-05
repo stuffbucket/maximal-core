@@ -86,6 +86,30 @@ models use the native Messages API or fall back to Chat Completions.
 - `src/lib/auth/secrets.ts` — file-based provider keys at `~/.local/share/maximal/secrets/<name>` (mode 0600). Env wins; file fills in unset values.
 - `src/lib/runtime-state/cache.ts` — `Cache<K,V>` LRU wrapper with hit/miss/eviction metrics. Wrapped instances register globally for `/_debug/state`.
 
+### Two listeners
+
+`/v1` and the control plane bind separate ports (maximal-core#10), as two
+separate Hono apps in `src/server.ts`:
+
+| Listener | Port | Serves |
+|---|---|---|
+| Public | `--port`, default 4141, policy applies | `/`, `/status`, `/v1/*`, the proxy routes, `/_internal` |
+| Control | `--control-port`, default 0 (ephemeral), loopback-only | `/control/*`, `/_debug/*` |
+
+The separation is structural: `/v1` is never mounted on the control app, so it
+cannot be reached there. `/_internal` stays public on purpose — `evictRunning`
+takes over the public port by POSTing `/_internal/shutdown` *to that port*, and
+moving it would break `--replace`.
+
+Both bound ports are reported four ways, because a host may miss any one of
+them: the boot banner, the stdout ready-line, `/status`, and `server/discover`.
+
+The ready-line is versioned (`v: 1`) and parsed against a shared zod schema
+(`readyLineSchema` in `src/lib/start/boot-status.ts`) so emitter and parser
+cannot drift. `parseReadyLine` also accepts the pre-#10 `{port, pid}` shape,
+normalising it by pointing both ports at the single one — a host may supervise
+an older engine than itself.
+
 ### Port selection
 
 `src/lib/start/port.ts` decides what to bind, driven by `config.server.portPolicy`:

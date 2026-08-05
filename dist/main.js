@@ -17767,7 +17767,8 @@ var init_state = __esm(() => {
     rateLimitWait: false,
     showToken: false,
     verbose: false,
-    boundPort: 4141,
+    controlPort: 4141,
+    proxyPort: 4141,
     vsCodeDeviceId: randomUUID(),
     shellApiKey: process.env.MAXIMAL_SHELL_KEY?.trim() || undefined
   };
@@ -32898,25 +32899,42 @@ function emitUpdateRequest() {
 `);
   return true;
 }
-var BOOT_STATUS_MARKER = "@@MAXIMAL_STATUS@@", READY_MARKER = "@@MAXIMAL_READY@@", QUIT_REQUEST_MARKER = "@@MAXIMAL_QUIT@@", UPDATE_REQUEST_MARKER = "@@MAXIMAL_UPDATE@@";
+var BOOT_STATUS_MARKER = "@@MAXIMAL_STATUS@@", READY_MARKER = "@@MAXIMAL_READY@@", READY_LINE_VERSION = 1, port, readyLineSchema, readyLineV0Schema, anyReadyLineSchema, QUIT_REQUEST_MARKER = "@@MAXIMAL_QUIT@@", UPDATE_REQUEST_MARKER = "@@MAXIMAL_UPDATE@@";
+var init_boot_status = __esm(() => {
+  init_zod();
+  port = exports_external.number().int().min(0).max(65535);
+  readyLineSchema = exports_external.object({
+    v: exports_external.number().int().min(1),
+    controlPort: port,
+    proxyPort: port,
+    pid: exports_external.number().int()
+  });
+  readyLineV0Schema = exports_external.object({ port, pid: exports_external.number().int() }).transform((line) => ({
+    v: 0,
+    controlPort: line.port,
+    proxyPort: line.port,
+    pid: line.pid
+  }));
+  anyReadyLineSchema = exports_external.union([readyLineSchema, readyLineV0Schema]);
+});
 
 // node_modules/srvx/dist/_chunks/_utils2.mjs
 function resolvePortAndHost(opts) {
   const _port = opts.port ?? globalThis.process?.env.PORT ?? 3000;
-  const port = typeof _port === "number" ? _port : Number.parseInt(_port, 10);
-  if (port < 0 || port > 65535)
-    throw new RangeError(`Port must be between 0 and 65535 (got "${port}").`);
+  const port2 = typeof _port === "number" ? _port : Number.parseInt(_port, 10);
+  if (port2 < 0 || port2 > 65535)
+    throw new RangeError(`Port must be between 0 and 65535 (got "${port2}").`);
   return {
-    port,
+    port: port2,
     hostname: opts.hostname ?? globalThis.process?.env.HOST
   };
 }
-function fmtURL(host, port, secure) {
-  if (!host || !port)
+function fmtURL(host, port2, secure) {
+  if (!host || !port2)
     return;
   if (host.includes(":"))
     host = `[${host}]`;
-  return `http${secure ? "s" : ""}://${host}:${port}/`;
+  return `http${secure ? "s" : ""}://${host}:${port2}/`;
 }
 function printListening(opts, url2) {
   if (!url2 || (opts.silent ?? globalThis.process?.env?.TEST))
@@ -33596,14 +33614,14 @@ function getProxyForUrl(url2) {
   var parsedUrl = typeof url2 === "string" ? parseUrl(url2) : url2 || {};
   var proto = parsedUrl.protocol;
   var hostname3 = parsedUrl.host;
-  var port = parsedUrl.port;
+  var port2 = parsedUrl.port;
   if (typeof hostname3 !== "string" || !hostname3 || typeof proto !== "string") {
     return "";
   }
   proto = proto.split(":", 1)[0];
   hostname3 = hostname3.replace(/:\d*$/, "");
-  port = parseInt(port) || DEFAULT_PORTS[proto] || 0;
-  if (!shouldProxy(hostname3, port)) {
+  port2 = parseInt(port2) || DEFAULT_PORTS[proto] || 0;
+  if (!shouldProxy(hostname3, port2)) {
     return "";
   }
   var proxy = getEnv2("npm_config_" + proto + "_proxy") || getEnv2(proto + "_proxy") || getEnv2("npm_config_proxy") || getEnv2("all_proxy");
@@ -33612,7 +33630,7 @@ function getProxyForUrl(url2) {
   }
   return proxy;
 }
-function shouldProxy(hostname3, port) {
+function shouldProxy(hostname3, port2) {
   var NO_PROXY = (getEnv2("npm_config_no_proxy") || getEnv2("no_proxy")).toLowerCase();
   if (!NO_PROXY) {
     return true;
@@ -33627,7 +33645,7 @@ function shouldProxy(hostname3, port) {
     var parsedProxy = proxy.match(/^(.+):(\d+)$/);
     var parsedProxyHostname = parsedProxy ? parsedProxy[1] : proxy;
     var parsedProxyPort = parsedProxy ? parseInt(parsedProxy[2]) : 0;
-    if (parsedProxyPort && parsedProxyPort !== port) {
+    if (parsedProxyPort && parsedProxyPort !== port2) {
       return true;
     }
     if (!/^[.*]/.test(parsedProxyHostname)) {
@@ -33834,7 +33852,7 @@ import path16 from "path";
 function defaultSleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-function defaultProbePort(port) {
+function defaultProbePort(port2) {
   return new Promise((resolve) => {
     const socket = new net2.Socket;
     let settled = false;
@@ -33849,7 +33867,7 @@ function defaultProbePort(port) {
     socket.once("connect", () => finish(true));
     socket.once("error", () => finish(false));
     socket.once("timeout", () => finish(false));
-    socket.connect(port, "127.0.0.1");
+    socket.connect(port2, "127.0.0.1");
   });
 }
 async function defaultReadPidfile() {
@@ -33878,11 +33896,11 @@ function isMaximalProcess(pid) {
     return false;
   }
 }
-function defaultListenerPid(port) {
+function defaultListenerPid(port2) {
   if (process.platform === "win32")
     return null;
   try {
-    const r3 = spawnSync2("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8", timeout: 1000 });
+    const r3 = spawnSync2("lsof", ["-nP", `-iTCP:${port2}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8", timeout: 1000 });
     if (r3.status !== 0 || !r3.stdout.trim())
       return null;
     for (const line of r3.stdout.trim().split(`
@@ -34965,13 +34983,18 @@ function initBootLogger(git, options) {
   logger.info(`maximal start pid=${process.pid} ` + `version=${git.sha ? shortSha(git.sha) : "unknown"} ` + `branch=${git.branch || "unknown"} port=${options.port} ` + `account=${options.accountType}`);
   return logger;
 }
-function printReadyBanner(serverUrl) {
+function printReadyBanner(proxyPort, controlPort) {
+  const proxyUrl = `http://localhost:${proxyPort}`;
+  const controlUrl = `http://127.0.0.1:${controlPort}`;
   consola.box([
-    `Proxy:   ${serverUrl}/v1`,
-    `Status:  ${serverUrl}/status`,
+    `Proxy:   ${proxyUrl}/v1`,
+    `Status:  ${proxyUrl}/status`,
+    `Control: ${controlUrl}/control/rpc`,
     ``,
     `Core is headless \u2014 point a client at the proxy, or drive it over`,
-    `the loopback control plane at ${serverUrl}/control/rpc.`
+    `the control plane. The control port is separate and loopback-only`,
+    `(maximal-core#10); it is ephemeral unless you pass --control-port,`,
+    `so this line is the only place a CLI user can read it.`
   ].join(`
 `));
 }
@@ -35327,6 +35350,7 @@ var init_bootstrap = __esm(() => {
   init_utils2();
   init_state();
   init_get_user();
+  init_boot_status();
 });
 
 // node_modules/tiny-invariant/dist/esm/tiny-invariant.js
@@ -35496,20 +35520,20 @@ var init_claude_code_flow = __esm(() => {
 
 // src/lib/start/port.ts
 import net3 from "net";
-async function maybeEvictRunning(port) {
+async function maybeEvictRunning(port2) {
   const keys = getConfiguredApiKeys();
   const apiKey = keys[0] ?? null;
   try {
-    await evictRunning({ apiKey, port });
+    await evictRunning({ apiKey, port: port2 });
   } catch (error51) {
     consola.error(error51 instanceof Error ? error51.message : String(error51));
     process.exit(1);
   }
 }
-function reportPortBusyAndExit(port, occupant) {
+function reportPortBusyAndExit(port2, occupant) {
   if (occupant === "maximal") {
     consola.error([
-      `Port ${port} is already in use by another maximal instance.`,
+      `Port ${port2} is already in use by another maximal instance.`,
       ``,
       `Options:`,
       `  \u2022 Re-run with --replace to evict it.`,
@@ -35518,9 +35542,9 @@ function reportPortBusyAndExit(port, occupant) {
     ].join(`
 `));
   } else {
-    const lookupHint = process.platform === "darwin" || process.platform === "linux" ? `lsof -i :${port}` : `Get-Process -Id (Get-NetTCPConnection -LocalPort ${port}).OwningProcess`;
+    const lookupHint = process.platform === "darwin" || process.platform === "linux" ? `lsof -i :${port2}` : `Get-Process -Id (Get-NetTCPConnection -LocalPort ${port2}).OwningProcess`;
     consola.error([
-      `Port ${port} is in use by another process (not maximal).`,
+      `Port ${port2} is in use by another process (not maximal).`,
       ``,
       `Pass --port <n> to use a different port, or stop the other process.`,
       ``,
@@ -35531,9 +35555,9 @@ function reportPortBusyAndExit(port, occupant) {
   }
   process.exit(1);
 }
-async function probePort(port) {
+async function probePort(port2) {
   try {
-    const res = await fetch(`http://localhost:${port}/`, {
+    const res = await fetch(`http://localhost:${port2}/`, {
       signal: AbortSignal.timeout(500)
     });
     if (!res.ok)
@@ -35544,7 +35568,7 @@ async function probePort(port) {
     return "free";
   }
 }
-function tryListen(port, host) {
+function tryListen(port2, host) {
   return new Promise((resolve) => {
     const probe = net3.createServer();
     probe.unref();
@@ -35557,15 +35581,15 @@ function tryListen(port, host) {
       });
     });
     try {
-      probe.listen(port, host);
+      probe.listen(port2, host);
     } catch {
       resolve("n/a");
     }
   });
 }
-async function isPortBindable(port) {
+async function isPortBindable(port2) {
   for (const host of BIND_TEST_HOSTS) {
-    if (await tryListen(port, host) === "held")
+    if (await tryListen(port2, host) === "held")
       return false;
   }
   return true;
@@ -35658,6 +35682,7 @@ var init_port = __esm(() => {
   init_dist();
   init_request_auth();
   init_replace_running();
+  init_boot_status();
   BIND_TEST_HOSTS = ["127.0.0.1", "::1", "0.0.0.0"];
   IN_USE_CODES = new Set(["EADDRINUSE", "EACCES"]);
 });
@@ -35695,7 +35720,7 @@ var init_session_sentinel = __esm(() => {
 });
 
 // src/lib/start/shutdown.ts
-async function initiateShutdown(httpServer, reason) {
+async function initiateShutdown(servers, reason) {
   if (shuttingDown)
     return;
   shuttingDown = true;
@@ -35706,22 +35731,24 @@ async function initiateShutdown(httpServer, reason) {
     process.exit(1);
   }, 2500);
   watchdog.unref();
-  try {
-    await httpServer.close(true);
-  } catch (error51) {
-    consola.warn("shutdown: server.close() threw", error51);
+  for (const server of servers) {
+    try {
+      await server.close(true);
+    } catch (error51) {
+      consola.warn("shutdown: server.close() threw", error51);
+    }
   }
   await removePidfile();
   clearSessionRunning();
   clearTimeout(watchdog);
   process.exit(0);
 }
-function installShutdownHandlers(httpServer) {
+function installShutdownHandlers(...servers) {
   process.on("SIGTERM", () => {
-    initiateShutdown(httpServer, "received SIGTERM");
+    initiateShutdown(servers, "received SIGTERM");
   });
   process.on("SIGINT", () => {
-    initiateShutdown(httpServer, "received SIGINT");
+    initiateShutdown(servers, "received SIGINT");
   });
   process.on("exit", () => {
     try {
@@ -35741,7 +35768,7 @@ function installShutdownHandlers(httpServer) {
       } catch {
         clearInterval(interval);
         consola.warn(`shutdown: parent ${parentPid} gone`);
-        initiateShutdown(httpServer, `parent ${parentPid} exited`);
+        initiateShutdown(servers, `parent ${parentPid} exited`);
       }
     }, 3000);
     interval.unref();
@@ -37693,6 +37720,10 @@ function buildStatus(startMs) {
       models: {
         cached: modelsCached()
       }
+    },
+    ports: {
+      proxy: state.proxyPort,
+      control: state.controlPort
     }
   };
 }
@@ -39528,7 +39559,8 @@ function createControlRpcMethods(deps) {
         methods: [...Object.keys(registry2), "server/discover"].sort(),
         feed: true
       },
-      identity: { name: "maximal-core", version: BUILD_VERSION }
+      identity: { name: "maximal-core", version: BUILD_VERSION },
+      ports: { control: state.controlPort, proxy: state.proxyPort }
     })
   };
 }
@@ -39550,6 +39582,8 @@ var init_rpc = __esm(() => {
   init_resources();
   init_stream_subscription();
   init_utils2();
+  init_state();
+  init_boot_status();
   init_token_usage();
   init_build_info();
   init_update_check();
@@ -57539,6 +57573,7 @@ var init_route2 = __esm(() => {
   init_service();
   init_stream_subscription();
   init_utils2();
+  init_boot_status();
   init_token_usage();
   init_update_check();
   init_rpc();
@@ -72289,9 +72324,41 @@ var init_route12 = __esm(() => {
 // src/server.ts
 var exports_server = {};
 __export(exports_server, {
-  server: () => server
+  publicApp: () => publicApp,
+  controlApp: () => controlApp
 });
-var server, SERVER_START_MS, boundPort = () => state.boundPort;
+function applyCommonMiddleware(app) {
+  app.use(traceIdMiddleware);
+  app.use(async (c5, next2) => {
+    c5.header("x-maximal-version", BUILD_VERSION);
+    await next2();
+  });
+  app.use(logger());
+  app.use(cors(buildCorsOptions(controlPort)));
+  app.use(createOriginGuardMiddleware({ boundPort: controlPort }));
+  app.use("*", createAuthMiddleware({
+    allowUnauthenticatedPaths: [
+      "/",
+      "/status",
+      "/_debug/state",
+      "/setup-status",
+      "/openapi.json"
+    ],
+    allowUnauthenticatedPrefixes: ["/control"],
+    loopbackOnlyPaths: [
+      "/usage",
+      "/token-usage",
+      "/token-usage/events",
+      "/_internal/shutdown"
+    ]
+  }));
+  app.use("*", staleRefreshMiddleware({
+    getLoadedAtMs: getModelsLoadedAtMs,
+    refresh: cacheModels,
+    onError: (err) => consola.warn("Background models refresh failed; keeping stale cache", err)
+  }));
+}
+var publicApp, controlApp, SERVER_START_MS, controlPort = () => state.controlPort;
 var init_server = __esm(() => {
   init_dist();
   init_dist3();
@@ -72318,66 +72385,40 @@ var init_server = __esm(() => {
   init_route10();
   init_route11();
   init_route12();
-  server = new Hono2;
+  publicApp = new Hono2;
+  controlApp = new Hono2;
   SERVER_START_MS = Date.now();
-  server.use(traceIdMiddleware);
-  server.use(async (c5, next2) => {
-    c5.header("x-maximal-version", BUILD_VERSION);
-    await next2();
-  });
-  server.use(logger());
-  server.use(cors(buildCorsOptions(boundPort)));
-  server.use(createOriginGuardMiddleware({ boundPort }));
-  server.use("*", createAuthMiddleware({
-    allowUnauthenticatedPaths: [
-      "/",
-      "/status",
-      "/_debug/state",
-      "/setup-status",
-      "/openapi.json"
-    ],
-    allowUnauthenticatedPrefixes: ["/control"],
-    loopbackOnlyPaths: [
-      "/usage",
-      "/token-usage",
-      "/token-usage/events",
-      "/_internal/shutdown"
-    ]
-  }));
-  server.use("*", staleRefreshMiddleware({
-    getLoadedAtMs: getModelsLoadedAtMs,
-    refresh: cacheModels,
-    onError: (err) => consola.warn("Background models refresh failed; keeping stale cache", err)
-  }));
-  server.get("/", (c5) => c5.text("Server running"));
-  server.get("/status", (c5) => c5.json(buildStatus(SERVER_START_MS)));
-  server.route("/_debug", debugRoutes);
-  server.route("/_internal", internalRoutes);
-  server.route("/control", controlRoutes);
-  server.route("/", productApiRoutes);
-  server.use("/chat/completions", requireGithubAuth);
-  server.use("/chat/completions/*", requireGithubAuth);
-  server.use("/models", requireGithubAuth);
-  server.use("/models/*", requireGithubAuth);
-  server.use("/embeddings", requireGithubAuth);
-  server.use("/embeddings/*", requireGithubAuth);
-  server.use("/responses", requireGithubAuth);
-  server.use("/responses/*", requireGithubAuth);
-  server.use("/v1/*", requireGithubAuth);
-  server.use("/:provider/v1/*", requireGithubAuth);
-  server.route("/chat/completions", completionRoutes);
-  server.route("/models", modelRoutes);
-  server.route("/embeddings", embeddingRoutes);
-  server.route("/usage", usageRoute);
-  server.route("/token-usage", tokenUsageRoute);
-  server.route("/responses", responsesRoutes);
-  server.route("/v1/chat/completions", completionRoutes);
-  server.route("/v1/models", modelRoutes);
-  server.route("/v1/embeddings", embeddingRoutes);
-  server.route("/v1/responses", responsesRoutes);
-  server.route("/v1/messages", messageRoutes);
-  server.route("/:provider/v1/messages", providerMessageRoutes);
-  server.route("/:provider/v1/models", providerModelRoutes);
+  applyCommonMiddleware(publicApp);
+  applyCommonMiddleware(controlApp);
+  controlApp.route("/control", controlRoutes);
+  controlApp.route("/_debug", debugRoutes);
+  publicApp.get("/", (c5) => c5.text("Server running"));
+  publicApp.get("/status", (c5) => c5.json(buildStatus(SERVER_START_MS)));
+  publicApp.route("/_internal", internalRoutes);
+  publicApp.route("/", productApiRoutes);
+  publicApp.use("/chat/completions", requireGithubAuth);
+  publicApp.use("/chat/completions/*", requireGithubAuth);
+  publicApp.use("/models", requireGithubAuth);
+  publicApp.use("/models/*", requireGithubAuth);
+  publicApp.use("/embeddings", requireGithubAuth);
+  publicApp.use("/embeddings/*", requireGithubAuth);
+  publicApp.use("/responses", requireGithubAuth);
+  publicApp.use("/responses/*", requireGithubAuth);
+  publicApp.use("/v1/*", requireGithubAuth);
+  publicApp.use("/:provider/v1/*", requireGithubAuth);
+  publicApp.route("/chat/completions", completionRoutes);
+  publicApp.route("/models", modelRoutes);
+  publicApp.route("/embeddings", embeddingRoutes);
+  publicApp.route("/usage", usageRoute);
+  publicApp.route("/token-usage", tokenUsageRoute);
+  publicApp.route("/responses", responsesRoutes);
+  publicApp.route("/v1/chat/completions", completionRoutes);
+  publicApp.route("/v1/models", modelRoutes);
+  publicApp.route("/v1/embeddings", embeddingRoutes);
+  publicApp.route("/v1/responses", responsesRoutes);
+  publicApp.route("/v1/messages", messageRoutes);
+  publicApp.route("/:provider/v1/messages", providerMessageRoutes);
+  publicApp.route("/:provider/v1/models", providerModelRoutes);
 });
 
 // src/lib/start/run-server.ts
@@ -72392,7 +72433,8 @@ async function runServer(options) {
     await maybeEvictRunning(options.port);
   }
   mergeConfigWithDefaults();
-  const port = portOrExit(await resolvePort(options.port, getConfig().server?.portPolicy ?? DEFAULT_PORT_POLICY));
+  const port2 = portOrExit(await resolvePort(options.port, getConfig().server?.portPolicy ?? DEFAULT_PORT_POLICY));
+  const controlPortRequested = await resolveControlPort(options.controlPort);
   const git = getGitVersion();
   consola.info(`Source revision: ${shortSha(git.sha)}${git.branch ? ` (${git.branch})` : ""}`);
   const bootLogger = initBootLogger(git, options);
@@ -72413,7 +72455,8 @@ async function runServer(options) {
   state.rateLimitSeconds = options.rateLimit;
   state.rateLimitWait = options.rateLimitWait;
   state.showToken = options.showToken;
-  state.boundPort = port;
+  state.proxyPort = port2;
+  state.controlPort = controlPortRequested;
   await ensurePaths();
   bootSecrets();
   const staleSession = staleSessionMarkerPresent();
@@ -72438,7 +72481,7 @@ async function runServer(options) {
   await bootstrapUpstream(options.githubToken);
   const executorName = process.env.OLLAMA_API_KEY ? "OllamaWebExecutor" : "InProcessFetchExecutor (search disabled; set OLLAMA_API_KEY)";
   consola.info(`Web-tools executor: ${executorName}`);
-  const serverUrl = `http://localhost:${port}`;
+  const serverUrl = `http://localhost:${port2}`;
   if (options.claudeCode) {
     if (state.models) {
       await runClaudeCodeFlow(serverUrl);
@@ -72447,34 +72490,69 @@ async function runServer(options) {
     }
   }
   emitBootStatus("Starting the server\u2026");
-  printReadyBanner(serverUrl);
-  const { server: server2 } = await Promise.resolve().then(() => (init_server(), exports_server));
-  bootLogger.info(`listening url=${serverUrl} executor=${executorName.split(" ")[0]} auth=${hasGithubToken() ? "authenticated" : "unauthenticated"}`);
-  const httpServer = serveImpl({
-    fetch: server2.fetch,
-    port,
-    bun: {
-      idleTimeout: 0
-    }
+  logListening(bootLogger, serverUrl, executorName);
+  const { proxyServer, controlServer } = await bindListeners(port2, controlPortRequested);
+  finalizeBoot({
+    proxyServer,
+    proxyRequested: port2,
+    controlServer,
+    controlRequested: controlPortRequested
   });
-  finalizeBoot(httpServer, port);
 }
-function boundPort2(httpServer, requested) {
+function logListening(bootLogger, serverUrl, executorName) {
+  bootLogger.info(`listening url=${serverUrl} ` + `executor=${executorName.split(" ")[0]} ` + `auth=${hasGithubToken() ? "authenticated" : "unauthenticated"}`);
+}
+async function bindListeners(proxyPort, controlPort2) {
+  const { publicApp: publicApp2, controlApp: controlApp2 } = await Promise.resolve().then(() => (init_server(), exports_server));
+  return {
+    proxyServer: serveImpl({
+      fetch: publicApp2.fetch,
+      port: proxyPort,
+      bun: { idleTimeout: 0 }
+    }),
+    controlServer: serveImpl({
+      fetch: controlApp2.fetch,
+      port: controlPort2,
+      hostname: "127.0.0.1",
+      bun: { idleTimeout: 0 }
+    })
+  };
+}
+async function resolveControlPort(requested) {
+  if (requested === undefined || !Number.isInteger(requested) || requested < 0) {
+    return 0;
+  }
+  return portOrExit(await resolvePort(requested, getConfig().server?.portPolicy ?? DEFAULT_PORT_POLICY));
+}
+function boundPort(httpServer, requested) {
   const url2 = httpServer.url;
   if (!url2)
     return requested;
   const parsed = Number(new URL(url2).port);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : requested;
 }
-function finalizeBoot(httpServer, requested) {
-  const port = boundPort2(httpServer, requested);
-  state.boundPort = port;
-  emitReadyLine({ port, pid: process.pid });
+function finalizeBoot({
+  proxyServer,
+  proxyRequested,
+  controlServer,
+  controlRequested
+}) {
+  const proxyPort = boundPort(proxyServer, proxyRequested);
+  const controlPort2 = boundPort(controlServer, controlRequested);
+  state.proxyPort = proxyPort;
+  state.controlPort = controlPort2;
+  emitReadyLine({
+    v: READY_LINE_VERSION,
+    controlPort: controlPort2,
+    proxyPort,
+    pid: process.pid
+  });
+  printReadyBanner(proxyPort, controlPort2);
   writePidfile();
   reconcileClaudeCodeOnBoot();
   markSessionRunning();
   startTokenUsageRetention();
-  installShutdownHandlers(httpServer);
+  installShutdownHandlers(proxyServer, controlServer);
 }
 var serveImpl;
 var init_run_server = __esm(() => {
@@ -72493,6 +72571,7 @@ var init_run_server = __esm(() => {
   init_token_usage();
   init_version();
   init_boot_io();
+  init_boot_status();
   init_bootstrap();
   init_claude_code_flow();
   init_port();
@@ -72517,7 +72596,12 @@ var init_cli2 = __esm(() => {
         alias: "p",
         type: "string",
         default: "4141",
-        description: "Port to listen on"
+        description: "Public port for the /v1 proxy that third-party tools call. Falls back to the next free port if held."
+      },
+      "control-port": {
+        type: "string",
+        default: "0",
+        description: "Port for the private control plane (JSON-RPC, events). 0 picks an ephemeral port; the boot banner reports it."
       },
       verbose: {
         alias: "v",
@@ -72579,6 +72663,7 @@ var init_cli2 = __esm(() => {
       const rateLimit = rateLimitRaw === undefined ? undefined : Number.parseInt(rateLimitRaw, 10);
       return runServer({
         port: Number.parseInt(args.port, 10),
+        controlPort: Number.parseInt(args["control-port"], 10),
         verbose: args.verbose,
         accountType: parseAccountType(args["account-type"]),
         manual: args.manual,
@@ -72604,6 +72689,7 @@ __export(exports_start, {
   BOOT_STATUS_MARKER: () => BOOT_STATUS_MARKER
 });
 var init_start2 = __esm(() => {
+  init_boot_status();
   init_cli2();
   init_run_server();
 });
@@ -72658,8 +72744,8 @@ async function runSetup(opts) {
   consola.info(`To pair Claude Desktop with this proxy, run:
 ` + "  maximal app claude-desktop --enable");
 }
-async function smokeTest(port) {
-  const url2 = `http://localhost:${port}/models`;
+async function smokeTest(port2) {
+  const url2 = `http://localhost:${port2}/models`;
   let response;
   try {
     response = await fetch(url2, {
@@ -72687,13 +72773,13 @@ async function smokeTest(port) {
   consola.success(`  Proxy responded 200 from ${url2} (${body.data.length} models available)`);
   return { ok: true, models: body.data };
 }
-async function deepSmokeTest(port, models) {
+async function deepSmokeTest(port2, models) {
   const model = resolveSmallToolModel(models);
   if (!model) {
     consola.warn("  --deep-smoke: no usable model in the catalog to send a completion.");
     return false;
   }
-  const url2 = `http://localhost:${port}/v1/messages`;
+  const url2 = `http://localhost:${port2}/v1/messages`;
   const payload = {
     model,
     max_tokens: 16,

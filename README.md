@@ -28,7 +28,9 @@ enable real search via ollama.com's hosted endpoints; otherwise search returns
 
 ## Endpoints
 
-All bound to `127.0.0.1:4141` by default.
+The data-plane routes above bind `127.0.0.1:4141` by default. The **control
+plane is a second listener on its own ephemeral port**, loopback-only — see
+*Two listeners* below.
 
 | Path | Purpose |
 |---|---|
@@ -39,7 +41,7 @@ All bound to `127.0.0.1:4141` by default.
 | `POST /embeddings`, `/v1/embeddings` | Embeddings |
 | `GET /models`, `/v1/models` | Model catalog |
 | `GET /status` | Identity + liveness probe (unauthenticated) |
-| `POST /control/rpc` | Decoupled control API — stateless JSON-RPC 2.0; live push via `subscriptions/listen` (loopback-only) |
+| `POST /control/rpc` | Decoupled control API — stateless JSON-RPC 2.0; live push via `subscriptions/listen`. **Separate listener**, loopback-only, ephemeral port |
 | `GET /_debug/state` | Live effective state, gated on `--verbose` |
 
 The proxy endpoints require a GitHub token (from `maximal auth`); without one
@@ -99,7 +101,8 @@ and config are shared with the parent `maximal` app.
 
 | Knob | CLI | Env | File | Default |
 |---|---|---|---|---|
-| Listen port | `--port` | — | — | `4141` |
+| Public `/v1` port | `--port` | — | — | `4141` |
+| Control-plane port | `--control-port` | — | — | `0` (ephemeral) |
 | Busy-port policy | — | — | `config.server.portPolicy` | `next` |
 | Account type | `--account-type` | — | — | `individual` |
 | Verbose logging | `--verbose` | — | — | off |
@@ -121,7 +124,7 @@ To inspect what the proxy actually thinks its config is:
 ```sh
 maximal debug                    # human-readable
 maximal debug --json             # machine-readable
-curl http://localhost:4141/_debug/state | jq    # only when running with --verbose
+curl http://127.0.0.1:$CONTROL_PORT/_debug/state | jq  # --verbose; port from the boot banner
 ```
 
 Secrets are masked everywhere — the debug output reports `<env>` /
@@ -138,6 +141,20 @@ core exposes the decoupled `/control` JSON-RPC 2.0 API
 ([`docs/architecture.md`](docs/architecture.md)) so a separate UI-server tier or
 desktop app can drive it over loopback HTTP, the same way a client talks to
 Ollama. Auth is CLI-only (`maximal auth`, device-code flow).
+
+### Two listeners
+
+`/v1` and the control plane bind **separate ports** (maximal-core#10):
+
+- **Public** — `/v1` and the proxy routes, on `4141` by default. Third-party
+  tools hardcode this. If it is held, core falls back to the next free port and
+  says so; it never evicts the occupant.
+- **Control** — JSON-RPC, live events, `/_debug`, on an **ephemeral** port bound
+  to loopback only. Nothing external is meant to find it.
+
+They are separate Hono apps, so `/v1` is not merely filtered off the control
+port — it is not mounted there at all. Both bound ports are reported by the boot
+banner, the stdout ready-line, `/status`, and `server/discover`.
 
 A desktop shell consumes core as a **sidecar binary**, not a library: it spawns
 `maximal start --port 0`, reads the bound port off the stdout ready-line, and

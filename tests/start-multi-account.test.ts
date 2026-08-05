@@ -40,6 +40,10 @@ function spawnStart(
   tmpHome: string,
   port: number,
 ): ReturnType<typeof Bun.spawn> {
+  // /_debug moved to the private control listener (maximal-core#10), which is
+  // ephemeral by default. Derive a companion port so the caller does not have to
+  // thread a second one through, and so this exercises the new flag end to end.
+  const controlPort = port + 1
   return Bun.spawn({
     cmd: [
       process.execPath,
@@ -48,6 +52,8 @@ function spawnStart(
       "start",
       "--port",
       String(port),
+      "--control-port",
+      String(controlPort),
       "--verbose",
     ],
     cwd,
@@ -163,7 +169,8 @@ describe("boot with a registry that has no active account", () => {
   })
 
   test("binds and reports unauthenticated (no active token loaded)", async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/_debug/state`)
+    // The control listener, not the public one — /_debug moved there (#10).
+    const res = await fetch(`http://127.0.0.1:${port + 1}/_debug/state`)
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
       runtime: { github_token_present: boolean }

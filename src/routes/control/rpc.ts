@@ -40,6 +40,7 @@ import {
 } from "~/lib/live/resources"
 import { streamSubscription } from "~/lib/live/stream-subscription"
 import { cacheModels } from "~/lib/platform/utils"
+import { state } from "~/lib/runtime-state/state"
 import { emitQuitRequest, emitUpdateRequest } from "~/lib/start/boot-status"
 import { getTokenUsageSummary } from "~/lib/token-usage"
 import { BUILD_VERSION } from "~/lib/update/build-info"
@@ -179,6 +180,12 @@ export function createControlRpcMethods(deps: ControlRpcDeps): RpcRegistry {
         feed: true,
       },
       identity: { name: "maximal-core", version: BUILD_VERSION },
+      // Both bound ports (maximal-core#10). A host reaches the control plane on
+      // an ephemeral port but must advertise `/v1` on the public one, and the
+      // public one is not necessarily the requested 4141 — it falls back when
+      // held. Reported here so a client that missed the ready-line, or
+      // reconnected later, can still learn both without guessing.
+      ports: { control: state.controlPort, proxy: state.proxyPort },
     }),
   }
 }

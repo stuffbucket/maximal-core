@@ -12,7 +12,11 @@
  * Electron's `utilityProcess`, Bun.spawn, or a test double, and core has no
  * business dictating which. The boundary is the protocol, not the process model.
  */
-import { READY_MARKER, type ReadyLine } from "~/lib/start/boot-status"
+import {
+  anyReadyLineSchema,
+  READY_MARKER,
+  type ReadyLine,
+} from "~/lib/start/boot-status"
 
 /** Thrown when the sidecar never announces readiness. Distinguishes "it died"
  *  from "it is still starting", which a supervisor must report differently. */
@@ -34,6 +38,14 @@ export class SidecarExitedError extends Error {
 /**
  * Parse one stdout line, returning the ready payload or null for anything else.
  *
+ * Validated with the schema the emitter is typed from (`anyReadyLineSchema`),
+ * so the two cannot drift — and it accepts both versions, because this parser
+ * ships to hosts that may supervise an older or newer engine than themselves:
+ *
+ * - **v1** — `{v:1, controlPort, proxyPort, pid}`, two listeners.
+ * - **v0** (no `v`) — the original `{port, pid}`, normalised by pointing both
+ *   ports at it, which is what that engine actually did.
+ *
  * Returns null rather than throwing on a malformed marker line: a supervisor
  * should keep reading (the real line may follow) instead of aborting a healthy
  * boot over one garbled write.
@@ -42,12 +54,10 @@ export function parseReadyLine(line: string): ReadyLine | null {
   const trimmed = line.trim()
   if (!trimmed.startsWith(`${READY_MARKER} `)) return null
   try {
-    // Declared `unknown` rather than cast: `JSON.parse` returns `any`, and
-    // letting that spread would defeat the field checks below.
-    const parsed: unknown = JSON.parse(trimmed.slice(READY_MARKER.length + 1))
-    const { port, pid } = (parsed ?? {}) as Partial<ReadyLine>
-    if (typeof port !== "number" || typeof pid !== "number") return null
-    return { port, pid }
+    const parsed = anyReadyLineSchema.safeParse(
+      JSON.parse(trimmed.slice(READY_MARKER.length + 1)),
+    )
+    return parsed.success ? parsed.data : null
   } catch {
     return null
   }
@@ -75,10 +85,11 @@ function flushTrailing(buffer: string, onLine?: (line: string) => void): void {
 /**
  * Read the sidecar's stdout until it announces readiness.
  *
- * Resolves with the bound port and pid — the port because a supervised sidecar
- * binds an **ephemeral** port and this is the only way to learn it, and the pid
- * because it is the invalidation key for a cached `server/discover`
- * (maximal-core#8).
+ * Resolves with the bound ports and pid — `controlPort` because a supervised
+ * sidecar binds an **ephemeral** control port and this is the only way to learn
+ * it, `proxyPort` because the public `/v1` port falls back when 4141 is busy
+ * (maximal-core#10), and the pid because it is the invalidation key for a cached
+ * `server/discover` (maximal-core#8).
  *
  * Lines are re-assembled across chunk boundaries: stdout is a byte stream, and a
  * marker can straddle two reads. A supervisor that split on chunks rather than
