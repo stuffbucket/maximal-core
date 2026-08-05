@@ -15,7 +15,8 @@
     "prettier-plugin-packagejson",
     "electron",
     "undici",
-    "@stryker-mutator/command-runner"
+    "@stryker-mutator/command-runner",
+    "bumpp"
   ],
   "ignoreBinaries": [
     "trufflehog"
