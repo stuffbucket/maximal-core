@@ -2230,7 +2230,7 @@ var init_package = __esm(() => {
   package_default = {
     $schema: "https://json.schemastore.org/package.json",
     name: "@stuffbucket/maximal-core",
-    version: "0.4.0",
+    version: "0.4.1",
     description: "Headless core of maximal: a local proxy that exposes GitHub Copilot as OpenAI- and Anthropic-compatible HTTP endpoints. No UI.",
     keywords: [
       "proxy",
