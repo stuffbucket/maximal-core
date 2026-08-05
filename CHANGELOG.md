@@ -38,6 +38,18 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:notes` output is inserted here -->
 
+## [0.3.1](https://github.com/stuffbucket/maximal-core/compare/v0.3.0...v0.3.1) (2026-08-05)
+
+
+### Features
+
+* **ops:** enforce the milestone, semver, and tag-match release gates ([#21](https://github.com/stuffbucket/maximal-core/issues/21)) ([222dfbb](https://github.com/stuffbucket/maximal-core/commit/222dfbbdb4ca174219ca8075ecf91f8f73d5c1a0))
+
+
+### Tests
+
+* prove the published contract typechecks from a downstream consumer ([#22](https://github.com/stuffbucket/maximal-core/issues/22)) ([9912070](https://github.com/stuffbucket/maximal-core/commit/99120704f1287eae1e9c2ebaaa55a04848e27aee))
+
 ## [0.3.0](https://github.com/stuffbucket/maximal-core/compare/v0.2.1...v0.3.0) (2026-08-05)
 
 
