@@ -1,0 +1,383 @@
+# Release artifacts — build, verify, and publish the sidecar binary for a tag.
+#
+# Why this exists: `bun run build:binary` has always produced a shippable
+# executable and nothing ever ran it on a release. v0.2.1, v0.3.0 and v0.3.1 all
+# shipped with zero downloadable assets, so "get the sidecar" meant "clone the
+# repo and build it". This is the second tag-triggered workflow (after
+# release-tag-check.yml) and the first one that writes anything.
+#
+# ## Why two native runners and not one cross-compiling Linux runner
+#
+# Bun CAN cross-compile both targets from anywhere — `--target=bun-darwin-arm64`
+# on Linux emits a valid Mach-O. But every check worth running EXECUTES the
+# artifact: `verify:artifact` boots it and reads `x-maximal-version` off a live
+# response; `e2e:binary` drives the real control plane over a real socket. A
+# Linux runner cannot execute either binary, so a one-runner matrix would ship
+# two files nothing had ever run. Each target therefore builds on its own
+# architecture, and each leg asserts the runner's arch before it starts — a
+# floating `macos-latest`/`windows-latest` label that silently changed arch would
+# otherwise degrade this back into an unverified cross-compile.
+#
+# ## Why the two legs verify different amounts
+#
+# macOS runs `verify:artifact` AND the full `e2e:binary` suite. Windows runs
+# `verify:artifact` only: `e2e:lifecycle` spawns POSIX `sleep` as its decoy
+# parent process and cannot run there. Closing that gap means making the
+# lifecycle harness portable, which is a separate change with its own risk — it
+# is not silently pretended away here. `verify:artifact` still proves the
+# Windows binary boots, serves, reports the right version, and stops.
+#
+# ## Ordering, and what a failure leaves behind
+#
+# By the time this fires the human may already have run `gh release create`
+# (docs/release-runbook.md §5), and **nothing here can un-publish a release a
+# human already made**. So the failure behaviour is: any build or verify leg
+# fails -> the publish job never runs -> zero assets are uploaded and the run is
+# red. A published release stays asset-less, exactly as it is today; a
+# half-verified binary is never attached. The publish job is all-or-nothing for
+# the same reason — one `gh release upload` call with every file.
+#
+# If no release exists yet, the publish job creates one **as a draft** and
+# attaches the assets to it, so the human pastes the notes and publishes. That
+# is the ordering the runbook now recommends (§5), because it is the only order
+# in which a failed build results in nothing published at all.
+#
+# ## What is NOT here
+#
+# No code signing, no notarization, no stapling. There is no Apple identity and
+# no Apple secret in this repository, and this workflow does not pretend
+# otherwise. Both binaries ship unsigned, say so in their filenames, and the
+# limitation is spelled out in the ARTIFACTS.md asset and in the runbook.
+#
+# ## Permissions
+#
+# Repo default is least privilege. The top-level grant is `contents: read`; only
+# the `publish` job is raised to `contents: write`, which is the minimum the
+# Releases API needs. Nothing else is granted anywhere.
+name: release-artifacts
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Fallback: a tag-triggered workflow cannot be exercised without cutting a
+  # tag, and a tag is immutable in practice here. `publish: false` (the default)
+  # builds and verifies everything and stops short of touching a release, which
+  # is how this is smoke-tested against a real ref.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag or ref to build (e.g. v0.3.2, or a branch).
+        required: true
+        type: string
+      publish:
+        description: Upload the assets to the release. Leave off for a dry run.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-artifacts-${{ inputs.ref || github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    # Not the Windows default (pwsh). Every step here is one script, and the
+    # `set +e` / `$?` idiom the repo already relies on is a bash idiom.
+    shell: bash
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      # Both legs run to completion: knowing that only Windows broke is worth
+      # more than failing seconds sooner, and nothing publishes either way.
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            target: bun-darwin-arm64
+            arch: arm64
+            asset: darwin-arm64
+            binary: maximal
+            # Only the host-arch leg can run the behavioural suite.
+            suite: true
+          - runner: windows-latest
+            target: bun-windows-x64
+            arch: x86_64
+            asset: windows-x64
+            binary: maximal.exe
+            suite: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Runner arch matches the target
+        # The whole point of this matrix is that the artifact is executed where
+        # it is built. If a floating runner label ever changes architecture,
+        # fail here rather than quietly emit an unverified cross-compile.
+        env:
+          EXPECTED: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          actual="$(uname -m)"
+          echo "runner arch: $actual (expected $EXPECTED)"
+          [ "$actual" = "$EXPECTED" ]
+
+      - name: Read Bun version
+        id: bun
+        run: |
+          set -euo pipefail
+          echo "version=$(cat .bun-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ steps.bun.outputs.version }}
+
+      - name: Resolve the version this artifact must claim
+        id: version
+        # On a tag push the tag IS the claim, and release-tag-check.yml has
+        # already asserted it equals package.json. On a workflow_dispatch of a
+        # branch there is no tag, so fall back to package.json.
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          DISPATCH_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.bun/bin:$PATH"
+          candidate="$REF_NAME"
+          if [ "$EVENT" = "workflow_dispatch" ]; then candidate="$DISPATCH_REF"; fi
+          case "$candidate" in
+            v[0-9]*) expected="${candidate#v}" ;;
+            *)       expected="$(bun --print 'require("./package.json").version')" ;;
+          esac
+          echo "expected=$expected" >> "$GITHUB_OUTPUT"
+          echo "artifact must report version $expected"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.bun/bin:$PATH"
+          # Plain `bun install`, matching ci.yml. The lockfile is committed and
+          # this checkout is a tag, so nothing re-resolves; using
+          # --frozen-lockfile here would add a failure mode that CI cannot see
+          # until the tag is already pushed.
+          bun install
+
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+          OUT: dist-release/${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun run build:binary -- "--target=$TARGET" "--out=$OUT"
+          ls -l dist-release
+
+      - name: Verify the artifact
+        env:
+          OUT: dist-release/${{ matrix.binary }}
+          EXPECTED: ${{ steps.version.outputs.expected }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun run verify:artifact -- "--binary=$OUT" "--expect-version=$EXPECTED"
+
+      - name: End-to-end suite against the artifact
+        if: matrix.suite
+        env:
+          OUT: dist-release/${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun run e2e:binary -- "--binary=$OUT"
+
+      - name: Name and checksum
+        env:
+          OUT: dist-release/${{ matrix.binary }}
+          SUFFIX: ${{ matrix.asset }}
+          EXPECTED: ${{ steps.version.outputs.expected }}
+        run: |
+          set -euo pipefail
+          # `-unsigned` is load-bearing, not decoration: neither binary carries a
+          # real signature, and the filename is the only warning a browser
+          # download surfaces before the user tries to run it.
+          ext=""
+          case "$OUT" in *.exe) ext=".exe" ;; esac
+          name="maximal-v${EXPECTED}-${SUFFIX}-unsigned${ext}"
+          mv "$OUT" "dist-release/$name"
+          # macOS has `shasum`, Git-for-Windows bash has `sha256sum`; both emit
+          # the same `<hash> *<name>` line that `-c` reads back. `-b` is
+          # explicit on both because Git-for-Windows defaults to binary mode and
+          # macOS defaults to text — without it the two legs produce lines in
+          # different formats, and a Windows user verifying an `.exe` in text
+          # mode is exactly the case where the distinction stops being cosmetic.
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist-release && sha256sum -b "$name" > "$name.sha256line")
+          else
+            (cd dist-release && shasum -a 256 -b "$name" > "$name.sha256line")
+          fi
+          cat "dist-release/$name.sha256line"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.asset }}
+          # Only the named binary and its checksum line. `--sourcemap` also drops
+          # an 11 MB `main.js.map` next to the output, and both legs emit one
+          # under the same name — `merge-multiple` in the publish job would
+          # collide on it.
+          path: dist-release/maximal-*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The one place anything is granted write. Scoped to this job and to
+    # `contents`, which is what the Releases API requires and all it requires.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Assemble SHA256SUMS
+        id: sums
+        run: |
+          set -euo pipefail
+          cd staging
+          # One `SHA256SUMS`, coreutils format, so a downloader can run
+          # `sha256sum -c SHA256SUMS` (Linux, Git bash) or
+          # `shasum -a 256 -c SHA256SUMS` (macOS) with no extra tooling. Sorted
+          # so the file is byte-identical across re-runs of the same commit.
+          cat ./*.sha256line | sort -k2 > SHA256SUMS
+          rm -f ./*.sha256line
+          cat SHA256SUMS
+          ls -l
+
+      - name: Write ARTIFACTS.md
+        env:
+          TAG: ${{ inputs.ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd staging
+          {
+            echo "# maximal-core $TAG — downloadable artifacts"
+            echo
+            echo "Standalone sidecar binaries produced by \`bun build --compile\`."
+            echo "No runtime is required; the Bun runtime is embedded."
+            echo
+            echo '| Asset | Platform |'
+            echo '|---|---|'
+            for f in maximal-*; do
+              case "$f" in
+                *darwin-arm64*) echo "| \`$f\` | macOS, Apple Silicon (arm64) |" ;;
+                *windows-x64*)  echo "| \`$f\` | Windows x64 |" ;;
+              esac
+            done
+            echo
+            echo "Intel macOS is deliberately not built — see the note in"
+            echo "\`scripts/dev/build-binary.ts\`."
+            echo
+            echo "## Verify the download"
+            echo
+            echo '```sh'
+            echo 'shasum -a 256 -c SHA256SUMS --ignore-missing   # macOS'
+            echo 'sha256sum -c SHA256SUMS --ignore-missing       # Linux / Git bash'
+            echo '```'
+            echo
+            echo "## These binaries are UNSIGNED. Read this before downloading."
+            echo
+            echo "There is no Apple Developer ID, no notarization credential and no"
+            echo "Windows code-signing certificate in this repository, so nothing in CI"
+            echo "can sign these. That is a real limitation, not a formality:"
+            echo
+            echo "- **macOS.** \`bun build --compile\` appends the bundled JS onto the Bun"
+            echo "  runtime *after* the linker signed it, so the ad-hoc signature the"
+            echo "  binary carries is already invalid on arrival —"
+            echo "  \`codesign --verify\` reports \`invalid signature (code or signature"
+            echo "  have been modified)\` and \`spctl\` refuses it. On top of that, a"
+            echo "  browser download sets the quarantine attribute. Expect Gatekeeper to"
+            echo "  block it. To run it anyway:"
+            echo
+            echo '  ```sh'
+            echo '  xattr -d com.apple.quarantine ./maximal-*-darwin-arm64-unsigned'
+            echo '  chmod +x ./maximal-*-darwin-arm64-unsigned'
+            echo '  ```'
+            echo
+            echo "  Downloading with \`gh release download\` or \`curl\` avoids the"
+            echo "  quarantine attribute but not the invalid signature."
+            echo
+            echo "- **Embedding this in an app bundle.** You must re-sign with"
+            echo "  \`codesign --force\`, a real identifier, and an entitlements plist"
+            echo "  granting \`com.apple.security.cs.allow-jit\` — the embedded"
+            echo "  JavaScriptCore JITs and dies at launch under hardened runtime"
+            echo "  without it. Then notarize the containing bundle."
+            echo
+            echo "- **Windows.** Unsigned, so SmartScreen will warn on first run."
+            echo
+            echo "If you want something that launches by double-click, build from source"
+            echo "or wait for a signed distribution. Do not download this expecting one."
+          } > ARTIFACTS.md
+          cat ARTIFACTS.md
+
+      - name: Summary
+        run: |
+          set -euo pipefail
+          {
+            echo "### Artifacts"
+            echo
+            echo '```'
+            cat staging/SHA256SUMS
+            echo '```'
+            echo
+            echo "Unsigned on both platforms — see the \`ARTIFACTS.md\` asset."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload to the release
+        # Dry runs stop here: everything above is the real build and the real
+        # verification, and this is the only step that mutates anything.
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.ref || github.ref_name }}
+        run: |
+          set -uo pipefail
+          # GitHub's default shell is `bash -e`, which aborts on a non-zero exit
+          # before `$?` can be read. `gh release view` exiting non-zero is the
+          # signal we need, not a failure.
+          set +e
+          gh release view "$TAG" >/dev/null 2>&1
+          exists=$?
+          set -e
+
+          if [ "$exists" -ne 0 ]; then
+            # Nobody has cut the release yet. Create it as a DRAFT: a draft is
+            # visible to maintainers, carries the assets, and publishes nothing
+            # to consumers until a human pastes the notes
+            # (`bun run release:notes $TAG --release-body`) and hits publish.
+            echo "::notice title=release-artifacts::No release for $TAG; created a DRAFT holding the assets. Add notes and publish it."
+            gh release create "$TAG" --draft --title "$TAG" \
+              --notes "Draft opened by release-artifacts to hold the verified binaries. Replace this body with \`bun run release:notes $TAG --release-body\` before publishing."
+          fi
+
+          # One call, every file: either the release gains the whole verified
+          # set or it gains nothing. --clobber makes a re-run idempotent.
+          gh release upload "$TAG" \
+            staging/maximal-* \
+            staging/SHA256SUMS \
+            staging/ARTIFACTS.md \
+            --clobber
+          gh release view "$TAG" --json assets --jq '.assets[].name'

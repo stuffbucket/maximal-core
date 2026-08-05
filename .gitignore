@@ -43,6 +43,10 @@ reports/
 # bun --compile temp executables (live in cwd, ~60MB each)
 .*.bun-build
 dist-build/
+# `bun run build:binary` default output (~75 MB per target) — a runbook step, so
+# it lands in a working tree routinely. `release-artifacts.yml` writes to
+# dist-release/ instead.
+dist-bin/
 dist-release/
 
 *.dmg

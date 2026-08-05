@@ -74,7 +74,11 @@ export function buildBinary(options: BuildOptions): { ok: boolean; out: string }
     "--outfile",
     options.outfile,
   ]
-  const res = spawnSync("bun", args, { stdio: "inherit" })
+  // `process.execPath`, not the string "bun": on a Windows runner `spawnSync`
+  // gets no shell and no PATHEXT expansion, so a bare "bun" may not resolve to
+  // `bun.exe`. The interpreter already running this file is by definition the
+  // right one.
+  const res = spawnSync(process.execPath, args, { stdio: "inherit" })
   return { ok: res.status === 0, out: options.outfile }
 }
 
