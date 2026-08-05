@@ -86,15 +86,15 @@ hardcoding a timestamp.
 bun build --compile --target=bun-windows-x64 src/main.ts \
   --outfile dist-bin/maximal.exe
 
-# 2. Drop maximal.exe + the WiX .wxs into the VM's shared folder.
+# 2. Drop maximal.exe into the VM's shared folder.
 #    UTM Settings → Sharing → "Shared Directory" → ~/maximal-share
 cp dist-bin/maximal.exe ~/maximal-share/
-cp build/windows/maximal.wxs ~/maximal-share/
 
 # 3. In the VM (PowerShell):
 cd \\TSCLIENT\maximal-share        # or wherever UTM mounts it
-wix build maximal.wxs -d Version=0.0.0-dev -arch x64 -o maximal-test.msi
-.\maximal-test.msi /qn             # silent install
+#    MSI packaging (the WiX .wxs, `wix build`, silent install) lives in the
+#    parent `stuffbucket/maximal` repo — maximal-core ships no installer.
+#    Against a bare maximal.exe, skip to the smoke check:
 maximal debug                       # smoke check
 maximal uninstall
 
@@ -142,11 +142,12 @@ clicks in UTM's UI. There's no public API to script those clicks in
 
 ## Known limitations
 
-- **No native Windows runner in CI for free.** GitHub Actions
-  `windows-latest` is a separate path used by `release.yml` /
-  `installers.yml`; this VM is for local iteration, not CI replacement.
-- **ARM64 emulation of x64 binaries is fast but not native.** Our Bun
-  output is x64 (per the matrix in `release.yml`); it runs on Windows 11
+- **No native Windows runner in CI.** maximal-core has no Windows CI job
+  at all — `ci.yml` is `ubuntu-latest` only, and there is no release or
+  installer workflow in this repo. This VM is local iteration, not a CI
+  replacement.
+- **ARM64 emulation of x64 binaries is fast but not native.** The Windows
+  Bun output is x64 (`TARGETS` in `scripts/dev/build-binary.ts`); it runs on Windows 11
   ARM via Microsoft's x64 emulation layer, which is fine for installer
   validation but a poor target for performance regression testing.
 - **Shared-folder paths are case-insensitive and have a UNC prefix

@@ -9,7 +9,7 @@ Here's the whole idea in one line: you point your tool at maximal, and maximal s
 You need a GitHub Copilot plan and a tool you'd like to use it with.
 
 - A GitHub account with an active **Copilot subscription** (personal or Enterprise).
-- macOS on Apple Silicon for the desktop app, or any platform if you run from source. See [Install maximal](./install).
+- macOS on Apple Silicon for the desktop app, or any platform if you run from source. See [Install maximal](./install.md).
 - One of the supported tools — Claude Code, Claude Desktop (Cowork mode), Codex, opencode, or any Anthropic- or OpenAI-SDK client.
 
 ## The short version
@@ -17,8 +17,8 @@ You need a GitHub Copilot plan and a tool you'd like to use it with.
 Install the app, sign in with GitHub, switch on your tool, and keep working.
 
 1. **Install and start maximal.** It runs in the background on your machine and does the work of connecting your tools to Copilot.
-2. **Sign in with GitHub.** maximal uses your own Copilot license — nothing else to buy. See [Sign in](./connect-copilot).
-3. **Switch on your tool.** Either flip a toggle in the Apps section or copy the address from the Endpoint section. See [Connect your tools](./connect-your-tools).
+2. **Sign in with GitHub.** maximal uses your own Copilot license — nothing else to buy. See [Sign in](./connect-copilot.md).
+3. **Switch on your tool.** Either flip a toggle in the Apps section or copy the address from the Endpoint section. See [Connect your tools](./connect-your-tools.md).
 4. **Use your tool normally.** Behind the scenes, Copilot's models serve your requests.
 
 ## Step by step
@@ -62,10 +62,10 @@ That's it. Your tool sends its requests to maximal, and maximal serves them usin
 
 ## Where to next
 
-- [Install maximal](./install)
-- [Sign in](./connect-copilot)
-- [Connect your tools](./connect-your-tools)
-- [Troubleshooting](./troubleshooting)
+- [Install maximal](./install.md)
+- [Sign in](./connect-copilot.md)
+- [Connect your tools](./connect-your-tools.md)
+- [Troubleshooting](./troubleshooting.md)
 
 ---
 
@@ -95,4 +95,7 @@ Then run Claude Code as usual. (In most cases you can skip all of this and just 
 ### Keys and security
 
 - maximal can **mint named API keys** for your tools in the API clients section. Do this for anything long-running — the auto-generated key rotates every time maximal restarts.
-- If you have **no keys configured**, the local service accepts every request from your machine without checking a key. That's fine for quick local use, but mint a key if you'd like maximal to require one.
+- Minting a key does **not** by itself make maximal require one. Key checking is
+  gated on the separate enforcement setting (`auth.enforce`); while that is off,
+  every local request is accepted whether or not keys exist. Mint a key *and*
+  turn enforcement on if you want maximal to require one.

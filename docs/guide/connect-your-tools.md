@@ -8,8 +8,8 @@ The simplest way to connect a tool is a single switch. It takes about a minute.
 
 Two quick things first:
 
-- [Install maximal](./install) and leave it open so it keeps running in the background.
-- [Sign in with GitHub](./connect-copilot) so maximal can use your Copilot plan.
+- [Install maximal](./install.md) and leave it open so it keeps running in the background.
+- [Sign in with GitHub](./connect-copilot.md) so maximal can use your Copilot plan.
 
 ## Turn on a tool
 
@@ -27,8 +27,8 @@ If a tool is already pointed somewhere else, maximal won't overwrite it. It back
 
 ## Next steps
 
-- [Watch your usage](./usage-and-settings) — Copilot quotas and token counts, live.
-- [Troubleshooting](./troubleshooting) — if a tool won't connect or Copilot rejects a request.
+- [Watch your usage](./usage-and-settings.md) — Copilot quotas and token counts, live.
+- [Troubleshooting](./troubleshooting.md) — if a tool won't connect or Copilot rejects a request.
 
 ---
 
@@ -39,7 +39,7 @@ To connect a tool that isn't in the **Apps** list — Codex, opencode, or your o
 - **Anthropic-compatible:** `http://localhost:4141`
 - **OpenAI-compatible:** `http://localhost:4141/v1`
 
-The exact address and a ready-to-copy API key always live in the **Endpoint** section of the app. See [Endpoint and API keys](./usage-and-settings) for the copy helpers.
+The exact address and a ready-to-copy API key always live in the **Endpoint** section of the app. See [Endpoint and API keys](./usage-and-settings.md) for the copy helpers.
 
 ### Claude Code (manual)
 
@@ -92,6 +92,6 @@ The **Endpoint** section has copy-curl and copy-env-var helpers so you don't hav
 ### A note on API keys
 
 - **Mint a stable key for anything long-running.** In **API clients**, create a named key and use it in your tools. The auto-generated endpoint key rotates every time maximal restarts. So it's fine for a quick test, but not for a tool you leave running.
-- **No keys configured?** Then maximal accepts every local request without checking auth. That's convenient, but worth knowing — mint a key if you want to lock local access down.
+- **Keys are not enforced by default.** maximal accepts every local request without checking auth until enforcement is turned on (`auth.enforce`) — minting a key does not lock local access down on its own. Turn enforcement on as well if that's what you want.
 
-See [Endpoint and API keys](./usage-and-settings) for the full details.
+See [Endpoint and API keys](./usage-and-settings.md) for the full details.

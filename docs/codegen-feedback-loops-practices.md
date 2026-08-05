@@ -20,7 +20,7 @@ Anything slower is a manual aggregate or a CI gate. Anything faster than the LSP
 | Inner | PostToolUse on Edit/Write/MultiEdit | Every file write | <2s | Fast lint + logic lint + typecheck, parallel |
 | Outer | Stop (end of agent turn) | Every assistant turn | <5s | Test suite (affected) + dead-code finder, parallel |
 | Manual fast | `check:fast` script | On demand | <10s | Full typecheck + full lint |
-| Manual deep | `check:deep` script | On demand, pre-PR | minutes | check:fast + tests + dead-code finder |
+| Manual deep | `check:deep` script | On demand, pre-PR | minutes | check:fast + casts:check + tests + dead-code finder + build + downstream typecheck |
 | Observation | Side process tailing JSONL | Continuous | non-blocking | Local LLM meta-analysis |
 
 The harness hook points are the load-bearing concept. In Claude Code these are `PostToolUse` and `Stop` in `.claude/settings.json`. In Cursor they are project rules + commands. In Cline they are workflow scripts. In a plain pre-commit setup the inner loop degrades to `pre-commit` and the outer loop degrades to `pre-push`. The two-tier shape survives the translation; only the wiring differs.
@@ -39,10 +39,11 @@ The inner loop runs three checks in parallel after every file modification, scop
 
 Spawn all three in parallel. The wall-clock time is the slowest, not the sum.
 
-Worked example in this repo at `.claude/hooks/check-on-edit.ts`:
+Sketch of a `.claude/hooks/check-on-edit.ts` (this repo does not commit its
+`.claude/` tree, so wire your own):
 
 ```ts
-// Sketch — actual implementation is in the repo.
+// Sketch — not committed here.
 const checks = [
   Bun.spawn(["bunx", "oxlint", file], { stderr: "pipe" }),
   Bun.spawn(["bunx", "eslint", "--no-warn-ignored", file], { stderr: "pipe" }),
@@ -108,7 +109,7 @@ Test runner choice:
 | `pytest` | `pytest-testmon` plugin | Plugin required; works well once warmed |
 | `go test` | `go test ./<changed-pkg>/...` via diff | Manual scoping |
 
-Worked example at `.claude/hooks/check-on-stop.ts`: same `Bun.spawn` + `Promise.all` shape as the inner loop, swapping the command list.
+The Stop-hook counterpart (`.claude/hooks/check-on-stop.ts`) is the same `Bun.spawn` + `Promise.all` shape as the inner loop, swapping the command list. Also not committed here.
 
 If the test suite cannot finish in 5s even with affected-only scoping, drop it to `check:fast` and keep only knip in the outer loop. A 30s outer loop that no one waits for is worse than a 1s outer loop that runs.
 
@@ -191,15 +192,15 @@ JSONL log shape (one line per hook invocation):
 {"ts":"2026-05-10T12:00:00Z","hook":"PostToolUse","tool":"Edit","file":"src/foo.ts","exitCode":2,"durationMs":1840,"stderr":"..."}
 ```
 
-Worked example in this repo: `scripts/gemma-watch.ts` runs Gemma via Ollama and posts to a local viewer. The pattern is portable to any local model (llama.cpp, LM Studio, mlx-lm) or any small cloud model. Backpressure: if the analyzer is behind, drop entries from the middle of the queue, not the head or tail; the head shows the trigger, the tail shows the current state.
+Reference shape: a `gemma-watch.ts` side process that runs Gemma via Ollama and posts to a local viewer. Not committed in this repo. The pattern is portable to any local model (llama.cpp, LM Studio, mlx-lm) or any small cloud model. Backpressure: if the analyzer is behind, drop entries from the middle of the queue, not the head or tail; the head shows the trigger, the tail shows the current state.
 
-`bun run analyze` starts the watcher. It is never invoked from a hook.
+The watcher is started by hand, never invoked from a hook.
 
 ## Hook-harness specifics
 
 ### Claude Code
 
-`.claude/settings.json`:
+`.claude/settings.json` — a template, not this repo's committed config (`.claude/` is untracked here):
 
 ```json
 {
@@ -284,7 +285,7 @@ The two-tier model above stops at the developer's own keyboard. The moment a dev
 | CI shepherd | GitHub check_run / workflow_run events on the PR | Per pushed commit | minutes | Watch checks; on fixable failure, dispatch one followup agent with the annotation detail |
 | Review / governance | PR review + merge | Per PR | hours–days | Human review; ADR-driven reconciliation for non-code state |
 
-See the live playbook in `.claude/skills/pickup-issue/SKILL.md`.
+The pickup-issue playbook these loops describe lives in the operator's own `.claude/skills/` tree; it is not committed in this repo.
 
 ### Dispatch loop
 
@@ -316,7 +317,7 @@ Self-evidencing artifacts: the PR diff (what changed), the ADR file declaring th
 
 **Pattern — ADR with structured frontmatter + reconcile workflow.** When non-code state must be applied to an external system that has no in-source way to record it, declare the state in `docs/decisions/<id>-<slug>.md` and apply it on merge with an idempotent workflow. The diff is the audit trail; the reviewer is the policy gate. **Anti-pattern — using this when the target has a native in-source mechanism.** CodeQL by-design suppressions were originally built this way and then retired (ADR-0001): the reconcile registry keyed on `file:line` and drifted, whereas CodeQL's inline `// codeql[rule] -- reason` comment lives on the sink and can't. Prefer the target's native, in-source affordance; reach for a reconcile daemon only when there is none.
 
-**Pattern — smoke-test artifacts on PR comments.** Commit screenshots under `.github/pr-artifacts/issue-<N>/` and reference them by raw GitHub URL in the PR description. GitHub's HTML sanitizer strips `<img src="data:...">`, so inline base64 is a dead end; raw URLs work. The reviewer sees the page state without checking out the branch. PR #13 is the example.
+**Pattern — smoke-test artifacts on PR comments.** Commit screenshots under `.github/pr-artifacts/pr-<N>/` and reference them by raw GitHub URL in the PR description. GitHub's HTML sanitizer strips `<img src="data:...">`, so inline base64 is a dead end; raw URLs work. The reviewer sees the page state without checking out the branch. PR #13 is the example.
 
 **Anti-pattern — claiming `check:deep` green proves a UI change works.** It doesn't. `check:deep` typechecks and tests; it does not load a browser. Only a browser-driven smoke against `bun run --watch ./src/main.ts start --port 4141` exercises the rendered page. (The hardcoded port is correct here — `bun run dev` alone errors with "No command specified" on this repo.) The dispatched agent should attach the smoke artifact, not the check transcript.
 

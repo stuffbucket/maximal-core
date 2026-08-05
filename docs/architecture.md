@@ -9,8 +9,8 @@ via `citty`), which dispatches to subcommands: `auth`, `start`, `setup`, `app`,
 `api`, `uninstall`, `check-usage`, `debug`.
 
 There is no UI in core. A decoupled UI tier or desktop app drives the engine
-over the loopback `/control` HTTP + SSE surface (see
-[Control API + live event stream](#control-api--live-event-stream)).
+over the loopback `/control` JSON-RPC 2.0 surface, with SSE for the live stream
+(see [Control API + live event stream](#control-api--live-event-stream)).
 
 ## Request flow for `/v1/messages` (Anthropic path)
 
@@ -136,10 +136,11 @@ Two properties worth preserving:
 Core is headless: sign-in is CLI-only and the engine serves no UI. A decoupled
 UI-server tier or desktop app consumes core over the loopback `/control`
 surface (Ollama-style), which replaces the removed `/settings/api` request API
-and `/ws` live feed. The wire types are `src/lib/live/contract.ts` (published as
-`./control-contract`) and the callable method set is whatever `server/discover`
-returns at runtime — both are generated from the code that serves them, so
-neither can drift from it the way a prose spec does.
+and `/ws` live feed. The wire types live in `src/lib/jsonrpc/contract.ts`
+(published as `./control-contract`) and `src/lib/live/contract.ts` (published as
+`./contract`); the callable method set is whatever `server/discover` returns at
+runtime — both are generated from the code that serves them, so neither can
+drift from it the way a prose spec does.
 
 - **JSON-RPC (canonical):** `POST /control/rpc` — stateless JSON-RPC 2.0 per
   **ADR-0023** (`stuffbucket/maximal` `docs/decisions/0023-…`). Methods are
@@ -160,7 +161,7 @@ neither can drift from it the way a prose spec does.
   `data.reason` plus `retryable`. Clients discriminate on that, never on an HTTP
   status. Application codes are positive integers: JSON-RPC reserves
   `-32768..-32000` and MCP reserves `-32020..-32099` within it.
-- **REST (deprecated, one cycle):** `GET /control/{auth,accounts,apps,models,usage,config,clients}` and the `POST` actions still work and share the same builders, so the two surfaces cannot drift. `GET /control/events` still streams but is **no longer resumable** — it ignores `Last-Event-ID`/`epoch`.
+- **REST (deprecated, one cycle):** `GET /control/{auth,accounts,apps,models,usage,config,clients,update-status,api-keys,gh/status,diagnostics}` and the `POST`/`DELETE` actions (`auth/start`, `auth/cancel`, `auth/rearm`, `auth/sign-out`, `models/refresh`, `accounts/switch`, `accounts/remove`, `quit`, `upgrade`, `api-keys`, `api-keys/:id`, `gh/use`, `apps/claude-code/toggle`, `apps/claude-desktop/toggle`) still work and share the same builders, so the two surfaces cannot drift. Registration is split between `src/routes/control/route.ts` and `src/routes/control/settings-endpoints.ts`. `GET /control/events` still streams but is **no longer resumable** — it ignores `Last-Event-ID`/`epoch`.
 - **Loopback gate:** the whole `/control` surface re-checks the caller IP itself — a remote caller gets `404`, exactly like `/_internal`, *above* the JSON-RPC layer so no well-formed error confirms the endpoint exists. Cross-origin browser requests are additionally 403'd by the Origin guard.
 
 ## Diagnostic surfaces

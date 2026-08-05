@@ -3,6 +3,14 @@
 Start here to install maximal, connect it to your GitHub Copilot plan, and
 point your AI coding tools at it.
 
+> This guide describes the **`maximal` desktop app**
+> ([`stuffbucket/maximal`](https://github.com/stuffbucket/maximal)), not the
+> headless `@stuffbucket/maximal-core` package this repo publishes. Sections
+> named here (Account, Endpoint, API clients, Apps, Models, Usage, General,
+> Logs, Diagnostics) are the app's UI over core's `/control` surface. For the
+> engine itself, see [`../../README.md`](../../README.md) and
+> [`../architecture.md`](../architecture.md).
+
 - [What is maximal?](./overview.md) — the one-paragraph version and who it's for.
 - [Install maximal](./install.md) — download the desktop app on macOS.
 - [Connect GitHub Copilot](./connect-copilot.md) — sign in with GitHub.

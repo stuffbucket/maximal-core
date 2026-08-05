@@ -83,7 +83,8 @@ CI (`ci.yml`) gates every PR, so a green milestone is already most of this.
 
 ```sh
 bun install
-bun run check:deep        # lint, typecheck, casts:check, tests, knip, build
+bun run check:deep        # lint, typecheck, typecheck:downstream, casts:check,
+                          # tests, knip, build
 bun run e2e               # seam + feed + lifecycle harnesses
 bun run release:check milestone vX.Y.Z   # every PR in the milestone vs the bump
 ```

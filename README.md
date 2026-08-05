@@ -4,7 +4,7 @@ The headless proxy core of [maximal](https://github.com/stuffbucket/maximal).
 A local HTTP proxy that lets Anthropic-API and OpenAI-API clients (Claude
 Code, Codex, and similar) talk to GitHub Copilot's backend, including GitHub
 Enterprise deployments. It adds a server-side web-tools agent loop, model-id
-rewriting, and an Ollama Cloud–backed search/fetch executor.
+rewriting, and a runtime-selected search/fetch executor.
 
 This package (`@stuffbucket/maximal-core`) is **headless** — there is no UI,
 no menu-bar shell, and it serves no browser pages. It exposes a decoupled
@@ -22,27 +22,35 @@ Server-side web tools (`web_search_20250305`, `web_fetch_20250910`) that
 Copilot rejects natively are resolved by an internal agent loop: the proxy
 strips the server-side declaration, substitutes a client-side shim, drives the
 model through tool round-trips with Copilot, and synthesizes the
-Anthropic-shaped result blocks back to the client. Set `OLLAMA_API_KEY` to
-enable real search via ollama.com's hosted endpoints; otherwise search returns
-`unavailable` and fetch runs in-process.
+Anthropic-shaped result blocks back to the client. The search backend is picked
+at runtime by `chooseExecutor` (`src/routes/messages/web-tools/executor.ts`), in
+this order: `OLLAMA_API_KEY` set → ollama.com hosted search; else a
+`/responses`-capable GPT model in the live catalog → Copilot's native
+server-side search, no extra key; else an in-process DuckDuckGo HTML scrape.
+`maximal debug` reports which one is selected.
 
 ## Endpoints
 
-The data-plane routes above bind `127.0.0.1:4141` by default. The **control
+The data-plane routes below bind `127.0.0.1:4141` by default. The **control
 plane is a second listener on its own ephemeral port**, loopback-only — see
 *Two listeners* below.
 
-| Path | Purpose |
-|---|---|
-| `POST /v1/messages`, `/v1/messages/count_tokens` | Anthropic-compatible messages API |
-| `POST /:provider/v1/messages`, `/:provider/v1/models` | Provider-scoped Anthropic-compatible endpoints |
-| `POST /chat/completions`, `/v1/chat/completions` | OpenAI-compatible chat completions |
-| `POST /responses`, `/v1/responses` | OpenAI Responses API |
-| `POST /embeddings`, `/v1/embeddings` | Embeddings |
-| `GET /models`, `/v1/models` | Model catalog |
-| `GET /status` | Identity + liveness probe (unauthenticated) |
-| `POST /control/rpc` | Decoupled control API — stateless JSON-RPC 2.0; live push via `subscriptions/listen`. **Separate listener**, loopback-only, ephemeral port |
-| `GET /_debug/state` | Live effective state, gated on `--verbose` |
+| Path | Listener | Purpose |
+|---|---|---|
+| `POST /v1/messages`, `/v1/messages/count_tokens` | public | Anthropic-compatible messages API |
+| `POST /:provider/v1/messages`, `/:provider/v1/models` | public | Provider-scoped Anthropic-compatible endpoints |
+| `POST /chat/completions`, `/v1/chat/completions` | public | OpenAI-compatible chat completions |
+| `POST /responses`, `/v1/responses` | public | OpenAI Responses API |
+| `POST /embeddings`, `/v1/embeddings` | public | Embeddings |
+| `GET /models`, `/v1/models` | public | Model catalog |
+| `GET /status` | public | Identity + liveness probe (unauthenticated) |
+| `GET /` | public | `Server running` identity probe used by port contention |
+| `GET /setup-status`, `/openapi.json` | public | Fresh-install status + its OpenAPI document (unauthenticated) |
+| `GET /usage`, `/token-usage`, `/token-usage/events` | public | Usage surfaces (loopback callers skip the API key) |
+| `POST /_internal/shutdown` | public | Graceful eviction target for `maximal start --replace` (loopback-only) |
+| `POST /control/rpc` | **control** | Decoupled control API — stateless JSON-RPC 2.0; live push via `subscriptions/listen` |
+| `GET /control/*` | **control** | Deprecated REST mirror of the same builders |
+| `GET /_debug/state` | **control** | Live effective state, gated on `--verbose` |
 
 The proxy endpoints require a GitHub token (from `maximal auth`); without one
 the server still listens but upstream routes answer `401 not_authenticated`.
@@ -101,23 +109,40 @@ and config are shared with the parent `maximal` app.
 
 | Knob | CLI | Env | File | Default |
 |---|---|---|---|---|
-| Public `/v1` port | `--port` | — | — | `4141` |
+| Public `/v1` port | `--port` / `-p` | — | — | `4141` |
 | Control-plane port | `--control-port` | — | — | `0` (ephemeral) |
 | Busy-port policy | — | — | `config.server.portPolicy` | `next` |
-| Account type | `--account-type` | — | — | `individual` |
-| Verbose logging | `--verbose` | — | — | off |
+| Account type | `--account-type` / `-a` | — | — | `individual` |
+| Verbose logging | `--verbose` / `-v` | — | — | off |
 | Manual approval | `--manual` | — | — | off |
-| Rate limit (s) | `--rate-limit` | — | — | unset |
+| Rate limit (s) | `--rate-limit` / `-r` | — | — | unset |
+| Wait on rate limit | `--wait` / `-w` | — | — | off |
+| Evict a running instance | `--replace` | — | — | off |
 | Ollama API key | — | `OLLAMA_API_KEY` | `secrets/ollama` | unset |
 | Anthropic API key | — | `ANTHROPIC_API_KEY` | `secrets/anthropic` | `config.anthropicApiKey` |
-| GitHub token | `--github-token` | — | `app/github_token` | from `auth` flow |
+| GitHub token | `--github-token` / `-g` | — | `app/github_token` | from `auth` flow |
 | App home dir | — | `COPILOT_API_HOME` | — | `~/.local/share/maximal` |
 | Enterprise URL | — | `COPILOT_API_ENTERPRISE_URL` | — | unset |
 | OAuth app ID | — | `COPILOT_API_OAUTH_APP` | — | upstream default |
 | Use Messages API | — | — | `useMessagesApi` | `true` |
 | Use Apply Patch | — | — | `useFunctionApplyPatch` | `true` |
+| Responses web search | — | — | `useResponsesApiWebSearch` | `true` |
 | Small model alias | — | — | `smallModel` | `gpt-5-mini` |
+| Claude token multiplier | — | — | `claudeTokenMultiplier` | `1.15` |
+| Prompt-cache retention | — | — | `promptCacheRetention` | unset (param omitted) |
+| Auto-recover account | — | — | `autoRecoverAccount` | `false` |
+| Update check | — | — | `checkUpdates` | `true` |
 | Log retention (days) | — | — | `logRetentionDays` | `7` (`0` = delete on cleanup tick) |
+| Token-usage retention (days) | — | — | `tokenUsageRetentionDays` | `365` (`0` = keep forever) |
+
+The full `AppConfig` shape is `src/lib/config/config.ts`; the `start` flags are
+`src/lib/start/cli.ts` (or `maximal start --help`).
+
+**One documented exception to the precedence order:** the Anthropic key resolves
+`config.anthropicApiKey` **before** `ANTHROPIC_API_KEY`
+(`getAnthropicApiKey()` in `src/lib/config/config.ts`), so a config-file value
+shadows the env var rather than the other way round. Every other secret follows
+env → file → unset (`readSecret()` in `src/lib/auth/secrets.ts`).
 
 To inspect what the proxy actually thinks its config is:
 
@@ -186,9 +211,12 @@ src/routes/                HTTP handlers grouped by endpoint family.
 src/lib/                   Shared utilities (config, auth, http, models, live/control hub).
 src/services/              Upstream API clients (Copilot, GitHub, providers).
 tests/                     bun-test suites.
-docs/spec/                 Feature specs (web-tools, tool-bridge, observability).
+downstream/                Simulated consumer, compiled by `bun run typecheck:downstream`.
+docs/spec/                 Feature specs (tool-bridge, observability, wire PRDs);
+                           docs/spec/archive/ holds superseded ones (web-tools).
+docs/decisions/            ADRs.
 docs/admin/                Operator/MDM reference.
-scripts/                   Operator helpers.
+scripts/                   Dev harnesses (scripts/dev/) and release/ops tooling (scripts/ops/).
 LICENSE                    MIT.
 THIRD-PARTY-LICENSE        Bundled-dependency license pointer (npm SBOM).
 ```

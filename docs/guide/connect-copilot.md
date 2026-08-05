@@ -4,7 +4,7 @@ maximal runs your AI coding tools on the models in your GitHub Copilot plan. Bef
 
 You'll need an active **GitHub Copilot subscription** — either a personal plan or one from GitHub Enterprise. Because maximal works through your own Copilot license, there are no extra API keys and no second bill.
 
-New here? [Install maximal](./install) first, then come back.
+New here? [Install maximal](./install.md) first, then come back.
 
 ## What "connecting" means
 
@@ -29,7 +29,7 @@ If you already use the `gh` GitHub tool on this machine, maximal can reuse that 
 
 Back in **Account**, you should see a connected status and your Copilot plan. That's it — your tools can now use Copilot's models.
 
-Next, [connect your first tool](./connect-your-tools) (like Claude Code), or grab your local address and key from the [Endpoint](./usage-and-settings) section.
+Next, [connect your first tool](./connect-your-tools.md) (like Claude Code), or grab your local address and key from the [Endpoint](./usage-and-settings.md) section.
 
 ## Use more than one account
 
@@ -51,9 +51,9 @@ Signing out or removing an account only touches maximal's own saved token. It ne
 
 ## What's next
 
-- [Connect your tools](./connect-your-tools) — wire up Claude Code, Codex, opencode, and more.
-- [Endpoint](./usage-and-settings) — find your local address, keys, and copy-paste helpers.
-- [Install maximal](./install) — if you haven't set it up yet.
+- [Connect your tools](./connect-your-tools.md) — wire up Claude Code, Codex, opencode, and more.
+- [Endpoint](./usage-and-settings.md) — find your local address, keys, and copy-paste helpers.
+- [Install maximal](./install.md) — if you haven't set it up yet.
 
 ---
 
