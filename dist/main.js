@@ -72459,6 +72459,9 @@ var init_server = __esm(() => {
 function __setServeForTests(fn) {
   serveImpl = fn ?? serve;
 }
+function __setBootSecretsForTests(fn) {
+  bootSecretsImpl = fn ?? bootSecrets;
+}
 async function runServer(options) {
   consola.options.throttle = 0;
   consola.start("Starting maximal\u2026");
@@ -72492,7 +72495,7 @@ async function runServer(options) {
   state.proxyPort = port2;
   state.controlPort = controlPortRequested;
   await ensurePaths();
-  bootSecrets();
+  bootSecretsImpl();
   const staleSession = staleSessionMarkerPresent();
   if (staleSession) {
     consola.warn("Previous maximal session ended ungracefully (likely a crash, " + "force-quit, or system shutdown). If `claude` produced " + "connection-refused errors since then, that was why \u2014 your " + "Claude Code config still pointed at this proxy. Routing is " + "being re-applied now and will work again.");
@@ -72588,7 +72591,7 @@ function finalizeBoot({
   startTokenUsageRetention();
   installShutdownHandlers(proxyServer, controlServer);
 }
-var serveImpl;
+var serveImpl, bootSecretsImpl;
 var init_run_server = __esm(() => {
   init_dist();
   init_bun();
@@ -72612,6 +72615,7 @@ var init_run_server = __esm(() => {
   init_session_sentinel();
   init_shutdown();
   serveImpl = serve;
+  bootSecretsImpl = bootSecrets;
 });
 
 // src/lib/start/cli.ts
@@ -72720,6 +72724,7 @@ __export(exports_start, {
   runServer: () => runServer,
   emitBootStatus: () => emitBootStatus,
   __setServeForTests: () => __setServeForTests,
+  __setBootSecretsForTests: () => __setBootSecretsForTests,
   BOOT_STATUS_MARKER: () => BOOT_STATUS_MARKER
 });
 var init_start2 = __esm(() => {
