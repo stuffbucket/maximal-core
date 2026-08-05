@@ -55,6 +55,11 @@ jobs:
       - name: Tag matches package.json
         run: |
           set -uo pipefail
+          # GitHub's default shell is `bash -e`; without this it would abort on
+          # the script's non-zero exit before `code=$?`, so the case statement
+          # below would never distinguish a mismatch (1) from a gate that could
+          # not run (2).
+          set +e
           bun run scripts/ops/release-gates.ts version "${{ github.ref_name }}"
           code=$?
           case "$code" in

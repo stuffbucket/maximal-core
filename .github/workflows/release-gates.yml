@@ -121,6 +121,12 @@ jobs:
           MODE: ${{ vars.RELEASE_GATES_MODE || 'enforce' }}
         run: |
           set -uo pipefail
+          # GitHub's default shell is `bash -e`, which would abort on the
+          # script's non-zero exit before `code=$?` ever runs — making the
+          # exit-code policy below dead code and turning a "gate could not run"
+          # (2) into a hard failure. Turn -e off explicitly; every exit is
+          # decided by the case statement.
+          set +e
           bun run scripts/ops/release-gates.ts pr "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" --mode "$MODE"
           code=$?
