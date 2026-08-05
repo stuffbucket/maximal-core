@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
+import { parseReadyLine } from "~/lib/live/supervisor"
 import {
   emitReadyLine,
+  READY_LINE_VERSION,
   READY_MARKER,
   type ReadyLine,
 } from "~/lib/start/boot-status"
@@ -78,5 +80,23 @@ describe("ready-line (maximal-core#3)", () => {
     expect(JSON.parse(out.slice(READY_MARKER.length + 1)) as ReadyLine).toEqual(
       ready,
     )
+  })
+
+  test("what this engine emits is what a supervisor's parser reads back", () => {
+    // The end of the contract, both halves at once: emitter and parser derive
+    // from one schema precisely so this cannot drift. `v` is stamped from
+    // READY_LINE_VERSION rather than a literal, so bumping the version without
+    // teaching the parser about it fails here.
+    process.env.MAXIMAL_SIDECAR_PARENT_PID = "1"
+    const ready: ReadyLine = {
+      v: READY_LINE_VERSION,
+      controlPort: 51_234,
+      proxyPort: 4141,
+      pid: 99,
+    }
+    const out = captureStdout(() => {
+      emitReadyLine(ready)
+    })
+    expect(parseReadyLine(out.trimEnd())).toEqual(ready)
   })
 })

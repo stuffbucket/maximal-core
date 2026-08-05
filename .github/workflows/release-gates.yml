@@ -1,0 +1,137 @@
+# Release gates — PR-time enforcement of the two PR-scoped release conventions
+# in docs/release-runbook.md, which until now were upheld by memory alone:
+#
+#   1. a PR carries a release milestone (without one it ships in whatever
+#      release is cut next and appears in no generated notes);
+#   2. a breaking change is bumped to a MINOR, not a patch (pre-1.0, `^0.2.0`
+#      is `>=0.2.0 <0.3.0`, so a breaking patch is auto-installed by every
+#      consumer of ./supervisor and ./control-contract on a routine update).
+#
+# The logic lives in scripts/ops/release-gates.ts and is fully unit-tested
+# offline through the same injectable GhRunner release-notes.ts uses; this file
+# is only the trigger and the exit-code policy.
+#
+# TRIGGER. `edited` catches a title change, `milestoned`/`demilestoned` a
+# milestone change, `labeled`/`unlabeled` the override label. Those are the
+# three inputs, and none of them push a commit — keying on `synchronize` alone
+# would leave the gate reporting on a state that no longer exists.
+#
+# PERMISSIONS — read-only, and narrower than it looks:
+#   contents: read        checkout, and `gh api repos/…/contents/package.json`
+#                         at the PR's BASE ref (the baseline every bump is
+#                         measured from).
+#   pull-requests: read   `gh pr view` / `gh pr list --search milestone:`.
+#   issues: read          milestones live under the Issues API; a PR's
+#                         milestone assignment is read through it.
+# Nothing is written. Findings surface as ::error/::warning annotations and a
+# job summary, both of which are workflow-command output and need no scope, so
+# there is deliberately no `pull-requests: write` for a review comment and no
+# `checks: write`. No `secrets:` are used or needed.
+#
+# FORK PRs. This is `pull_request`, not `pull_request_target`: the token is
+# read-only and carries no secrets, and reading a public repo's PRs and
+# milestones works with it. The tradeoff is that a fork's copy of
+# release-gates.ts is what runs, so a fork could weaken its own gate — the same
+# property ci.yml already has, covered by human review and by the milestone
+# preflight (`bun run release:check milestone vX.Y.Z`) at release time.
+# `pull_request_target` would fix that by running trusted code, but with a
+# WRITE token against an untrusted head — strictly worse for a check that needs
+# no write at all.
+#
+# DEPENDABOT / BOTS. Bot-authored PRs get a read-only token here, which is all
+# this needs. A bot cannot assign a milestone, so release-gates.ts downgrades
+# gate 1 to a warning for bot authors rather than wedging every dependency bump
+# on an action the bot cannot take (see `isBot`). Gate 2 still applies in full.
+#
+# RELEASE COMMITS. `chore: release X.Y.Z` is exempt in the script: it ships the
+# bump itself and belongs to no milestone, so gating it would deadlock the
+# release it is cutting.
+#
+# NOT BLOCKING ON ITS OWN BUGS. The script separates "a convention was
+# violated" (exit 1) from "the gate could not run" (exit 2 — gh failed, JSON
+# was unparseable). Only exit 1 fails this job; exit 2 posts a warning and
+# passes. Two further escape hatches, both usable in under a minute without a
+# PR: the `release-gate-override` label on one PR, and the
+# `RELEASE_GATES_MODE` repo variable set to `warn` to defuse the gate
+# repo-wide. The default is `enforce` rather than a warn-only rollout because a
+# warn-only gate has no forcing function to ever be turned on — and because
+# this workflow is NOT a required status check until someone adds it to branch
+# protection, so it is advisory by construction on day one anyway.
+name: release-gates
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+      - milestoned
+      - demilestoned
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+# A title edit followed by a milestone change fires twice within seconds; only
+# the last state matters.
+concurrency:
+  group: release-gates-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      # Read Bun from the repo's source of truth (docs/bun-version-policy.md); no
+      # hardcoded copy of the version to drift from .bun-version.
+      - name: Read Bun version
+        id: bun
+        run: |
+          set -euo pipefail
+          echo "version=$(cat .bun-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ steps.bun.outputs.version }}
+
+      # No `bun install`: release-gates.ts imports only node builtins and its
+      # sibling ops scripts, so `bun run` needs nothing from node_modules.
+      # (The typecheck half of check:ops does need them — that lane is
+      # tooling-ci.yml, which installs.)
+
+      # Never act on broken tooling — the ops tests are offline and take
+      # milliseconds. tooling-ci.yml only runs when scripts/ops/** changes, so
+      # this is the only self-check on a PR that does not touch the tooling.
+      - name: Self-check tooling
+        run: bun run test:ops
+
+      - name: Check release gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # `enforce` unless a maintainer sets the repo variable to `warn`.
+          # An unrecognised value is treated as `enforce` by parseArgs, so a
+          # typo in the variable cannot silently disable the gate.
+          MODE: ${{ vars.RELEASE_GATES_MODE || 'enforce' }}
+        run: |
+          set -uo pipefail
+          # GitHub's default shell is `bash -e`, which would abort on the
+          # script's non-zero exit before `code=$?` ever runs — making the
+          # exit-code policy below dead code and turning a "gate could not run"
+          # (2) into a hard failure. Turn -e off explicitly; every exit is
+          # decided by the case statement.
+          set +e
+          bun run scripts/ops/release-gates.ts pr "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" --mode "$MODE"
+          code=$?
+          case "$code" in
+            0) exit 0 ;;
+            1) echo "::error title=release-gates::A release convention was violated — see the job summary. Fix it, or add the \`release-gate-override\` label to downgrade it to a warning on this PR."; exit 1 ;;
+            *) echo "::warning title=release-gates::The gate could not run (exit $code) and is NOT blocking this PR. Check the log; the milestone preflight (\`bun run release:check milestone vX.Y.Z\`) still covers the release."; exit 0 ;;
+          esac

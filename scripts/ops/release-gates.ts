@@ -1,0 +1,853 @@
+#!/usr/bin/env bun
+/**
+ * Release gates — the three conventions in `docs/release-runbook.md`, checked
+ * by a machine instead of by memory.
+ *
+ * The runbook's release model is "a release is a GitHub milestone whose title
+ * IS the tag" (see `release-notes.ts`). Three rules hold that model together,
+ * and until this file every one of them was upheld by human discipline alone:
+ *
+ *   1. **A PR carries a release milestone.** Without one it silently ships in
+ *      whatever release is cut next and never appears in generated notes,
+ *      because `release:notes` only ever sees the PRs in the milestone.
+ *   2. **A breaking change is bumped to a MINOR, not a patch.** Pre-1.0 this
+ *      repo's rule is feat/fix → patch, `feat!:`/`fix!:` → minor. That is not
+ *      cosmetic: a consumer's `^0.2.0` resolves to `>=0.2.0 <0.3.0`, so a
+ *      breaking change released as a patch is AUTO-INSTALLED on a routine
+ *      update. This repo publishes `./supervisor` and `./control-contract`,
+ *      consumed outside the repo — PR #14 removed `port` from the published
+ *      `ReadyLine` type and was initially bucketed as a patch. Caught by hand;
+ *      this gate is what catches it next time.
+ *   3. **A tag matches `package.json`'s version.** Already gone wrong:
+ *      `git show v0.1.1:package.json` reads `0.1.0`.
+ *
+ * Three subcommands, one for each convention plus the release-time aggregate:
+ *
+ *   pr <number>        gates 1 + 2 for one PR (the PR-time workflow)
+ *   milestone <vX.Y.Z> gate 2 across every PR in a milestone (release preflight)
+ *   version <vX.Y.Z>   gate 3 (tag vs package.json — preflight + tag tripwire)
+ *
+ * Usage:
+ *   bun run release:check pr 42
+ *   bun run release:check milestone v0.3.0
+ *   bun run release:check version v0.3.0
+ *   bun run release:check pr 42 --repo stuffbucket/maximal-core --mode warn
+ *
+ * Exit codes: 0 clean (or `--mode warn`) · 1 a blocking finding · 2 the gate
+ * could not run (bad usage, `gh` failure, unreadable package.json). Callers
+ * MUST treat 2 as "not blocking" — a gate that fails closed on its own bugs
+ * takes the repo down with it. `release-gates.yml` does exactly that.
+ *
+ * Escape hatches, in increasing blast radius:
+ *   - `release-gate-override` label on one PR → every finding downgraded to a
+ *     warning, with the reason printed.
+ *   - `--mode warn` → nothing blocks (the workflow reads this from the
+ *     `RELEASE_GATES_MODE` repo variable, so a misfiring gate is defused in
+ *     seconds without a PR).
+ *
+ * All GitHub access goes through `release-notes.ts`'s single injectable
+ * `GhRunner`, so every test here runs offline with no network and no
+ * `mock.module`.
+ */
+
+import { Buffer } from "node:buffer"
+import fs from "node:fs"
+import path from "node:path"
+
+import {
+  type GhRunner,
+  ghJson,
+  type ParsedTitle,
+  parseConventionalTitle,
+  realGh,
+} from "./release-notes"
+import { parseSemver } from "./watch-external-drift"
+
+// --- versions ---
+
+export type Version = readonly [number, number, number]
+
+export type BumpLevel = "major" | "minor" | "patch"
+
+/** Ordering for "is the requested bump at least as big as the required one". */
+const BUMP_RANK: Record<BumpLevel, number> = { patch: 1, minor: 2, major: 3 }
+
+/**
+ * A milestone title is a release tag only if it is EXACTLY `vX.Y.Z`.
+ * `parseSemver` is deliberately lenient (it turns `v0.3` into `[0,3,0]` and
+ * `Backlog` into `[0,0,0]`), which is right for comparing upstream release
+ * tags in the drift watcher and catastrophically wrong here: a milestone named
+ * `Backlog` would parse as `0.0.0` and read as "below the current version"
+ * instead of "not a release milestone at all". So the shape is checked first.
+ */
+export const RELEASE_TAG_RE = /^v(?:\d+)\.(?:\d+)\.(?:\d+)$/u
+
+/** `v0.3.0` → `[0,3,0]`. Undefined for anything that is not a release tag. */
+export function parseReleaseTag(title: string): Version | undefined {
+  const trimmed = title.trim()
+  if (!RELEASE_TAG_RE.test(trimmed)) return undefined
+  return parseSemver(trimmed)
+}
+
+export function formatVersion(v: Version): string {
+  return `v${v[0]}.${v[1]}.${v[2]}`
+}
+
+export function compareVersions(a: Version, b: Version): number {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1
+  }
+  return 0
+}
+
+/**
+ * The level of the HIGHEST component that increased between `current` and
+ * `target`, or `not-ahead` when `target` does not exceed `current`.
+ *
+ * Classifying by highest-changed component (rather than by "is this the next
+ * version") is the load-bearing detail. `0.2.1 → 0.2.5` skips four patches but
+ * is still a PATCH-level move — it stays inside a consumer's `^0.2.x` range, so
+ * a breaking change in it is exactly as dangerous as in `0.2.2`. Treating a
+ * skip as "big enough" would let the case this gate exists for walk straight
+ * through. Conversely `0.2.1 → 0.4.0` is a genuine minor: out of range, so the
+ * upgrade is deliberate. Non-adjacency is reported separately, as a note.
+ */
+export function classifyBump(
+  current: Version,
+  target: Version,
+): BumpLevel | "not-ahead" {
+  if (target[0] !== current[0]) return target[0] > current[0] ? "major" : "not-ahead"
+  if (target[1] !== current[1]) return target[1] > current[1] ? "minor" : "not-ahead"
+  if (target[2] !== current[2]) return target[2] > current[2] ? "patch" : "not-ahead"
+  return "not-ahead"
+}
+
+/** True when `target` is the immediate next version at `level`. */
+export function isAdjacent(
+  current: Version,
+  target: Version,
+  level: BumpLevel,
+): boolean {
+  if (level === "patch") return target[2] === current[2] + 1
+  if (level === "minor") return target[1] === current[1] + 1 && target[2] === 0
+  return target[0] === current[0] + 1 && target[1] === 0 && target[2] === 0
+}
+
+/**
+ * The smallest bump a PR may legally ship in.
+ *
+ * Pre-1.0 (`current[0] === 0`) this repo follows the release-please convention
+ * `release-please-config.json` still declares — `bump-minor-pre-major` +
+ * `bump-patch-for-minor-pre-major`, i.e. feat/fix → patch, breaking → minor —
+ * because `^0.2.0` is `>=0.2.0 <0.3.0` and only a minor leaves that range.
+ *
+ * At 1.0 that convention stops being the safe one: `^1.2.0` is `>=1.2.0 <2.0.0`
+ * so it is MAJOR that leaves the range, and a minor no longer protects anyone.
+ * The rule therefore keys off the current major rather than hardcoding the
+ * pre-1.0 table, so this gate does not silently start permitting breaking
+ * patches the day the repo cuts 1.0.0.
+ */
+export function requiredBump(title: ParsedTitle, current: Version): BumpLevel {
+  if (current[0] === 0) return title.breaking ? "minor" : "patch"
+  if (title.breaking) return "major"
+  return title.type === "feat" ? "minor" : "patch"
+}
+
+/**
+ * A Conventional Commit `BREAKING CHANGE:` footer in the PR body.
+ *
+ * The TITLE is authoritative for the bump everywhere else in this repo:
+ * squash-merge makes it the commit subject and `release-notes.ts` parses titles
+ * only, so a body-only breaking marker never reaches the changelog's
+ * `BREAKING CHANGES` block. That asymmetry is itself the bug worth catching —
+ * a body footer with no `!` in the title is reported (`breaking-marker-mismatch`)
+ * AND counted as breaking for bump purposes, so the release can never be
+ * under-bumped while the two disagree.
+ *
+ * Matched as a real footer (line-start, uppercase, colon-space) rather than
+ * anywhere in prose, per the Conventional Commits spec.
+ */
+const BREAKING_FOOTER_RE = /^BREAKING[ -]CHANGE:[ \t]/mu
+
+export function hasBreakingFooter(body: string | null | undefined): boolean {
+  return BREAKING_FOOTER_RE.test(body ?? "")
+}
+
+// --- findings ---
+
+export type Severity = "error" | "warn"
+
+export type FindingKind =
+  | "breaking-marker-mismatch"
+  | "bump-too-small"
+  | "empty-milestone"
+  | "gate-exempt"
+  | "milestone-not-a-release"
+  | "milestone-not-ahead"
+  | "missing-milestone"
+  | "non-adjacent-bump"
+  | "non-conforming-title"
+  | "version-tag-mismatch"
+
+export interface Finding {
+  kind: FindingKind
+  severity: Severity
+  /** PR number, when the finding is about one PR. */
+  number?: number
+  message: string
+}
+
+export interface GateReport {
+  /** One line naming what was checked, for the report header. */
+  subject: string
+  findings: ReadonlyArray<Finding>
+}
+
+export type Mode = "enforce" | "warn"
+
+/** 0 clean (or warn mode) · 1 a blocking finding. Never 2 — that is `main`'s. */
+export function exitCodeFor(report: GateReport, mode: Mode): number {
+  if (mode === "warn") return 0
+  return report.findings.some((f) => f.severity === "error") ? 1 : 0
+}
+
+function downgrade(findings: ReadonlyArray<Finding>): Array<Finding> {
+  return findings.map((f) => ({ ...f, severity: "warn" as const }))
+}
+
+// --- PR shape ---
+
+/** The PR fields the gates read (a subset of `gh pr view --json`). */
+export interface GatePullRequest {
+  number: number
+  title: string
+  body?: string | null
+  milestone?: { title: string } | null
+  author?: { login?: string; is_bot?: boolean } | null
+  labels?: ReadonlyArray<{ name: string }>
+}
+
+/** Downgrades every finding on one PR to a warning. */
+export const OVERRIDE_LABEL = "release-gate-override"
+
+/**
+ * A release commit ships the version bump itself and belongs to no milestone,
+ * so gating it on one would deadlock the release it is cutting. Matches the
+ * subject `docs/release-runbook.md` §4 prescribes.
+ */
+const RELEASE_COMMIT_RE = /^chore(?:\([\w-]+\))?: release v?\d+\.\d+\.\d+$/u
+
+/** Why this PR is not gated, or undefined if it is. */
+export function exemption(pr: GatePullRequest): string | undefined {
+  if (RELEASE_COMMIT_RE.test(pr.title.trim())) return "release commit"
+  if ((pr.labels ?? []).some((l) => l.name === OVERRIDE_LABEL)) {
+    return `\`${OVERRIDE_LABEL}\` label`
+  }
+  return undefined
+}
+
+/**
+ * Bot-authored PRs (Dependabot, renovate, the drift watcher) cannot set a
+ * milestone — the API surface they use has no way to. Failing them on gate 1
+ * would wedge every dependency bump on a maintainer action the bot is
+ * structurally unable to take, so gate 1 is a WARNING for them. Gate 2 still
+ * applies at full strength: a bot PR with a milestone is checked like any
+ * other, and one without a milestone has nothing to check.
+ */
+export function isBot(pr: GatePullRequest): boolean {
+  return pr.author?.is_bot === true || (pr.author?.login ?? "").endsWith("[bot]")
+}
+
+// --- gate 1 + 2 (pure) ---
+
+/** Milestone-level findings: is this milestone a legal next version at all? */
+export function evaluateMilestoneVersion(
+  milestoneTitle: string,
+  target: Version,
+  current: Version,
+): Array<Finding> {
+  const level = classifyBump(current, target)
+  if (level === "not-ahead") {
+    return [
+      {
+        kind: "milestone-not-ahead",
+        severity: "error",
+        message: `milestone \`${milestoneTitle}\` is not ahead of the current released version \`${formatVersion(current)}\` — that release is already out (or the number is wrong). Retarget to the next unreleased milestone.`,
+      },
+    ]
+  }
+  if (!isAdjacent(current, target, level)) {
+    return [
+      {
+        kind: "non-adjacent-bump",
+        severity: "warn",
+        message: `milestone \`${milestoneTitle}\` skips versions: \`${formatVersion(current)}\` → \`${formatVersion(target)}\` is a ${level} bump but not the adjacent one. Legal, but confirm it is intentional.`,
+      },
+    ]
+  }
+  return []
+}
+
+/**
+ * Per-PR findings for a set of PRs that all ship in `target`. Severity is left
+ * at `error`; callers downgrade (see `evaluatePr`, which does so for siblings).
+ * Exempt PRs are skipped entirely — an override on a PR must not resurface as a
+ * finding on its neighbour.
+ */
+export function evaluatePrBumps(
+  prs: ReadonlyArray<GatePullRequest>,
+  target: Version,
+  milestoneTitle: string,
+  current: Version,
+): Array<Finding> {
+  const findings: Array<Finding> = []
+  const level = classifyBump(current, target)
+  // `not-ahead` is already reported once at milestone level; comparing each PR
+  // against a version that went backwards would say the same thing N times.
+  if (level === "not-ahead") return findings
+
+  for (const pr of prs) {
+    if (exemption(pr)) continue
+
+    const parsed = parseConventionalTitle(pr.title)
+    if (!parsed) {
+      findings.push({
+        kind: "non-conforming-title",
+        severity: "error",
+        number: pr.number,
+        message: `#${pr.number} title is not a single Conventional Commit: ${JSON.stringify(pr.title)} — expected \`type(scope): description\`. Squash-merge makes it the commit subject and \`release:notes\` refuses to emit on it, so the required bump cannot be derived either.`,
+      })
+      continue
+    }
+
+    const footer = hasBreakingFooter(pr.body)
+    if (footer && !parsed.breaking) {
+      findings.push({
+        kind: "breaking-marker-mismatch",
+        severity: "error",
+        number: pr.number,
+        message: `#${pr.number} declares a \`BREAKING CHANGE:\` footer in its body but its title has no \`!\`. The changelog is generated from titles only, so the breaking change would ship unannounced — add \`!\` to the title (\`${parsed.type}${parsed.scope ? `(${parsed.scope})` : ""}!: …\`).`,
+      })
+    }
+
+    const need = requiredBump(
+      { ...parsed, breaking: parsed.breaking || footer },
+      current,
+    )
+    if (BUMP_RANK[level] < BUMP_RANK[need]) {
+      findings.push({
+        kind: "bump-too-small",
+        severity: "error",
+        number: pr.number,
+        message: `#${pr.number} (\`${pr.title}\`) requires a **${need}** bump, but milestone \`${milestoneTitle}\` is a ${level} on \`${formatVersion(current)}\`. A consumer's \`^${current.join(".")}\` covers \`${formatVersion(target)}\`, so this would be auto-installed on a routine update. Move the PR to a ${need} milestone.`,
+      })
+    }
+  }
+  return findings
+}
+
+export interface PrGateInput {
+  pr: GatePullRequest
+  /** Highest released version — see `fetchCurrentVersion`. */
+  current: Version
+  /**
+   * Other PRs in the same milestone. Their violations surface here as
+   * WARNINGS: when two PRs in one milestone disagree about the required bump,
+   * the person who notices first is whoever opened the second one, and it is
+   * cheaper to retarget the milestone then than at release time. They do not
+   * block, because they are not this PR's to fix — `milestone` makes the same
+   * findings blocking at the release boundary.
+   */
+  siblings?: ReadonlyArray<GatePullRequest>
+}
+
+/** Gates 1 and 2 for a single PR. Pure. */
+export function evaluatePr(input: PrGateInput): GateReport {
+  const { pr, current } = input
+  const subject = `PR #${pr.number} — ${pr.title}`
+
+  const exempt = exemption(pr)
+  if (exempt) {
+    return {
+      subject,
+      findings: [
+        {
+          kind: "gate-exempt",
+          severity: "warn",
+          number: pr.number,
+          message: `#${pr.number} is exempt from the release gates (${exempt}). Nothing was checked.`,
+        },
+      ],
+    }
+  }
+
+  const findings: Array<Finding> = []
+  const bot = isBot(pr)
+  const milestoneTitle = pr.milestone?.title
+  const target = milestoneTitle ? parseReleaseTag(milestoneTitle) : undefined
+
+  // Gate 1. A non-release milestone (`Backlog`, `v0.3`) fails HERE rather than
+  // in gate 2: it satisfies "has a milestone" while shipping in no release and
+  // appearing in no generated notes, which is the exact failure gate 1 exists
+  // to prevent. Keeping it here also means gate 2 never has to report on a
+  // milestone it could not parse — no double-reporting.
+  if (!milestoneTitle) {
+    findings.push({
+      kind: "missing-milestone",
+      severity: bot ? "warn" : "error",
+      number: pr.number,
+      message: `#${pr.number} has no milestone. Without one it ships in whatever release is cut next and never appears in \`release:notes\` output. Assign it: \`gh pr edit ${pr.number} --milestone vX.Y.Z\`.${bot ? " (Bot-authored, so this is a warning — a maintainer assigns the milestone before the release is cut.)" : ""}`,
+    })
+  } else if (!target) {
+    findings.push({
+      kind: "milestone-not-a-release",
+      severity: bot ? "warn" : "error",
+      number: pr.number,
+      message: `#${pr.number} is assigned to milestone \`${milestoneTitle}\`, which is not a release tag. A release milestone's title IS the tag and must be exactly \`vX.Y.Z\` (no prerelease suffix — this tooling does not model one).`,
+    })
+  }
+
+  // Gate 2, only once there is a version to check against.
+  if (target && milestoneTitle) {
+    findings.push(
+      ...evaluateMilestoneVersion(milestoneTitle, target, current),
+      ...evaluatePrBumps([pr], target, milestoneTitle, current),
+      ...downgrade(
+        evaluatePrBumps(
+          (input.siblings ?? []).filter((s) => s.number !== pr.number),
+          target,
+          milestoneTitle,
+          current,
+        ),
+      ),
+    )
+  } else if (!milestoneTitle) {
+    // No milestone at all: still check the title, since it is a hard rule in
+    // its own right (AGENTS.md) and `release:notes` refuses to emit on it.
+    if (!parseConventionalTitle(pr.title)) {
+      findings.push({
+        kind: "non-conforming-title",
+        severity: "error",
+        number: pr.number,
+        message: `#${pr.number} title is not a single Conventional Commit: ${JSON.stringify(pr.title)} — expected \`type(scope): description\`. It becomes the squash subject and the changelog line.`,
+      })
+    }
+  }
+
+  return { subject, findings }
+}
+
+export interface MilestoneGateInput {
+  tag: string
+  current: Version
+  prs: ReadonlyArray<GatePullRequest>
+}
+
+/**
+ * Gate 2 across a whole milestone — the release preflight. The milestone's
+ * required bump is the MAX over its PRs, which is what makes disagreement
+ * between siblings visible: one `feat!:` in a bag of `fix:`es forces the whole
+ * milestone to a minor, and every PR is compared against the milestone
+ * independently, so the max is enforced pointwise. Blocking, unlike the
+ * advisory sibling pass in `evaluatePr`.
+ */
+export function evaluateMilestone(input: MilestoneGateInput): GateReport {
+  const subject = `milestone ${input.tag} (${input.prs.length} PR(s))`
+  const target = parseReleaseTag(input.tag)
+  if (!target) {
+    return {
+      subject,
+      findings: [
+        {
+          kind: "milestone-not-a-release",
+          severity: "error",
+          message: `\`${input.tag}\` is not a release tag — a release milestone's title must be exactly \`vX.Y.Z\`.`,
+        },
+      ],
+    }
+  }
+  return {
+    subject,
+    findings: [
+      // An empty milestone must never read as "every gate passes": a typo'd
+      // tag returns zero PRs from `gh pr list --search milestone:"…"` exactly
+      // like a real-but-unassigned one, and a silent green there is the same
+      // class of failure gate 1 exists to prevent.
+      ...(input.prs.length === 0
+        ? [
+            {
+              kind: "empty-milestone" as const,
+              severity: "error" as const,
+              message: `milestone \`${input.tag}\` has no pull requests. Either nothing is assigned to it, or the tag is typo'd — \`gh api repos/{owner}/{repo}/milestones?state=all --jq '.[].title'\` lists the real ones.`,
+            },
+          ]
+        : []),
+      ...evaluateMilestoneVersion(input.tag, target, input.current),
+      ...evaluatePrBumps(input.prs, target, input.tag, input.current),
+    ],
+  }
+}
+
+// --- gate 3 (pure) ---
+
+/**
+ * Gate 3: the tag being cut matches `package.json`.
+ *
+ * WHERE THIS BELONGS, and why it is in two places:
+ *
+ * A published tag is immutable in practice — `docs/release-runbook.md` forbids
+ * moving one, because a consumer's `bun.lock` pins the resolved SHA and only
+ * `bun update` re-resolves, so a moved tag means two machines hold different
+ * code under one version. The damage is therefore done the instant the tag is
+ * pushed. That rules out tag-push as the PRIMARY placement: it can only ever
+ * alarm after the fact.
+ *
+ * So the preventive placement is a PREFLIGHT the human runs before pushing
+ * (`bun run release:check version vX.Y.Z`, wired into runbook §4). But
+ * "a human runs it" is precisely the discipline this file exists to replace,
+ * so a preflight alone is not enough either.
+ *
+ * Hence both, with different jobs: the preflight PREVENTS, and a tag-push
+ * workflow (`release-tag-check.yml`) DETECTS — it is the only placement that
+ * can see the tag that was actually pushed, and it fires within seconds, while
+ * the tag is still almost certainly unconsumed and can be deleted rather than
+ * moved. It is deliberately NOT on the release commit: the runbook's flow bumps
+ * and tags in one `release:manual` invocation, so a push-to-main check would
+ * race the tag push it is meant to precede and could not name the tag anyway.
+ */
+export function checkTagVersion(tag: string, packageVersion: string): GateReport {
+  const subject = `tag ${tag} vs package.json ${packageVersion}`
+  const expected = `v${packageVersion.trim().replace(/^v/u, "")}`
+  if (expected === tag.trim()) return { subject, findings: [] }
+  return {
+    subject,
+    findings: [
+      {
+        kind: "version-tag-mismatch",
+        severity: "error",
+        message: `tag \`${tag}\` does not match package.json's version \`${packageVersion}\` (expected tag \`${expected}\`). This has shipped before — \`git show v0.1.1:package.json\` reads \`0.1.0\`. Fix package.json and re-cut the tag; do not move a tag anyone may already have resolved.`,
+      },
+    ],
+  }
+}
+
+/** Repo root resolved from this file, so the preflight works from any cwd. */
+const REPO_ROOT = path.resolve(import.meta.dir, "..", "..")
+export const PACKAGE_JSON_PATH = path.join(REPO_ROOT, "package.json")
+
+/** Throws — an unreadable package.json is a gate-cannot-run (exit 2), not a violation. */
+export function readPackageVersion(file: string): string {
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as { version?: unknown }
+  if (typeof parsed.version !== "string") {
+    throw new Error(`${file} has no string \`version\` field`)
+  }
+  return parsed.version
+}
+
+// --- collection (gh) ---
+
+/** Hard cap on PRs read from one milestone, mirroring `release-notes.ts`. */
+export const PR_PAGE_LIMIT = 200
+
+const PR_FIELDS = "number,title,body,milestone,author,labels,baseRefName"
+
+export interface FetchedPr extends GatePullRequest {
+  baseRefName: string
+}
+
+export function fetchPr(
+  gh: GhRunner,
+  repo: string,
+  number: number,
+): FetchedPr {
+  return ghJson<FetchedPr>(gh, [
+    "pr",
+    "view",
+    String(number),
+    "--repo",
+    repo,
+    "--json",
+    PR_FIELDS,
+  ])
+}
+
+export function fetchMilestonePrs(
+  gh: GhRunner,
+  repo: string,
+  tag: string,
+): Array<GatePullRequest> {
+  return ghJson<Array<GatePullRequest>>(gh, [
+    "pr",
+    "list",
+    "--repo",
+    repo,
+    "--state",
+    "all",
+    "--limit",
+    String(PR_PAGE_LIMIT),
+    "--search",
+    `milestone:"${tag}"`,
+    "--json",
+    "number,title,body,author,labels",
+  ])
+}
+
+/** Highest `vX.Y.Z` tag in the list. Undefined when there are none. */
+export function highestTag(tags: ReadonlyArray<string>): Version | undefined {
+  let best: Version | undefined
+  for (const name of tags) {
+    const v = parseReleaseTag(name)
+    if (!v) continue
+    if (!best || compareVersions(v, best) > 0) best = v
+  }
+  return best
+}
+
+export function maxVersion(a?: Version, b?: Version): Version {
+  if (!a) return b ?? [0, 0, 0]
+  if (!b) return a
+  return compareVersions(a, b) >= 0 ? a : b
+}
+
+export function fetchPackageVersionAtRef(
+  gh: GhRunner,
+  repo: string,
+  ref: string,
+): Version | undefined {
+  const res = ghJson<{ content?: string }>(gh, [
+    "api",
+    `repos/${repo}/contents/package.json?ref=${encodeURIComponent(ref)}`,
+  ])
+  if (!res.content) return undefined
+  const text = Buffer.from(res.content, "base64").toString("utf8")
+  const version = (JSON.parse(text) as { version?: unknown }).version
+  return typeof version === "string" ? parseReleaseTag(`v${version}`) : undefined
+}
+
+/**
+ * The version a consumer can currently resolve — the baseline every bump is
+ * measured from.
+ *
+ * Taken as `max(highest git tag, package.json on the BASE ref)` because the two
+ * have already disagreed in this repo's history (v0.1.1 was tagged while
+ * package.json read 0.1.0) and each covers the other's failure: the tag is what
+ * a consumer actually resolves, and package.json is ahead of it in the window
+ * between a bump commit and its tag. Taking the max is the strict reading —
+ * a stale-low baseline would make every gate more permissive, which is the one
+ * direction this check must never fail in.
+ *
+ * The BASE ref matters: `actions/checkout` on a `pull_request` checks out the
+ * merge commit, so reading package.json from the working tree would let the PR
+ * under test choose its own baseline.
+ */
+export function fetchCurrentVersion(
+  gh: GhRunner,
+  repo: string,
+  baseRef: string,
+): Version {
+  const tags = ghJson<Array<{ name: string }>>(gh, [
+    "api",
+    "--paginate",
+    `repos/${repo}/tags?per_page=100`,
+  ])
+  return maxVersion(
+    highestTag(tags.map((t) => t.name)),
+    fetchPackageVersionAtRef(gh, repo, baseRef),
+  )
+}
+
+export function currentRepo(gh: GhRunner): string {
+  const res = ghJson<{ nameWithOwner?: string }>(gh, [
+    "repo",
+    "view",
+    "--json",
+    "nameWithOwner",
+  ])
+  if (!res.nameWithOwner) throw new Error("gh repo view: no nameWithOwner")
+  return res.nameWithOwner
+}
+
+export interface CollectOptions {
+  gh?: GhRunner
+  repo?: string
+}
+
+/** Full gate-1+2 pipeline for one PR: `gh` reads plus the pure evaluation. */
+export function collectPrGate(
+  number: number,
+  options: CollectOptions = {},
+): GateReport {
+  const gh = options.gh ?? realGh
+  const repo = options.repo ?? currentRepo(gh)
+  const pr = fetchPr(gh, repo, number)
+  const current = fetchCurrentVersion(gh, repo, pr.baseRefName)
+  const milestoneTitle = pr.milestone?.title
+  const siblings =
+    milestoneTitle && parseReleaseTag(milestoneTitle)
+      ? fetchMilestonePrs(gh, repo, milestoneTitle)
+      : undefined
+  return evaluatePr({ pr, current, siblings })
+}
+
+/** Full gate-2 pipeline for a whole milestone (the release preflight). */
+export function collectMilestoneGate(
+  tag: string,
+  options: CollectOptions = {},
+): GateReport {
+  const gh = options.gh ?? realGh
+  const repo = options.repo ?? currentRepo(gh)
+  // Measured against the default branch: at preflight time the release commit
+  // has not landed, so HEAD of the default branch is the last released state.
+  // Read through `gh api` rather than `gh repo view <repo> --json` — the REST
+  // shape is stable, and every other lookup in this file already goes that way.
+  const defaultBranch = ghJson<{ default_branch?: string }>(gh, [
+    "api",
+    `repos/${repo}`,
+  ]).default_branch
+  const current = fetchCurrentVersion(gh, repo, defaultBranch ?? "HEAD")
+  return evaluateMilestone({
+    tag,
+    current,
+    prs: parseReleaseTag(tag) ? fetchMilestonePrs(gh, repo, tag) : [],
+  })
+}
+
+// --- rendering ---
+
+const ICON: Record<Severity, string> = { error: "FAIL", warn: "WARN" }
+
+/** Human-readable report (stdout). */
+export function renderFindings(report: GateReport): string {
+  const lines = [`release-gates: ${report.subject}`]
+  if (report.findings.length === 0) {
+    lines.push("  OK   every release gate passes.")
+    return lines.join("\n")
+  }
+  for (const f of report.findings) {
+    lines.push(`  ${ICON[f.severity]} [${f.kind}] ${f.message}`)
+  }
+  return lines.join("\n")
+}
+
+/** Markdown for `$GITHUB_STEP_SUMMARY`. */
+export function renderSummary(report: GateReport): string {
+  const errors = report.findings.filter((f) => f.severity === "error")
+  const warns = report.findings.filter((f) => f.severity === "warn")
+  const lines = [`## Release gates — ${report.subject}`, ""]
+  if (report.findings.length === 0) {
+    lines.push("Every release gate passes.", "")
+    return lines.join("\n")
+  }
+  if (errors.length > 0) {
+    lines.push("### Blocking", "")
+    for (const f of errors) lines.push(`- **\`${f.kind}\`** — ${f.message}`)
+    lines.push("")
+  }
+  if (warns.length > 0) {
+    lines.push("### Warnings", "")
+    for (const f of warns) lines.push(`- **\`${f.kind}\`** — ${f.message}`)
+    lines.push("")
+  }
+  lines.push(
+    `_Checked by \`scripts/ops/release-gates.ts\`. See [the release runbook](https://github.com/stuffbucket/maximal-core/blob/main/docs/release-runbook.md#the-gates). Add the \`${OVERRIDE_LABEL}\` label to downgrade these to warnings on this PR._`,
+  )
+  return lines.join("\n")
+}
+
+/** GitHub Actions annotations, so findings surface on the Checks tab. */
+export function renderAnnotations(report: GateReport): Array<string> {
+  return report.findings.map(
+    (f) =>
+      `::${f.severity === "error" ? "error" : "warning"} title=release-gates (${f.kind})::${f.message.replace(/\r?\n/gu, "%0A")}`,
+  )
+}
+
+// --- entry point ---
+
+export interface Args {
+  subcommand?: string
+  target?: string
+  repo?: string
+  mode: Mode
+}
+
+const VALUE_FLAGS = new Set(["--mode", "--repo"])
+
+export function parseArgs(argv: ReadonlyArray<string>): Args {
+  const args: Args = { mode: "enforce" }
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (VALUE_FLAGS.has(arg)) {
+      const value = argv[++i]
+      if (arg === "--repo") args.repo = value
+      // Anything that is not exactly `warn` means enforce — an unrecognised
+      // mode string must never silently disable the gate.
+      else args.mode = value === "warn" ? "warn" : "enforce"
+    } else if (!arg.startsWith("-")) {
+      if (args.subcommand === undefined) args.subcommand = arg
+      else args.target ??= arg
+    }
+  }
+  return args
+}
+
+const USAGE = `usage: bun run release:check <pr <number> | milestone <vX.Y.Z> | version <vX.Y.Z>> [--repo owner/name] [--mode enforce|warn]`
+
+function report(report_: GateReport, mode: Mode): number {
+  console.log(renderFindings(report_))
+  if (process.env.GITHUB_ACTIONS) {
+    for (const line of renderAnnotations(report_)) console.log(line)
+  }
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${renderSummary(report_)}\n`)
+  }
+  const code = exitCodeFor(report_, mode)
+  if (code === 0 && mode === "warn" && report_.findings.length > 0) {
+    console.log("\n(--mode warn: nothing blocked.)")
+  }
+  return code
+}
+
+export function main(argv: ReadonlyArray<string>): number {
+  const { subcommand, target, repo, mode } = parseArgs(argv)
+  if (!subcommand || !target) {
+    console.error(USAGE)
+    return 2
+  }
+
+  try {
+    switch (subcommand) {
+      case "pr": {
+        const number = Number.parseInt(target, 10)
+        if (!Number.isInteger(number) || number <= 0) {
+          console.error(`release-gates: \`${target}\` is not a PR number.\n${USAGE}`)
+          return 2
+        }
+        return report(collectPrGate(number, { repo }), mode)
+      }
+      case "milestone":
+        return report(collectMilestoneGate(target, { repo }), mode)
+      case "version":
+        return report(
+          checkTagVersion(target, readPackageVersion(PACKAGE_JSON_PATH)),
+          mode,
+        )
+      default:
+        console.error(`release-gates: unknown subcommand \`${subcommand}\`.\n${USAGE}`)
+        return 2
+    }
+  } catch (err) {
+    // The gate could not RUN (gh failed, JSON was unparseable, package.json is
+    // missing). Exit 2, distinct from a violation, so the caller can decline to
+    // block on it — a gate that fails closed on its own bugs takes the repo
+    // down with it.
+    console.error(
+      `release-gates: could not run — ${err instanceof Error ? err.message : String(err)}`,
+    )
+    return 2
+  }
+}
+
+if (import.meta.main) {
+  process.exit(main(process.argv.slice(2)))
+}

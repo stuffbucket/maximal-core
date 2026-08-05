@@ -75,7 +75,12 @@ export const realGh: GhRunner = (args) => {
   }
 }
 
-function ghJson<T>(gh: GhRunner, args: ReadonlyArray<string>): T {
+/**
+ * One `gh … --json` read, decoded. Exported because `release-gates.ts` reuses
+ * this exact seam — one `GhRunner`, one error shape, so both scripts' tests run
+ * offline against the same injected runner.
+ */
+export function ghJson<T>(gh: GhRunner, args: ReadonlyArray<string>): T {
   const res = gh(args)
   if (res.status !== 0) {
     throw new Error(
