@@ -42,7 +42,9 @@ export function parseReadyLine(line: string): ReadyLine | null {
   const trimmed = line.trim()
   if (!trimmed.startsWith(`${READY_MARKER} `)) return null
   try {
-    const parsed = JSON.parse(trimmed.slice(READY_MARKER.length + 1)) as unknown
+    // Declared `unknown` rather than cast: `JSON.parse` returns `any`, and
+    // letting that spread would defeat the field checks below.
+    const parsed: unknown = JSON.parse(trimmed.slice(READY_MARKER.length + 1))
     const { port, pid } = (parsed ?? {}) as Partial<ReadyLine>
     if (typeof port !== "number" || typeof pid !== "number") return null
     return { port, pid }

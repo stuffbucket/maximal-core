@@ -9,8 +9,10 @@ tier drives the engine over the loopback `/control` JSON-RPC 2.0 surface.
 
 - **`bun run check:fast` after each edit** — oxlint + `tsc` + ESLint. This is
   the inner loop.
-- **`bun run check:deep` before you call the task done** — adds `bun test` and
-  knip. If you touched `scripts/ops/`, also run `bun run check:ops`.
+- **`bun run check:deep` before you call the task done** — adds `casts:check`,
+  `bun test`, knip, and the build. It is a superset of what CI runs, so green
+  here means green there. If you touched `scripts/ops/`, also run
+  `bun run check:ops`.
 - Single test file: `bun test tests/foo.test.ts`. Tests live in `tests/` as
   `*.test.ts` on Bun's built-in runner.
 - **`bun run e2e` if you changed the control plane, the ready-line, or

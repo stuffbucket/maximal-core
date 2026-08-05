@@ -54,7 +54,7 @@
     "build:lib": "tsup",
     "casts": "bun run scripts/find-casts.ts",
     "casts:check": "bun run scripts/find-casts.ts --check",
-    "check:deep": "bun run check:fast && bun test && bun run knip",
+    "check:deep": "bun run check:fast && bun run casts:check && bun test && bun run knip && bun run build",
     "check:fast": "bun run lint:fast && bun run typecheck && bun run lint:all",
     "check:ops": "bun run typecheck:ops && bun run test:ops",
     "deps:check": "depcruise --config .dependency-cruiser.cjs src tests",

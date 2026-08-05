@@ -12,6 +12,7 @@ import type { Context, Hono as HonoApp } from "hono"
 
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
+import { z } from "zod"
 
 import {
   cancelDeviceFlow,
@@ -63,12 +64,13 @@ export interface ControlRoutesOptions {
   hub?: ControlHub<ControlSnapshot>
 }
 
+/** Validated rather than cast: `c.req.json()` returns `any`, and asserting a
+ *  shape onto it moves an untrusted payload into the type system unchecked. */
+const keyBodySchema = z.object({ key: z.string().min(1) })
+
 async function readKey(c: Context): Promise<string | null> {
-  const body = (await c.req.json().catch(() => null)) as {
-    key?: unknown
-  } | null
-  const key = body?.key
-  return typeof key === "string" && key ? key : null
+  const parsed = keyBodySchema.safeParse(await c.req.json().catch(() => null))
+  return parsed.success ? parsed.data.key : null
 }
 
 /**

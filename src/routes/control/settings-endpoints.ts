@@ -12,6 +12,7 @@
 import type { Hono as HonoApp } from "hono"
 
 import { randomUUID } from "node:crypto"
+import { z } from "zod"
 
 import { getApp } from "~/apps/registry"
 import { describeExecutor } from "~/debug"
@@ -101,12 +102,21 @@ function registerApiKeyCreate(app: HonoApp): void {
   })
 }
 
+/** Request-body shapes, validated rather than cast. `c.req.json()` returns
+ *  `any`, and asserting a shape onto it moves an untrusted payload into the
+ *  type system unchecked — see `bun run casts:check`. */
+const enforceBodySchema = z.object({ enforce: z.boolean() })
+const ghUseBodySchema = z.object({
+  login: z.string().min(1),
+  host: z.string().min(1),
+})
+
 function registerApiKeyMutations(app: HonoApp): void {
   app.patch("/api-keys/enforce", async (c) => {
-    const body = (await c.req.json().catch(() => null)) as {
-      enforce?: unknown
-    } | null
-    if (!body || typeof body.enforce !== "boolean") {
+    const body = enforceBodySchema.safeParse(
+      await c.req.json().catch(() => null),
+    )
+    if (!body.success) {
       return c.json(
         {
           error: {
@@ -118,7 +128,10 @@ function registerApiKeyMutations(app: HonoApp): void {
       )
     }
     const config = getConfig()
-    writeConfig({ ...config, auth: { ...config.auth, enforce: body.enforce } })
+    writeConfig({
+      ...config,
+      auth: { ...config.auth, enforce: body.data.enforce },
+    })
     return c.json(apiKeysList())
   })
 
@@ -195,23 +208,16 @@ function registerGh(app: HonoApp): void {
     try {
       const { detectGhCli, getGhAccountToken } =
         await import("~/lib/system/gh-cli")
-      const body = (await c.req.json().catch(() => null)) as {
-        login?: unknown
-        host?: unknown
-      } | null
-      const login = body?.login
-      const host = body?.host
-      if (
-        typeof login !== "string"
-        || !login
-        || typeof host !== "string"
-        || !host
-      ) {
+      const parsed = ghUseBodySchema.safeParse(
+        await c.req.json().catch(() => null),
+      )
+      if (!parsed.success) {
         return c.json(
           { error: { message: "Expected { login, host } strings." } },
           400,
         )
       }
+      const { login, host } = parsed.data
       const status = await detectGhCli()
       if (!status.accounts.some((a) => a.login === login && a.host === host)) {
         return c.json(
