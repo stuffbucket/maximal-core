@@ -73,6 +73,7 @@
     "mutate": "stryker run",
     "prepack": "bun run build && bun run build:lib",
     "prepare": "simple-git-hooks",
+    "release:check": "bun scripts/ops/release-gates.ts",
     "release:manual": "bumpp && bun publish --access public",
     "release:notes": "bun scripts/ops/release-notes.ts",
     "sbom": "bun scripts/sbom.ts",
