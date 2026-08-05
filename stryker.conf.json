@@ -20,7 +20,6 @@
     "dist",
     "build",
     "node_modules",
-    "shell",
     ".claude",
     "reports"
   ]

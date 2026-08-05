@@ -2285,7 +2285,7 @@ var init_package = __esm(() => {
       "build:lib": "tsup",
       casts: "bun run scripts/find-casts.ts",
       "casts:check": "bun run scripts/find-casts.ts --check",
-      "check:deep": "bun run check:fast && bun run casts:check && bun test && bun run knip && bun run build && bun run typecheck:downstream && bun run bindings:check",
+      "check:deep": "bun run check:fast && bun run casts:check && bun test && bun run knip && bun run deps:check && bun run build && bun run typecheck:downstream && bun run bindings:check",
       "check:fast": "bun run lint:fast && bun run typecheck && bun run lint:all",
       "check:ops": "bun run typecheck:ops && bun run test:ops",
       "deps:check": "depcruise --config .dependency-cruiser.cjs src tests",
@@ -2362,7 +2362,7 @@ var init_package = __esm(() => {
       typescript: "^5.9.3"
     },
     engines: {
-      node: ">=22"
+      node: ">=22.13.0"
     }
   };
 });

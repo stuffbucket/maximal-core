@@ -104,6 +104,32 @@ describe("parity with the real package.json", () => {
   test("`prepare` resolves its binary through the interpreter too", () => {
     expect(readScripts().prepare).toBe("bun x simple-git-hooks")
   })
+
+  // `engines.node` is a DECLARATION, not a gate: `bun install` ignores it
+  // entirely (verified — a package declaring `node: ">=99"` installs clean), so
+  // the only thing that ever enforces it is a consumer's npm/pnpm. That makes it
+  // exactly the kind of field that goes stale unnoticed.
+  //
+  // It went stale: it read `>=22` while `src/lib/platform/sqlite.ts` refuses to
+  // open a database below `MINIMUM_NODE_SQLITE_VERSION` (22.13.0) and throws
+  // `UnsupportedNodeSqliteRuntimeError`. Node 22.0-22.12 satisfied the declared
+  // range and then died at runtime on the first token-usage write.
+  //
+  // Read as text rather than imported: this suite runs under `check:ops` with no
+  // `bun install`, and pulling in a `~/`-aliased src module would drag the
+  // engine's import graph into an offline tooling test.
+  test("`engines.node` is the floor src/lib/platform/sqlite.ts actually enforces", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as {
+      engines: { node: string }
+    }
+    const source = fs.readFileSync(
+      path.join(REPO_ROOT, "src", "lib", "platform", "sqlite.ts"),
+      "utf8",
+    )
+    const declared = /MINIMUM_NODE_SQLITE_VERSION\s*=\s*"([^"]+)"/.exec(source)?.[1]
+    expect(declared).toBeDefined()
+    expect(pkg.engines.node).toBe(`>=${declared}`)
+  })
 })
 
 describe("pinObjection", () => {

@@ -88,5 +88,14 @@ jobs:
       - name: Knip (unused files / exports / deps)
         run: bun run knip
 
+      - name: Dependency layer rules
+        # `.dependency-cruiser.cjs` had been in the repo, correct, and invoked by
+        # nothing — not check:fast, not check:deep, not any workflow. Its two
+        # `error` rules (`not-to-test`, `no-route-imports-from-lib-or-services`)
+        # do fire and do exit 2; they had simply never been run. Its `warn` rules
+        # (`no-circular`, 47 standing matches) do not affect the exit code, so a
+        # green step here means "no layering violation", not "no cycles".
+        run: bun run deps:check
+
       - name: Build
         run: bun run build

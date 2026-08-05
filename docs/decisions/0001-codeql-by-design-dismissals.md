@@ -50,10 +50,15 @@ The current suppressed sites (grep `codeql\[` to enumerate):
 
 | Rule | File | Why |
 |---|---|---|
-| `js/file-access-to-http` | `src/lib/send-request.ts` | **Single mechanism** — every authenticated GitHub/Copilot/provider request funnels through `sendRequest`, which attaches the disk-read token and forwards it upstream |
-| `js/file-access-to-http` | `scripts/gemma-watch.ts` | Dev-only watcher → local Ollama |
-| `js/http-to-file-access` | `src/lib/github-token-store.ts` | Persist OAuth token to 0o600 file |
-| `js/http-to-file-access` | `scripts/sync-homebrew-formula.ts` | Release tooling renders a formula |
+| `js/file-access-to-http` | `src/lib/http/send-request.ts` | **Single mechanism** — every authenticated GitHub/Copilot/provider request funnels through `sendRequest`, which attaches the disk-read token and forwards it upstream |
+| `js/http-to-file-access` | `src/lib/auth/github-token-store.ts` | Persist OAuth token to 0o600 file |
+
+This table previously also listed `scripts/gemma-watch.ts` and
+`scripts/sync-homebrew-formula.ts`, neither of which exists in this repo, and
+gave the other two paths as `src/lib/send-request.ts` and
+`src/lib/github-token-store.ts` — both stale by one directory level. `grep -rn
+'codeql\['` over `src/` returns exactly the two rows above; that grep, not this
+table, is the source of truth.
 
 The six per-service `src/services/{copilot,github}/*` suppressions were
 collapsed into the single `send-request.ts` mechanism (see the token-
@@ -77,7 +82,13 @@ authenticated endpoints inherit the suppression for free.
   suppression, in the same PR that introduces it.
 - **Rule-wide exclusions still belong in `query-filters`** in
   `.github/codeql/codeql-config.yml` — but only when we mean "never run
-  this query," never as a substitute for a per-sink decision.
+  this query," never as a substitute for a per-sink decision. Note that
+  this config was inert until v0.4.1: `codeql.yml` never passed
+  `config-file:` to `github/codeql-action/init`, which has no convention
+  that finds the file by path, so its `paths-ignore` had never applied
+  and every analysis also scanned the force-tracked `dist/` bundle. The
+  input is now wired in; a `query-filters` entry added here will
+  actually take effect.
 
 # Amendment (2026-07-03): superseded the reconcile-daemon approach
 

@@ -14,7 +14,8 @@
  * ready-line reporting the requested port instead of the bound one, and
  * `awaitReadyLine` destroying stdout and killing the sidecar with EPIPE.
  */
-import type { ChildProcessWithoutNullStreams } from "node:child_process"
+import type { ChildProcessByStdio } from "node:child_process"
+import type { Readable } from "node:stream"
 
 import { spawn } from "node:child_process"
 import { mkdtempSync } from "node:fs"
@@ -23,8 +24,17 @@ import { join } from "node:path"
 
 import { awaitReadyLine, sidecarSpawnEnv } from "~/lib/live/supervisor"
 
+/**
+ * What `spawn` actually returns here. The sidecar is spawned with
+ * `stdio: ["ignore", "pipe", "pipe"]`, so `stdin` is `null` at runtime. The
+ * previous declaration (`ChildProcessWithoutNullStreams`) typed it as a live
+ * `Writable` — a lie no compiler caught, because `scripts/**` was outside every
+ * tsconfig until now. Both pipes stay non-null, which is what the harness reads.
+ */
+type SidecarChild = ChildProcessByStdio<null, Readable, Readable>
+
 export interface Sidecar {
-  child: ChildProcessWithoutNullStreams
+  child: SidecarChild
   /** Control plane — JSON-RPC, subscriptions. Ephemeral (maximal-core#10). */
   port: number
   /** Public data plane — `/v1`. A separate listener on a separate port. */
@@ -153,7 +163,7 @@ export function createReporter(title: string): Reporter {
 
 /** Resolve once the child has exited, or with null if it outlives the deadline. */
 export function waitForExit(
-  child: ChildProcessWithoutNullStreams,
+  child: SidecarChild,
   timeoutMs: number,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null } | null> {
   return new Promise((resolve) => {
