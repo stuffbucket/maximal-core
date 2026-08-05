@@ -3,7 +3,7 @@
 `maximal-core` is a **headless** local proxy that exposes GitHub Copilot as
 OpenAI- and Anthropic-compatible HTTP endpoints. Bun + Hono + TypeScript.
 There is **no UI, no `shell/`, no frontend build** in this repo — a separate
-tier drives the engine over the loopback `/control` HTTP + SSE surface.
+tier drives the engine over the loopback `/control` JSON-RPC 2.0 surface.
 
 ## Every turn
 
@@ -13,6 +13,10 @@ tier drives the engine over the loopback `/control` HTTP + SSE surface.
   knip. If you touched `scripts/ops/`, also run `bun run check:ops`.
 - Single test file: `bun test tests/foo.test.ts`. Tests live in `tests/` as
   `*.test.ts` on Bun's built-in runner.
+- **`bun run e2e` if you changed the control plane, the ready-line, or
+  shutdown.** Spawns the real binary and drives the real socket — outside
+  `bun test` because it costs seconds and a port. Every bug it has caught was
+  invisible to the unit suite.
 - Never report success on a command you did not run. If a check fails, say so
   and show the output.
 

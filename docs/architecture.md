@@ -91,8 +91,10 @@ models use the native Messages API or fall back to Chat Completions.
 Core is headless: sign-in is CLI-only and the engine serves no UI. A decoupled
 UI-server tier or desktop app consumes core over the loopback `/control`
 surface (Ollama-style), which replaces the removed `/settings/api` request API
-and `/ws` live feed. Full contract in
-[`docs/spec/control-api.md`](spec/control-api.md).
+and `/ws` live feed. The wire types are `src/lib/live/contract.ts` (published as
+`./control-contract`) and the callable method set is whatever `server/discover`
+returns at runtime — both are generated from the code that serves them, so
+neither can drift from it the way a prose spec does.
 
 - **JSON-RPC (canonical):** `POST /control/rpc` — stateless JSON-RPC 2.0 per
   **ADR-0023** (`stuffbucket/maximal` `docs/decisions/0023-…`). Methods are

@@ -238,7 +238,7 @@ export interface TeeLogger {
  * tees a redacted copy to a dated `<name>-YYYY-MM-DD.log` in the logs dir. This
  * is the seam that makes runtime events (especially auth: sign-in, degrade,
  * refresh retries, sign-out) OBSERVABLE AFTER THE FACT instead of vanishing
- * into stderr / the Tauri dev terminal where they can't be inspected later.
+ * into stderr / the shell dev terminal where they can't be inspected later.
  *
  * The file copy redacts non-string args (matching the handler-logger
  * discipline) so a logged error object can't leak a token to disk; string args

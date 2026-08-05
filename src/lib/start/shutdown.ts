@@ -1,16 +1,16 @@
 /**
  * Shutdown plumbing: SIGTERM / SIGINT handlers + an `exit`-event
- * safety-net reverter + optional parent-death watchdog. Tauri spawns
- * the sidecar with MAXIMAL_SIDECAR_PARENT_PID so the sidecar self-
- * terminates if the shell crashes without sending SIGTERM. Drain
- * order, including the Claude Code revert step, is documented inline
- * in initiateShutdown().
+ * safety-net reverter + optional parent-death watchdog. The desktop
+ * shell spawns the sidecar with MAXIMAL_SIDECAR_PARENT_PID so the
+ * sidecar self-terminates if the shell crashes without sending
+ * SIGTERM. Drain order, including the Claude Code revert step, is
+ * documented inline in initiateShutdown().
  *
  * Coverage matrix for the Claude Code base-URL revert:
  *   - SIGTERM / SIGINT          → initiateShutdown ✓
  *   - process.exit(n) anywhere  → `exit` event safety net ✓
  *   - uncaught exception        → `exit` event safety net ✓
- *   - Tauri parent died         → parent-pid watchdog → initiateShutdown ✓
+ *   - shell parent died         → parent-pid watchdog → initiateShutdown ✓
  *   - SIGKILL / OS-level kill   → ✗ no userspace runs. Sentinel-based
  *                                  warning on next boot (run-server.ts)
  *                                  diagnoses but can't auto-recover.
@@ -75,7 +75,7 @@ export async function initiateShutdown(
 
 /** Wire SIGTERM + an `exit`-event safety net + optional parent-death
  *  watchdog. The watchdog only runs when MAXIMAL_SIDECAR_PARENT_PID
- *  is set (Tauri shell spawn); bare CLI users own their own lifecycle.
+ *  is set (desktop shell spawn); bare CLI users own their own lifecycle.
  *
  *  The `exit` listener is a last-chance synchronous reverter for the
  *  Claude Code base URL. Node fires `exit` on:

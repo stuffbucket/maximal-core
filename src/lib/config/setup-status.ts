@@ -2,7 +2,7 @@
  * First-run / runtime setup detection.
  *
  * Composes existing helpers (paths, config, github-token-store) into a
- * single JSON-friendly snapshot the Tauri shell can poll on launch. Each
+ * single JSON-friendly snapshot the desktop shell can poll on launch. Each
  * check is observational and fast (sub-ms); no network, no live token
  * introspection. The proxy's existing boot path self-heals appDir,
  * config, and db on its own — this function reports what is, not what

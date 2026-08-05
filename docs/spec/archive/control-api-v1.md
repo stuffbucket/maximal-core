@@ -1,7 +1,25 @@
-# Control API + live event stream
+# Control API + live event stream (v1 — ARCHIVED)
 
-Status: **design (vetted)** — decisions locked to recommendations; sizing constants tunable.
-Audience: implementer of the `maximal-core` control surface + the UI-server tier that consumes it.
+> **This describes protocol v1, which no longer exists.**
+>
+> Everything below — the `{id, event, data}` envelope, `GET /control/events`, and
+> the cursor / ring / epoch / `Last-Event-ID` resume machinery — was **removed**
+> when the control plane moved to stateless JSON-RPC 2.0 under ADR-0023
+> (`stuffbucket/maximal`, `docs/decisions/0023-…`). MCP deleted resumable streams
+> and protocol-level sessions in spec revision 2026-07-28 for the same reason, so
+> v1's mechanism has no conformant form: it was not adjusted, it was deleted.
+>
+> **Do not build a client against this document.** For the current surface see
+> the *Control API* section of [`docs/architecture.md`](../../architecture.md);
+> for the wire types, `src/lib/live/contract.ts` (published as
+> `./control-contract`); for the callable method set, call `server/discover` at
+> runtime — it is generated from the live registry and so cannot under-report.
+>
+> Kept only as the record of what v1 was, for anyone reading a client written
+> against it.
+
+Status: **superseded** — was "design (vetted)" for the v1 surface.
+Audience: historical.
 
 ## Context
 

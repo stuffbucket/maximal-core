@@ -32,6 +32,6 @@ bun run release:manual  # local fallback cut (bumpp + bun publish). Primary
 bun run check:ops    # typecheck:ops + test:ops
 ```
 
-Core is headless — there is no `shell/`, no Tauri build, and no UI bundle to
+Core is headless — there is no `shell/`, no desktop-shell build, and no UI bundle to
 watch. `bun run dev -- start --port 4141` runs the proxy from source.
 

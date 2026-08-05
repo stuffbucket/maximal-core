@@ -136,7 +136,7 @@ server.route("/", productApiRoutes)
 
 // Gate every upstream-touching route on the presence of a GitHub token.
 // When the sidecar boots without one, the HTTP server still listens (so
-// the Tauri shell can load Settings and trigger auth on demand) but the
+// the desktop shell can load Settings and trigger auth on demand) but the
 // proxy endpoints 401 with `not_authenticated` instead of crashing or
 // firing the device-code flow.
 server.use("/chat/completions", requireGithubAuth)

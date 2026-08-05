@@ -24,7 +24,7 @@
  *     ("`claude` was broken") with the cause.
  *
  * This doesn't auto-recover the inter-session window — only an
- * external watchdog (launchd, the Tauri shell observing sidecar
+ * external watchdog (launchd, the desktop shell observing sidecar
  * death) can do that without the sidecar's cooperation. But it
  * diagnoses the symptom on the next run instead of leaving the user
  * confused.

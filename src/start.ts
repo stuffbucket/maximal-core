@@ -13,7 +13,7 @@
  *   src/lib/start/cli.ts                — citty defineCommand
  *   src/lib/start/run-server.ts         — runServer() orchestrator
  *   src/lib/start/port.ts               — probe + evict + reportPortBusyAndExit
- *   src/lib/start/boot-status.ts        — Tauri-relayed status marker
+ *   src/lib/start/boot-status.ts        — shell-relayed status marker
  *   src/lib/start/boot-io.ts            — boot logger + ready banner
  *   src/lib/start/bootstrap.ts          — upstream + secrets bootstrap
  *   src/lib/start/shutdown.ts           — SIGTERM + parent-death handlers

@@ -12,7 +12,7 @@ export interface EvictOptions {
    *  — the request will still go out (loopback) without auth and the
    *  endpoint may choose to honor it or not. */
   apiKey: string | null
-  /** Port to evict. Defaults to 4141 (the Tauri sidecar's port). */
+  /** Port to evict. Defaults to 4141 (the desktop sidecar's port). */
   port?: number
   /** Polling deadline after sending shutdown, in ms. Default 3000. */
   drainTimeoutMs?: number
@@ -76,7 +76,7 @@ async function defaultReadPidfile(): Promise<number | null> {
  * can be unit/mutation-tested without spawning `ps`. Given a process's command
  * line, decide whether it's a maximal *proxy* we're allowed to SIGKILL.
  *
- * Matches the bare `maximal` binary (CLI: `/…/maximal start …`; the Tauri
+ * Matches the bare `maximal` binary (CLI: `/…/maximal start …`; the desktop
  * sidecar: `/…/Maximal.app/Contents/MacOS/maximal start …`) but deliberately
  * NOT `maximal-shell` (the menu-bar app — killing it would be wrong) and not
  * unrelated commands like `maximalist-editor`. A false positive here means we

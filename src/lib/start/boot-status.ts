@@ -1,9 +1,9 @@
 /**
- * Structured stdout markers the Tauri shell reads from the sidecar it spawns.
+ * Structured stdout markers the desktop shell reads from the sidecar it spawns.
  *
  * `BOOT_STATUS_MARKER` — boot-phase lines relayed to the splash as live status
  * (so a slow/failed start isn't a blank "Starting…"). `QUIT_REQUEST_MARKER` — the
- * browser-tab UI's way to quit the whole app: a tab has no Tauri host to `invoke`
+ * browser-tab UI's way to quit the whole app: a tab has no shell IPC to ask for
  * a quit, so it POSTs the sidecar, which signals the shell over this same channel.
  * `UPDATE_REQUEST_MARKER` — the same pattern for the in-place self-update: the
  * Settings "Upgrade" button POSTs the sidecar, which signals the shell to run the
@@ -57,7 +57,7 @@ export function emitReadyLine(ready: ReadyLine): boolean {
 export const QUIT_REQUEST_MARKER = "@@MAXIMAL_QUIT@@"
 
 /**
- * Ask the supervising Tauri shell to quit the whole app (shell + sidecar). Returns
+ * Ask the supervising desktop shell to quit the whole app (shell + sidecar). Returns
  * whether a shell is present to receive the request (false on a plain-CLI run,
  * where there is nothing to quit and the caller should say so).
  */
@@ -70,7 +70,7 @@ export function emitQuitRequest(): boolean {
 export const UPDATE_REQUEST_MARKER = "@@MAXIMAL_UPDATE@@"
 
 /**
- * Ask the supervising Tauri shell to run the in-place self-update (download the
+ * Ask the supervising desktop shell to run the in-place self-update (download the
  * signed bundle, verify its signature, swap, relaunch). Returns whether a shell is
  * present to receive the request (false on a plain-CLI run, where there is no
  * updatable app bundle — the caller should fall back to the download page).
