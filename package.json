@@ -27,6 +27,10 @@
       "types": "./dist/lib/contract.d.ts",
       "import": "./dist/lib/contract.js"
     },
+    "./control-contract": {
+      "types": "./dist/lib/control-contract.d.ts",
+      "import": "./dist/lib/control-contract.js"
+    },
     "./package.json": "./package.json",
     "./settings-types": {
       "types": "./dist/lib/settings-types.d.ts",

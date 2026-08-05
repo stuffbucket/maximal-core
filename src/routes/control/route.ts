@@ -30,6 +30,9 @@ import { defaultGetRequestIp, isLoopbackAddress } from "~/lib/auth/request-auth"
 import { getConfig } from "~/lib/config/config"
 import { forwardError } from "~/lib/errors/error"
 import { listActiveClients } from "~/lib/http/active-clients"
+import { createRpcHandler } from "~/lib/jsonrpc/dispatch"
+import { controlError } from "~/lib/jsonrpc/errors"
+import { errorResponse } from "~/lib/jsonrpc/message"
 import { type ControlHub, type ControlSink } from "~/lib/live/hub"
 import { AsyncMutex } from "~/lib/live/mutex"
 import {
@@ -44,6 +47,11 @@ import { emitQuitRequest, emitUpdateRequest } from "~/lib/start/boot-status"
 import { getTokenUsageSummary } from "~/lib/token-usage"
 import { getUpdateStatus } from "~/lib/update/update-check"
 
+import {
+  createControlRpcMethods,
+  SUPPORTED_PROTOCOL_VERSION,
+  unsupportedVersion,
+} from "./rpc"
 import { registerSettingsEndpoints } from "./settings-endpoints"
 
 type HubAccessor = () => ControlHub<ControlSnapshot>
@@ -245,6 +253,41 @@ function registerAccountActions(
   )
 }
 
+/**
+ * JSON-RPC control plane (ADR-0023). One POST endpoint, stateless, no session.
+ *
+ * The hub- and mutex-dependent methods are composed here rather than in the
+ * static registry because they need the same injected accessors the REST
+ * account actions use — and they call the SAME underlying operations, so the two
+ * surfaces cannot diverge while both exist.
+ */
+function registerRpc(app: HonoApp, hub: HubAccessor, mutex: AsyncMutex): void {
+  const dispatch = createRpcHandler(createControlRpcMethods({ hub, mutex }))
+
+  app.post("/rpc", async (c) => {
+    // A client that pins a version we don't speak gets told so explicitly,
+    // rather than failing later on a shape it didn't expect (maximal-core#8).
+    const pinned = unsupportedVersion(c)
+    if (pinned !== null) {
+      return c.json(
+        errorResponse(
+          undefined,
+          controlError(
+            "unsupported_version",
+            `Unsupported protocol version ${pinned}; this sidecar speaks ${SUPPORTED_PROTOCOL_VERSION}.`,
+          ),
+        ),
+        400,
+      )
+    }
+    return dispatch(c)
+  })
+
+  // The transport is POST-only; GET/DELETE were the session-era verbs MCP
+  // removed in 2026-07-28 and we never had.
+  app.on(["GET", "DELETE"], "/rpc", (c) => c.body(null, 405))
+}
+
 export function createControlRoutes(options: ControlRoutesOptions = {}): Hono {
   const getRequestIp = options.getRequestIp ?? defaultGetRequestIp
   // Resolved lazily so importing this module doesn't eagerly build the wired
@@ -266,6 +309,7 @@ export function createControlRoutes(options: ControlRoutesOptions = {}): Hono {
   registerSettingsEndpoints(app)
   registerShellSignals(app)
   registerAccountActions(app, hub, new AsyncMutex())
+  registerRpc(app, hub, new AsyncMutex())
 
   return app
 }

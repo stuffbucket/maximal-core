@@ -8,6 +8,7 @@ export default defineConfig({
   entry: {
     client: "src/lib/live/client.ts",
     contract: "src/lib/live/contract.ts",
+    "control-contract": "src/lib/jsonrpc/contract.ts",
     "settings-types": "src/lib/config/settings-types.ts",
   },
   outDir: "dist/lib",
