@@ -2230,7 +2230,7 @@ var init_package = __esm(() => {
   package_default = {
     $schema: "https://json.schemastore.org/package.json",
     name: "@stuffbucket/maximal-core",
-    version: "0.3.1",
+    version: "0.3.2",
     description: "Headless core of maximal: a local proxy that exposes GitHub Copilot as OpenAI- and Anthropic-compatible HTTP endpoints. No UI.",
     keywords: [
       "proxy",
@@ -2313,6 +2313,7 @@ var init_package = __esm(() => {
       typecheck: "tsc",
       "typecheck:downstream": "bun downstream/check.ts",
       "typecheck:ops": "tsc -p scripts/ops/tsconfig.json",
+      "verify:artifact": "bun scripts/dev/verify-artifact.ts",
       "verify:build": "bun scripts/dev/verify-build.ts",
       "watch:drift": "bun scripts/ops/watch-external-drift.ts"
     },

@@ -38,6 +38,33 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:notes` output is inserted here -->
 
+## [0.3.2](https://github.com/stuffbucket/maximal-core/compare/v0.3.1...v0.3.2) (2026-08-05)
+
+
+### Features
+
+* **ops:** fail CI when the committed dist/lib bindings go stale ([#24](https://github.com/stuffbucket/maximal-core/issues/24)) ([9eda959](https://github.com/stuffbucket/maximal-core/commit/9eda95996ba3c08b1e13ee28ff632c7444ec41a4))
+
+
+### Continuous Integration
+
+* **release:** build, verify, and publish binaries on a tag ([#28](https://github.com/stuffbucket/maximal-core/issues/28)) ([74b9822](https://github.com/stuffbucket/maximal-core/commit/74b9822dd3fdc2158b2e00ce4df50573e25fd7d1))
+
+
+### Documentation
+
+* correct claims that no longer match the repo ([#25](https://github.com/stuffbucket/maximal-core/issues/25)) ([0af6070](https://github.com/stuffbucket/maximal-core/commit/0af607092be4a188a9172339f8a0e87b0dc0f69d))
+
+
+### Tests
+
+* **docs:** add the docs-reference parity test the strategy doc promised ([#26](https://github.com/stuffbucket/maximal-core/issues/26)) ([10620e5](https://github.com/stuffbucket/maximal-core/commit/10620e56e142339147cf0b31c70d24e79f292bfa))
+
+
+### Miscellaneous Chores
+
+* **release:** delete the inert release-please config and manifest ([#23](https://github.com/stuffbucket/maximal-core/issues/23)) ([2a0baf2](https://github.com/stuffbucket/maximal-core/commit/2a0baf2b109befa4e69daf919a2c1fdc7ffe518e))
+
 ## [0.3.1](https://github.com/stuffbucket/maximal-core/compare/v0.3.0...v0.3.1) (2026-08-05)
 
 
