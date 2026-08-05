@@ -35,6 +35,10 @@
     "./settings-types": {
       "types": "./dist/lib/settings-types.d.ts",
       "import": "./dist/lib/settings-types.js"
+    },
+    "./supervisor": {
+      "types": "./dist/lib/supervisor.d.ts",
+      "import": "./dist/lib/supervisor.js"
     }
   },
   "bin": {

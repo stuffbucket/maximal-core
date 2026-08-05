@@ -4,13 +4,18 @@
  * with the live event stream. Isomorphic (uses `fetch` + ReadableStream, no
  * browser-only APIs), so it runs in a browser, Bun, or Node.
  *
- * Transport is the locked decision (docs/spec/control-api.md): a fetch-based SSE
- * reader, NOT native EventSource — so it can send auth headers, at the cost of
- * re-implementing reconnect/backoff and Last-Event-ID resume here.
+ * Speaks the stateless JSON-RPC 2.0 control plane (ADR-0023): `call()` for
+ * request/response, and a `subscriptions/listen` stream for push. Both go to the
+ * one `POST /control/rpc` endpoint.
  *
- * State model mirrors the server: a `snapshot` frame seeds per-topic state, then
- * full-resource `upsert` deltas overwrite by topic. Heartbeat comments and the
- * cursor/epoch bookkeeping are handled transparently.
+ * A fetch-based SSE reader, NOT native EventSource — so it can send auth headers
+ * and issue the subscription as a POST, at the cost of re-implementing
+ * reconnect/backoff here.
+ *
+ * State model mirrors the server: a `control/snapshot` notification seeds
+ * per-topic state, then `control/<topic>` notifications overwrite by topic.
+ * Heartbeat comments are skipped transparently. There is no resume bookkeeping —
+ * a dropped feed reconnects and re-snapshots.
  */
 
 import {
@@ -18,6 +23,26 @@ import {
   type ControlTopic,
   type SnapshotPayload,
 } from "~/lib/live/contract"
+
+/** Thrown when a method answers with a JSON-RPC error object. Carries the code
+ *  and the `data` discriminant so a caller switches on the payload, never on an
+ *  HTTP status (ADR-0023). */
+export class ControlRpcError extends Error {
+  readonly code: number
+  readonly data: unknown
+
+  constructor(code: number, message: string, data: unknown) {
+    super(message)
+    this.name = "ControlRpcError"
+    this.code = code
+    this.data = data
+  }
+
+  /** True when the server said the failure is worth re-issuing unprompted. */
+  get retryable(): boolean {
+    return (this.data as { retryable?: boolean } | null)?.retryable === true
+  }
+}
 
 export interface ControlClientOptions {
   /** Origin the proxy is listening on, e.g. "http://127.0.0.1:4141". */
@@ -54,6 +79,7 @@ export class ControlClient {
   private readonly listeners = new Set<StateListener>()
   private abort: AbortController | null = null
   private closed = false
+  private nextId = 0
 
   constructor(options: ControlClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "")
@@ -115,17 +141,59 @@ export class ControlClient {
     return `${this.baseUrl}${this.controlPath}${path}`
   }
 
+  /**
+   * Invoke a control method and return its result.
+   *
+   * Every call is self-contained — no session, no handshake. Use
+   * `server/discover` to learn the protocol version and the callable method set
+   * rather than assuming either.
+   */
+  async call<T = unknown>(method: string, params?: unknown): Promise<T> {
+    const res = await this.fetchImpl(this.url("/rpc"), {
+      method: "POST",
+      headers: {
+        ...this.headers,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: ++this.nextId,
+        method,
+        ...(params === undefined ? {} : { params }),
+      }),
+    })
+    const body = (await res.json()) as {
+      result?: T
+      error?: { code: number; message: string; data?: unknown }
+    }
+    if (body.error) {
+      throw new ControlRpcError(
+        body.error.code,
+        body.error.message,
+        body.error.data,
+      )
+    }
+    return body.result as T
+  }
+
   private async streamOnce(onProgress: () => void): Promise<void> {
     this.abort = new AbortController()
     const headers: Record<string, string> = {
       ...this.headers,
       accept: "text/event-stream",
     }
-    // No `Last-Event-ID` / epoch: the feed is not resumable (ADR-0023). A drop
-    // reconnects and re-snapshots, which is why this is a plain GET with no
-    // resume state to carry.
-    const res = await this.fetchImpl(this.url("/events"), {
-      headers,
+    // The subscription IS a request: its response stream stays open and carries
+    // notifications. No `Last-Event-ID` — the feed is not resumable (ADR-0023),
+    // so a drop reconnects and re-snapshots with no resume state to carry.
+    const res = await this.fetchImpl(this.url("/rpc"), {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: ++this.nextId,
+        method: "subscriptions/listen",
+      }),
       signal: this.abort.signal,
     })
     if (!res.ok || !res.body) {

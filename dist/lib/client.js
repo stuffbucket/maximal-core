@@ -1,8 +1,22 @@
 import {
   frameEnvelopeSchema
-} from "./chunk-CGWNF5TX.js";
+} from "./chunk-ITKEMUH2.js";
 
 // src/lib/live/client.ts
+var ControlRpcError = class extends Error {
+  code;
+  data;
+  constructor(code, message, data) {
+    super(message);
+    this.name = "ControlRpcError";
+    this.code = code;
+    this.data = data;
+  }
+  /** True when the server said the failure is worth re-issuing unprompted. */
+  get retryable() {
+    return this.data?.retryable === true;
+  }
+};
 var DEFAULT_RECONNECT_MS = 500;
 var DEFAULT_MAX_RECONNECT_MS = 15e3;
 var ControlClient = class {
@@ -15,10 +29,9 @@ var ControlClient = class {
   sleep;
   state = {};
   listeners = /* @__PURE__ */ new Set();
-  lastEventId = null;
-  epoch = null;
   abort = null;
   closed = false;
+  nextId = 0;
   constructor(options) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.controlPath = options.controlPath ?? "/control";
@@ -68,16 +81,52 @@ var ControlClient = class {
   url(path) {
     return `${this.baseUrl}${this.controlPath}${path}`;
   }
+  /**
+   * Invoke a control method and return its result.
+   *
+   * Every call is self-contained — no session, no handshake. Use
+   * `server/discover` to learn the protocol version and the callable method set
+   * rather than assuming either.
+   */
+  async call(method, params) {
+    const res = await this.fetchImpl(this.url("/rpc"), {
+      method: "POST",
+      headers: {
+        ...this.headers,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream"
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: ++this.nextId,
+        method,
+        ...params === void 0 ? {} : { params }
+      })
+    });
+    const body = await res.json();
+    if (body.error) {
+      throw new ControlRpcError(
+        body.error.code,
+        body.error.message,
+        body.error.data
+      );
+    }
+    return body.result;
+  }
   async streamOnce(onProgress) {
     this.abort = new AbortController();
     const headers = {
       ...this.headers,
       accept: "text/event-stream"
     };
-    if (this.lastEventId !== null) headers["last-event-id"] = this.lastEventId;
-    const query = this.epoch !== null && this.lastEventId !== null ? `?epoch=${encodeURIComponent(this.epoch)}` : "";
-    const res = await this.fetchImpl(this.url(`/events${query}`), {
-      headers,
+    const res = await this.fetchImpl(this.url("/rpc"), {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: ++this.nextId,
+        method: "subscriptions/listen"
+      }),
       signal: this.abort.signal
     });
     if (!res.ok || !res.body) {
@@ -99,31 +148,22 @@ var ControlClient = class {
       }
     }
   }
+  /** Each SSE block carries one JSON-RPC notification on its `data:` line. There
+   *  is no `id:` line to track — the transport advertises no resumability. */
   handleBlock(raw) {
-    let id;
-    let event;
     let dataStr;
     for (const line of raw.split("\n")) {
       if (line.startsWith(":")) continue;
-      if (line.startsWith("id:")) id = line.slice("id:".length).trim();
-      else if (line.startsWith("event:"))
-        event = line.slice("event:".length).trim();
-      else if (line.startsWith("data:"))
-        dataStr = line.slice("data:".length).trim();
+      if (line.startsWith("data:")) dataStr = line.slice("data:".length).trim();
     }
-    if (event === void 0 || dataStr === void 0) return;
-    const frame = frameEnvelopeSchema.parse({
-      id: id === void 0 ? void 0 : Number(id),
-      event,
-      data: JSON.parse(dataStr)
-    });
-    if (id !== void 0) this.lastEventId = id;
-    this.applyFrame(frame.event, frame.data);
+    if (dataStr === void 0) return;
+    const frame = frameEnvelopeSchema.parse(JSON.parse(dataStr));
+    const topic = frame.method.startsWith("control/") ? frame.method.slice("control/".length) : frame.method;
+    this.applyFrame(topic, frame.params);
   }
   applyFrame(topic, data) {
     if (topic === "snapshot") {
       const payload = data;
-      this.epoch = payload.epoch;
       this.state = { ...payload.snapshot };
     } else {
       this.state = { ...this.state, [topic]: data };
@@ -165,5 +205,6 @@ var ControlClient = class {
   }
 };
 export {
-  ControlClient
+  ControlClient,
+  ControlRpcError
 };
