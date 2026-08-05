@@ -16,7 +16,7 @@ import {
 } from "~/lib/start/boot-status"
 
 const READY = `${READY_MARKER} {"v":1,"controlPort":51234,"proxyPort":4141,"pid":99}`
-/** The pre-#10 shape: one listener served both planes. */
+/** The pre-#14 shape: one listener served both planes. */
 const READY_V0 = `${READY_MARKER} {"port":51234,"pid":99}`
 
 /** Feed stdout as arbitrary chunks so the reassembly path is exercised. */

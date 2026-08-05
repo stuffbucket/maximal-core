@@ -361,10 +361,10 @@ Steps, in order:
 6. **`bun test`** (full suite).
 7. **`bun run build`**.
 
-Security workflows (CodeQL, trufflehog) and, on release, the gated
-build/sign/publish pipeline (macOS dmg, Windows MSI verify, checksums, smoke)
-run alongside. Release itself is Conventional-Commit-driven via release-please;
-`test:`/`chore:`/`docs:` commits are release-silent (see `docs/architecture.md`
+Security workflows (CodeQL, trufflehog) run alongside, and `release-gates.yml`
+checks a PR's milestone and bump. There is **no** build/sign/publish pipeline —
+no dmg, MSI, checksums, or smoke test on release — and no release automation:
+a release is a GitHub milestone, tagged by hand (see `docs/architecture.md`
 → *Release & PR conventions* and `docs/release-runbook.md`).
 
 **Local pre-merge equivalents:**

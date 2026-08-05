@@ -106,9 +106,13 @@ them: the boot banner, the stdout ready-line, `/status`, and `server/discover`.
 
 The ready-line is versioned (`v: 1`) and parsed against a shared zod schema
 (`readyLineSchema` in `src/lib/start/boot-status.ts`) so emitter and parser
-cannot drift. `parseReadyLine` also accepts the pre-#10 `{port, pid}` shape,
-normalising it by pointing both ports at the single one — a host may supervise
-an older engine than itself.
+cannot drift. `parseReadyLine` also accepts the pre-#14 `{port, pid}` shape,
+normalising it by pointing both ports at the single one and reporting `v: 0` —
+a host may supervise an older engine than itself. Emitter and parser have
+**separate types** (maximal-core#20): `ReadyLine` is what `emitReadyLine` puts
+on the wire (`v >= 1`), `ParsedReadyLine` is what `parseReadyLine` and
+`awaitReadyLine` return (`0` or any `v >= 1`, normalised). Do not annotate a
+parse result with `ReadyLine` — that hands a caller trusting `v >= 1` a `v: 0`.
 
 ### Port selection
 
@@ -199,15 +203,17 @@ decision itself is [ADR-0011](decisions/0011-mock-module-leakage-discipline.md).
 
 - **A release is a GitHub milestone whose title is the tag.** There is no
   release automation in this repo — `release-please.yml` and `release.yml`
-  do not exist here, and nothing reads `release-please-config.json`. A PR
+  do not exist here, and no release-please config remains. A PR
   pre-selects its release by being assigned to the `vX.Y.Z` milestone;
   whatever is in that milestone is what ships. `bun run release:notes
   vX.Y.Z` turns it into changelog-shaped Markdown. See
   [`docs/release-runbook.md`](release-runbook.md).
 - **The version is chosen by a human, up front.** Pre-1.0, `feat:` and
   `fix:` both cut a **patch**, and a breaking change (`feat!:`) cuts a
-  **minor** — the pre-1.0 convention `release-please-config.json` still
-  declares (`bump-minor-pre-major` + `bump-patch-for-minor-pre-major`).
+  **minor** — the pre-1.0 convention inherited from release-please
+  (`bump-minor-pre-major` + `bump-patch-for-minor-pre-major`), now
+  enforced by `requiredBump` in
+  [`scripts/ops/release-gates.ts`](../scripts/ops/release-gates.ts).
   This matters more than it looks: `^0.2.0` means `>=0.2.0 <0.3.0`, so a
   breaking change released as a patch is *auto-installed* by a downstream
   consumer. Minor is the only thing that puts it out of range.

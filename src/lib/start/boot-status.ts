@@ -87,7 +87,7 @@ export const readyLineSchema = z.object({
 })
 
 /**
- * The pre-#10 payload: one listener served both planes.
+ * The pre-#14 payload: one listener served both planes.
  *
  * Kept parseable because this parser ships to hosts that may supervise an older
  * engine. Normalised onto the current shape by pointing both ports at the single
