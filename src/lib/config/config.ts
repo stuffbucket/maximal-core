@@ -518,9 +518,28 @@ export function isMessagesApiEnabled(): boolean {
   return config.useMessagesApi ?? true
 }
 
+/**
+ * Anthropic key, resolved env → file → config, matching every other knob (env
+ * is a per-invocation override; the file is persistent state).
+ *
+ * `ANTHROPIC_API_KEY` covers the file tier too: `bootstrap.ts` materializes
+ * `secrets/anthropic` into `process.env` at boot via `loadSecretIntoEnv`, so an
+ * env read here sees both tiers 2 and 3 of the README precedence table.
+ *
+ * This used to read the config file FIRST, which shadowed both. That also made
+ * `maximal debug` lie — `secretStatus()` reports `<env>` whenever the env var is
+ * set, so it named a source the resolver was not using. One precedence, one
+ * answer: an empty value at either tier counts as unset here exactly as it does
+ * there.
+ */
 export function getAnthropicApiKey(): string | undefined {
-  const config = getConfig()
-  return config.anthropicApiKey ?? process.env.ANTHROPIC_API_KEY ?? undefined
+  const fromEnv = process.env.ANTHROPIC_API_KEY
+  if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv
+
+  const fromConfig = getConfig().anthropicApiKey
+  return fromConfig !== undefined && fromConfig.length > 0 ?
+      fromConfig
+    : undefined
 }
 
 export function isResponsesApiWebSearchEnabled(): boolean {

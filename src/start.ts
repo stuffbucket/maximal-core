@@ -24,6 +24,7 @@
 export { BOOT_STATUS_MARKER, emitBootStatus } from "~/lib/start/boot-status"
 export { start } from "~/lib/start/cli"
 export {
+  __setBootSecretsForTests,
   __setServeForTests,
   runServer,
   type RunServerOptions,

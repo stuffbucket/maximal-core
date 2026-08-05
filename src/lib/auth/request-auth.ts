@@ -155,9 +155,9 @@ export function extractRequestApiKey(c: Context): string | null {
 
   // No query-string `?key=` fallback anywhere: the header paths above are the
   // only ways to authenticate a proxy/control request, so keys never leak into
-  // request URLs or logs. The live-feed WebSocket (which a browser can't send
-  // headers to) validates its own `?key=` minted token inside its route
-  // (routes/ws/route.ts), independent of this extractor.
+  // request URLs or logs. The live feed is JSON-RPC over the control listener
+  // (`routes/control/route.ts`, transport in `lib/live/`), not a browser
+  // WebSocket, so nothing needs a URL-borne credential here.
   return null
 }
 

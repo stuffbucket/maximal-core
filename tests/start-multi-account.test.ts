@@ -11,82 +11,22 @@
  *   2. A registry with NO active account (e.g. after signing out of the active
  *      one while others remain) boots cleanly to unauthenticated — not a
  *      dead-end or a crash.
+ *
+ * Ports are ephemeral and read back off the ready-line — see
+ * `tests/helpers/spawn-engine.ts` for why guessing one was flaky.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
 
-const cwd = fileURLToPath(new URL("../", import.meta.url))
+import type { Engine } from "./helpers/spawn-engine"
 
-async function waitForPort(p: number, timeoutMs: number): Promise<boolean> {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${p}/`, {
-        signal: AbortSignal.timeout(500),
-      })
-      if (res.ok) return true
-    } catch {
-      // not listening yet
-    }
-    await new Promise((r) => setTimeout(r, 100))
-  }
-  return false
-}
-
-function spawnStart(
-  tmpHome: string,
-  port: number,
-): ReturnType<typeof Bun.spawn> {
-  // /_debug moved to the private control listener (maximal-core#10), which is
-  // ephemeral by default. Derive a companion port so the caller does not have to
-  // thread a second one through, and so this exercises the new flag end to end.
-  const controlPort = port + 1
-  return Bun.spawn({
-    cmd: [
-      process.execPath,
-      "run",
-      "./src/main.ts",
-      "start",
-      "--port",
-      String(port),
-      "--control-port",
-      String(controlPort),
-      "--verbose",
-    ],
-    cwd,
-    env: {
-      ...process.env,
-      COPILOT_API_HOME: tmpHome,
-      COPILOT_API_OAUTH_APP: "",
-      COPILOT_API_ENTERPRISE_URL: "",
-      GITHUB_TOKEN: "",
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  })
-}
-
-async function bootOrThrow(
-  proc: ReturnType<typeof Bun.spawn>,
-  port: number,
-): Promise<void> {
-  const up = await waitForPort(port, 5000)
-  if (!up) {
-    const stderr =
-      proc.stderr instanceof ReadableStream ?
-        await new Response(proc.stderr).text()
-      : ""
-    throw new Error(`Server did not bind to ${port} within 5s.\n${stderr}`)
-  }
-}
+import { startEngine } from "./helpers/spawn-engine"
 
 describe("boot migrates a legacy token into the registry", () => {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "maximal-migrate-"))
-  const port = 4243 + Math.floor(Math.random() * 100)
-  let proc: ReturnType<typeof Bun.spawn> | null = null
+  let engine: Engine
 
   beforeAll(async () => {
     // Seed a legacy single-record token. A `gho_` token is used directly as a
@@ -95,12 +35,11 @@ describe("boot migrates a legacy token into the registry", () => {
     // CopilotAuthFatalError) — it degrades and KEEPS the on-disk record rather
     // than wiping it, leaving the migrated registry observable.
     fs.writeFileSync(path.join(tmpHome, "github_token"), "gho_legacytoken123")
-    proc = spawnStart(tmpHome, port)
-    await bootOrThrow(proc, port)
+    engine = await startEngine({ home: tmpHome, args: ["--verbose"] })
   })
 
-  afterAll(() => {
-    proc?.kill("SIGTERM")
+  afterAll(async () => {
+    await engine.stop()
     fs.rmSync(tmpHome, { recursive: true, force: true })
   })
 
@@ -127,15 +66,14 @@ describe("boot migrates a legacy token into the registry", () => {
   })
 
   test("server still binds (boot is not blocked by the bad token)", async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/`)
+    const res = await fetch(`${engine.proxyUrl}/`)
     expect(res.status).toBe(200)
   })
 })
 
 describe("boot with a registry that has no active account", () => {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "maximal-noactive-"))
-  const port = 4343 + Math.floor(Math.random() * 100)
-  let proc: ReturnType<typeof Bun.spawn> | null = null
+  let engine: Engine
 
   beforeAll(async () => {
     // Registry with one INACTIVE account and activeKey: null — the state after
@@ -159,18 +97,17 @@ describe("boot with a registry that has no active account", () => {
         },
       }),
     )
-    proc = spawnStart(tmpHome, port)
-    await bootOrThrow(proc, port)
+    engine = await startEngine({ home: tmpHome, args: ["--verbose"] })
   })
 
-  afterAll(() => {
-    proc?.kill("SIGTERM")
+  afterAll(async () => {
+    await engine.stop()
     fs.rmSync(tmpHome, { recursive: true, force: true })
   })
 
   test("binds and reports unauthenticated (no active token loaded)", async () => {
     // The control listener, not the public one — /_debug moved there (#10).
-    const res = await fetch(`http://127.0.0.1:${port + 1}/_debug/state`)
+    const res = await fetch(`${engine.controlUrl}/_debug/state`)
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
       runtime: { github_token_present: boolean }

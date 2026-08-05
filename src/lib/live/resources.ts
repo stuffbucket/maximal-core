@@ -1,9 +1,10 @@
 /**
  * Read/aggregation helpers for the control API, re-homed into lib/ from the
- * deleted routes/settings/* and lib/ws/live-feed.ts (see docs/spec/control-api.md
- * — "re-homing checklist"). These are the reusable core the control endpoints
- * and the live-feed snapshot are both built from; keeping them here (not in a
- * route) means the ControlHub can compose them without a lib -> routes edge.
+ * `routes/settings` cluster and its WebSocket live feed, both deleted in the
+ * core split (see docs/spec/archive/control-api-v1.md — "re-homing checklist").
+ * These are the reusable core the control endpoints and the live-feed snapshot
+ * are both built from; keeping them here (not in a route) means the ControlHub
+ * can compose them without a lib -> routes edge.
  *
  * All field mappings are preserved byte-for-byte from the originals so a GET
  * body and a live delta carry the identical shape.

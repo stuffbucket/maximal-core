@@ -10,7 +10,8 @@
  * a single background interval. The map is keyed by `${id}|${ua}` so
  * the same client doesn't accumulate duplicate rows on repeat calls.
  *
- * No DI / singletons module — this mirrors `src/lib/state.ts` style.
+ * No DI / singletons module — this mirrors `src/lib/runtime-state/state.ts`
+ * style.
  */
 
 interface ActiveClientRecord {

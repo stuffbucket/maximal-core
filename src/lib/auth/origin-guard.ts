@@ -38,11 +38,12 @@ import type { MiddlewareHandler } from "hono"
 /**
  * Prefixes that mutate or expose control state and therefore need the Origin gate.
  * `/_internal/*` (incl. `/_internal/shutdown`) and read-only `/_debug/state` are in
- * scope too — the shutdown route is the same hole class (§6.1). `/ws` (the live
- * feed) is here because its snapshot exposes auth/accounts state and WebSockets
- * bypass CORS — but the handshake is an HTTP GET carrying `Origin`, so gating it
- * here 403s a cross-origin browser WS while a same-origin tab / no-Origin CLI pass.
- * `/ws` MUST equal `WS_PATH` in `routes/ws/route.ts` (drift-guarded in the tests).
+ * scope too — the shutdown route is the same hole class (§6.1). `/control` covers
+ * the JSON-RPC live feed, whose snapshot exposes auth/accounts state.
+ *
+ * There is no `/ws` entry: the browser-facing WebSocket this list once guarded
+ * was removed with the rest of the UI cluster in the core split, and the feed it
+ * carried is now JSON-RPC over `/control` (`routes/control/route.ts`).
  */
 export const CSRF_GUARDED_PREFIXES = [
   "/settings/api",

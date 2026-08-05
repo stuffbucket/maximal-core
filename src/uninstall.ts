@@ -191,7 +191,7 @@ interface InstallTargetOptions {
  *
  *  macOS .dmg install path: `/Applications/maximal.app` (the
  *  bundle) plus `~/.local/bin/maximal` (a **symlink** into the bundle
- *  created by the first-launch shim — see lib/cli-path.ts;
+ *  created by the first-launch shim — see lib/platform/cli-path.ts;
  *  pre-v0.4.x installs left a copy there instead, which this also
  *  removes). Brew installs at `/opt/homebrew/bin/maximal`.
  *

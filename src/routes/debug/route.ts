@@ -24,9 +24,10 @@ export const debugRoutes = new Hono()
 
 /**
  * Assemble the read-only runtime introspection payload (same shape as
- * `maximal debug --json`). Extracted so the unauthenticated `/ui/diagnostics`
- * page (§1.7) renders the byte-identical data without the `verbose` gate — the
- * gate is a property of the `/_debug/state` ROUTE, not of the data.
+ * `maximal debug --json`). Kept as a named export rather than inlined in the
+ * handler so the `verbose` gate stays a property of the `/_debug/state` ROUTE,
+ * not of the data: any future reader (a control-plane method, another listener)
+ * gets the byte-identical payload without inheriting the gate.
  */
 export function buildDebugState() {
   // Config read may throw on disk error; surface as empty rather than

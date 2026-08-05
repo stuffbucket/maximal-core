@@ -163,7 +163,7 @@ publicApp.get("/", (c) => c.text("Server running"))
 // unambiguous identity marker the shim keys off; `subsystems` namespaces
 // per-part health so new subsystems slot in without reshaping the
 // contract. Safe-for-unauth only (booleans/tiers/counts, no secrets);
-// see src/lib/status.ts. Cheap: in-memory state, no upstream calls.
+// see src/lib/runtime-state/status.ts. Cheap: in-memory state, no upstream calls.
 publicApp.get("/status", (c) => c.json(buildStatus(SERVER_START_MS)))
 
 // Stays public deliberately: `evictRunning` takes over the public port by
