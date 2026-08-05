@@ -2,6 +2,7 @@ import {
   type AnthropicStreamEventData,
   type AnthropicStreamState,
 } from "~/lib/models/anthropic-types"
+import { asRecord } from "~/routes/untrusted-frame"
 import {
   type ChatCompletionChunk,
   type Choice,
@@ -21,18 +22,53 @@ function isToolBlockOpen(state: AnthropicStreamState): boolean {
   )
 }
 
+/**
+ * Re-read a chunk the type system believes is a `ChatCompletionChunk` as what
+ * it actually is: the unvalidated result of `JSON.parse` on an upstream SSE
+ * frame, cast at four call sites.
+ *
+ * Every one of those casts carries `casts-keep: … translator tolerates missing
+ * fields`. This is the code that makes that sentence true — without it,
+ * `chunk.choices.length` throws on `{}`, `null`, an array, or a frame whose
+ * `choices` upstream truncated, and `choice.delta` throws on the very plausible
+ * `{"choices":[{"finish_reason":"stop"}]}`. Each throw aborts the remainder of
+ * a live stream. Tolerance is exercised in `tests/stream-boundary-tolerance.test.ts`.
+ *
+ * Returns `undefined` when there is nothing translatable, which the caller
+ * turns into "emit no events for this frame" — the same outcome upstream
+ * already produces for a legitimate `choices: []` keep-alive.
+ */
+const readTranslatableChoice = (
+  chunk: unknown,
+): { choice: Choice; delta: Delta } | undefined => {
+  const choices = asRecord(chunk)?.choices
+  if (!Array.isArray(choices) || choices.length === 0) {
+    return undefined
+  }
+
+  const choice = asRecord(choices[0])
+  if (!choice) {
+    return undefined
+  }
+
+  return {
+    choice: choice as unknown as Choice,
+    delta: (asRecord(choice.delta) as Delta | undefined) ?? {},
+  }
+}
+
 export function translateChunkToAnthropicEvents(
   chunk: ChatCompletionChunk,
   state: AnthropicStreamState,
 ): Array<AnthropicStreamEventData> {
   const events: Array<AnthropicStreamEventData> = []
 
-  if (chunk.choices.length === 0) {
+  const translatable = readTranslatableChoice(chunk)
+  if (!translatable) {
     return events
   }
 
-  const choice = chunk.choices[0]
-  const { delta } = choice
+  const { choice, delta } = translatable
 
   handleMessageStart(state, events, chunk)
 
@@ -42,7 +78,7 @@ export function translateChunkToAnthropicEvents(
 
   handleToolCalls(delta, state, events)
 
-  handleFinish(choice, state, { events, chunk })
+  handleFinish(choice, state, { events, chunk, delta })
 
   return events
 }
@@ -53,10 +89,14 @@ function handleFinish(
   context: {
     events: Array<AnthropicStreamEventData>
     chunk: ChatCompletionChunk
+    delta: Delta
   },
 ) {
-  const { events, chunk } = context
-  if (choice.finish_reason && choice.finish_reason.length > 0) {
+  const { events, chunk, delta } = context
+  if (
+    typeof choice.finish_reason === "string"
+    && choice.finish_reason.length > 0
+  ) {
     if (state.contentBlockOpen) {
       const toolBlockOpen = isToolBlockOpen(state)
       context.events.push({
@@ -66,7 +106,7 @@ function handleFinish(
       state.contentBlockOpen = false
       state.contentBlockIndex++
       if (!toolBlockOpen) {
-        handleReasoningOpaque(choice.delta, events, state)
+        handleReasoningOpaque(delta, events, state)
       }
     }
 
@@ -101,12 +141,18 @@ function handleToolCalls(
   state: AnthropicStreamState,
   events: Array<AnthropicStreamEventData>,
 ) {
-  if (delta.tool_calls && delta.tool_calls.length > 0) {
+  if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
     closeThinkingBlockIfOpen(state, events)
 
     handleReasoningOpaqueInToolCalls(state, events, delta)
 
     for (const toolCall of delta.tool_calls) {
+      // Boundary tolerance: an upstream frame can carry a null/absent entry in
+      // `tool_calls`; skip it rather than dereference it. See
+      // `readTranslatableChoice`.
+      if (!asRecord(toolCall)) {
+        continue
+      }
       if (toolCall.id && toolCall.function?.name) {
         // New tool call starting.
         if (state.contentBlockOpen) {
