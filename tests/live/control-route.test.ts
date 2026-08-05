@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import type { ActiveClient } from "~/lib/http/active-clients"
 import type { ControlSnapshot } from "~/lib/live/resources"
@@ -6,11 +6,28 @@ import type { ControlSnapshot } from "~/lib/live/resources"
 import { frameEnvelopeSchema, type FrameEnvelope } from "~/lib/live/contract"
 import { ControlHub } from "~/lib/live/hub"
 import { stopControlHub } from "~/lib/live/service"
+import {
+  __resetUpdateCheckDepsForTests,
+  __setUpdateCheckDepsForTests,
+} from "~/lib/update/update-check"
 import { createControlRoutes } from "~/routes/control/route"
+
+// `GET /update-status` calls getUpdateStatus(), whose default fetch hits the
+// real release manifest on the public CDN. That made this file's assertion
+// depend on the network — it timed out at the 5s default under load — and on
+// whether a sibling had already warmed the module-level cache. Pin the seam the
+// update-check suite already owns so the route test is offline and hermetic.
+beforeEach(() => {
+  __resetUpdateCheckDepsForTests()
+  __setUpdateCheckDepsForTests({
+    fetch: () => Promise.reject(new Error("offline (control-route test)")),
+  })
+})
 
 afterEach(() => {
   // Safety: tear down the wired singleton if any test reached the default hub.
   stopControlHub()
+  __resetUpdateCheckDepsForTests()
 })
 
 function makeApp(
