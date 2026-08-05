@@ -7,12 +7,16 @@ import {
   type Artifact,
   ARTIFACTS,
   BINDINGS_DIR,
+  type Blocked,
   type BuildRunner,
+  BUN_VERSION_FILE,
+  type CheckResult,
   collectDrift,
   diffTrees,
   type Drift,
   exitCodeFor,
   type FileTree,
+  firstObjection,
   type GitRunner,
   hashBuiltTree,
   LIB_ARTIFACT,
@@ -21,24 +25,32 @@ import {
   MAIN_ARTIFACT,
   MAIN_BUILD_ARGV,
   MAIN_BUNDLE,
-  preflight,
+  needsNodeModules,
+  needsPinnedBun,
+  pinnedBunVersion,
   readIndexTree,
   realGit,
   REGEN_COMMAND,
   regenCommand,
   renderAnnotation,
   renderReport,
+  runningBunVersion,
 } from "./check-bindings"
 
 // Offline and deterministic: every build and every `git` read is injected, so
 // nothing here runs a bundler or touches the repo's real dist/. The parity
 // guards are the deliberate exception — they read the real configs and the real
 // index, which is the point of them.
+//
+// Nothing here may assert on the AMBIENT environment. release-gates.yml's
+// `gate` job runs `check:ops` with no `bun install`, on purpose, so a test that
+// asserted "this checkout has node_modules" failed there and nowhere else.
+// Requirements are tested against temp roots and injected versions instead.
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..")
 
-/** No environment objection — the gate under test is drift, not `bun install`. */
-const okPreflight = () => undefined
+/** No environment objection — the gate under test is drift, not the toolchain. */
+const noRequirements: ReadonlyArray<never> = []
 
 /** A `git` that answers `ls-files -s -z` with the given `path → blob`. */
 function fakeIndex(entries: Record<string, string>, base = BINDINGS_DIR): GitRunner {
@@ -70,9 +82,16 @@ function splitGit(entries: Record<string, string>, base = BINDINGS_DIR): GitRunn
   return (args) => (args[0] === "ls-files" ? index(args) : realGit(args))
 }
 
-/** A stand-in artifact wired to a fake build, keeping the real ids out of unit tests. */
+/** A stand-in artifact wired to a fake build and no environment requirements. */
 function fakeArtifact(build: BuildRunner, over: Partial<Artifact> = {}): Artifact {
-  return { id: BINDINGS_DIR, base: BINDINGS_DIR, script: "build:lib", build, ...over }
+  return {
+    id: BINDINGS_DIR,
+    base: BINDINGS_DIR,
+    script: "build:lib",
+    build,
+    requires: noRequirements,
+    ...over,
+  }
 }
 
 /** A temp dir with the given `relative path → contents`, removed by the caller. */
@@ -80,6 +99,20 @@ function makeDir(files: Record<string, string>): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "check-bindings-test-"))
   fakeBuild(files)(dir)
   return dir
+}
+
+/** A scratch repo root, optionally with a `node_modules` and a `.bun-version`. */
+function makeRoot(opts: { nodeModules?: boolean, bunVersion?: string } = {}): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "check-bindings-root-"))
+  if (opts.nodeModules === true) fs.mkdirSync(path.join(dir, "node_modules"))
+  if (opts.bunVersion !== undefined) {
+    fs.writeFileSync(path.join(dir, BUN_VERSION_FILE), `${opts.bunVersion}\n`)
+  }
+  return dir
+}
+
+function result(over: Partial<CheckResult> = {}): CheckResult {
+  return { drifts: [], blocked: [], ...over }
 }
 
 function readPackageJson(): Record<string, unknown> {
@@ -116,6 +149,13 @@ describe("parity with the real build config", () => {
     expect(scripts.build).toBe(`bun ${MAIN_BUILD_ARGV.join(" ")} --outdir ${outDir}`)
   })
 
+  // The pin is the whole basis of the bundle's reproducibility, so the file has
+  // to exist and read as a bare version. It is tracked, so this holds with no
+  // install — which the `gate` job relies on.
+  test("the real .bun-version parses as a bare version", () => {
+    expect(pinnedBunVersion()).toMatch(/^\d+\.\d+\.\d+$/u)
+  })
+
   // The real `git ls-files -s -z` output shape, parsed by the real parser. A
   // git version that changed it would otherwise leave the gate reading an
   // empty index — which looks exactly like "everything is orphaned", but only
@@ -138,38 +178,112 @@ describe("parity with the real build config", () => {
   test("both committed artifacts are covered", () => {
     expect(ARTIFACTS.map((a) => a.id)).toEqual([BINDINGS_DIR, MAIN_BUNDLE])
   })
+
+  // The measured asymmetry, encoded: tsup bundles with esbuild (pinned in
+  // package.json) and is Bun-version-independent; `bun build` bundles with
+  // Bun's own bundler and is not. Wiring the pin check onto the wrong artifact
+  // would either under-protect the bundle or needlessly block the bindings.
+  test("only the bun-bundled artifact requires the pinned Bun", () => {
+    expect(LIB_ARTIFACT.requires).toContain(needsNodeModules)
+    expect(LIB_ARTIFACT.requires).not.toContain(needsPinnedBun)
+    expect(MAIN_ARTIFACT.requires).toContain(needsNodeModules)
+    expect(MAIN_ARTIFACT.requires).toContain(needsPinnedBun)
+  })
 })
 
-describe("preflight", () => {
+describe("environment requirements", () => {
   // `bun build` writes module paths relative to the resolved build root, so a
   // worktree with no node_modules of its own emits `../../../node_modules/...`
   // for byte-identical sources. Reporting that as drift would be a lie whose
   // own fix command commits the wrong bundle.
-  test("a checkout without node_modules is a cannot-run naming `bun install`", () => {
-    const bare = fs.mkdtempSync(path.join(os.tmpdir(), "check-bindings-bare-"))
+  test("a checkout without node_modules objects, naming `bun install`", () => {
+    const root = makeRoot()
     try {
-      expect(preflight(bare)).toContain("bun install")
+      expect(needsNodeModules(root)).toContain("bun install")
     } finally {
-      fs.rmSync(bare, { recursive: true, force: true })
+      fs.rmSync(root, { recursive: true, force: true })
     }
   })
 
-  test("the real repo passes preflight", () => {
-    expect(preflight()).toBeUndefined()
+  test("a checkout with node_modules does not object", () => {
+    const root = makeRoot({ nodeModules: true })
+    try {
+      expect(needsNodeModules(root)).toBeUndefined()
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 
-  test("a preflight objection is exit 2, and no build runs", () => {
-    let built = false
-    const build: BuildRunner = () => {
-      built = true
-      return { status: 0, output: "" }
+  // The finding this gate surfaced: `bun build` bundles with Bun's own bundler,
+  // so an unpinned Bun produces a bundle CI cannot reproduce. Measured on a 2x2
+  // of {ubuntu, macos} x {1.3.11, 1.3.14}: the OS made no difference, the
+  // version made all of it.
+  test("a Bun that differs from the pin objects, and names the switch command", () => {
+    expect(runningBunVersion()).toBeDefined()
+    const root = makeRoot({ bunVersion: "0.0.0-not-your-bun" })
+    try {
+      const objection = needsPinnedBun(root)
+      expect(objection).toContain("0.0.0-not-your-bun")
+      expect(objection).toContain("bash -s bun-v0.0.0-not-your-bun")
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
     }
-    const code = main({
-      artifacts: [fakeArtifact(build)],
-      preflight: () => "no node_modules",
-    })
-    expect(code).toBe(2)
-    expect(built).toBe(false)
+  })
+
+  // The rule the whole design turns on. If this ever reads as staleness, the
+  // printed fix has a developer commit bytes built by the wrong toolchain,
+  // which does not fix CI — it makes CI wrong the other way.
+  test("a version objection says it is NOT a staleness report", () => {
+    const root = makeRoot({ bunVersion: "0.0.0-not-your-bun" })
+    try {
+      expect(needsPinnedBun(root)).toContain("not a staleness report")
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("a Bun that matches the pin does not object", () => {
+    const running = runningBunVersion()
+    expect(running).toBeDefined()
+    const root = makeRoot({ bunVersion: running as string })
+    try {
+      expect(needsPinnedBun(root)).toBeUndefined()
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("an unreadable .bun-version is an objection, not a crash", () => {
+    const root = makeRoot()
+    try {
+      expect(needsPinnedBun(root)).toContain(BUN_VERSION_FILE)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("firstObjection returns the first and stops", () => {
+    const calls: Array<string> = []
+    const objection = firstObjection([
+      () => {
+        calls.push("a")
+        return undefined
+      },
+      () => {
+        calls.push("b")
+        return "b objects"
+      },
+      () => {
+        calls.push("c")
+        return "c objects"
+      },
+    ])
+    expect(objection).toBe("b objects")
+    expect(calls).toEqual(["a", "b"])
+  })
+
+  test("no requirements means no objection", () => {
+    expect(firstObjection([])).toBeUndefined()
   })
 })
 
@@ -276,15 +390,16 @@ describe("diffTrees", () => {
 })
 
 describe("rendering", () => {
-  const libDrift: ReadonlyArray<Drift> = [
-    { kind: "content-mismatch", file: "supervisor.d.ts", artifact: BINDINGS_DIR },
-  ]
-  const mainDrift: ReadonlyArray<Drift> = [
-    { kind: "content-mismatch", file: "main.js", artifact: MAIN_BUNDLE },
-  ]
+  const libDrift: Drift = {
+    kind: "content-mismatch",
+    file: "supervisor.d.ts",
+    artifact: BINDINGS_DIR,
+  }
+  const mainDrift: Drift = { kind: "content-mismatch", file: "main.js", artifact: MAIN_BUNDLE }
+  const blockedMain: Blocked = { artifact: MAIN_BUNDLE, reason: "Bun 9.9.9 is bundling" }
 
   test("the report names the stale file and the exact fix command", () => {
-    const out = renderReport(libDrift)
+    const out = renderReport(result({ drifts: [libDrift] }))
     expect(out).toContain(`${BINDINGS_DIR}/supervisor.d.ts`)
     expect(out).toContain(regenCommand(LIB_ARTIFACT))
   })
@@ -292,16 +407,33 @@ describe("rendering", () => {
   // The bundle's fix is a DIFFERENT command; printing the bindings one would
   // send a developer round a loop that never clears the failure.
   test("a stale bundle prints its own build script, not build:lib", () => {
-    const out = renderReport(mainDrift)
+    const out = renderReport(result({ drifts: [mainDrift] }))
     expect(out).toContain(MAIN_BUNDLE)
     expect(out).toContain("bun run build && git add -f dist/main.js")
     expect(out).not.toContain("build:lib")
   })
 
   test("both stale prints both commands", () => {
-    const out = renderReport([...libDrift, ...mainDrift])
+    const out = renderReport(result({ drifts: [libDrift, mainDrift] }))
     expect(out).toContain(regenCommand(LIB_ARTIFACT))
     expect(out).toContain(regenCommand(MAIN_ARTIFACT))
+  })
+
+  // A blocked artifact must never be handed a regen command — that command is
+  // exactly the wrong thing to run when the toolchain is the problem.
+  test("a blocked artifact is reported as unverifiable, with no regen command", () => {
+    const out = renderReport(result({ blocked: [blockedMain] }))
+    expect(out).toContain("could NOT be verified")
+    expect(out).toContain("Bun 9.9.9 is bundling")
+    expect(out).not.toContain(regenCommand(MAIN_ARTIFACT))
+  })
+
+  // The mixed case a developer on an unpinned Bun actually sees: the bindings
+  // were checked and are stale, the bundle could not be judged at all.
+  test("drift and blocked are both reported when they co-occur", () => {
+    const out = renderReport(result({ drifts: [libDrift], blocked: [blockedMain] }))
+    expect(out).toContain(regenCommand(LIB_ARTIFACT))
+    expect(out).toContain("could NOT be verified")
   })
 
   // `dist/` is gitignored, so a bare `git add` skips a newly named chunk and
@@ -315,25 +447,53 @@ describe("rendering", () => {
   })
 
   test("a clean report says so and offers no command to run", () => {
-    const out = renderReport([])
+    const out = renderReport(result())
     expect(out).not.toContain(regenCommand(LIB_ARTIFACT))
     expect(out).not.toContain(regenCommand(MAIN_ARTIFACT))
+    expect(out).toContain("match a fresh build")
   })
 
   test("the annotation is a GitHub error carrying the same commands", () => {
-    const line = renderAnnotation([...libDrift, ...mainDrift])
-    expect(line.startsWith("::error title=check-bindings::")).toBe(true)
+    const line = renderAnnotation(result({ drifts: [libDrift, mainDrift] }))
+    expect(line?.startsWith("::error title=check-bindings::")).toBe(true)
     expect(line).toContain(regenCommand(LIB_ARTIFACT))
     expect(line).toContain(regenCommand(MAIN_ARTIFACT))
     expect(line).toContain("supervisor.d.ts")
     expect(line).toContain(MAIN_BUNDLE)
   })
+
+  // A blocked run must not annotate "stale" onto the Checks tab — that is the
+  // one line a reviewer reads, and it would be false.
+  test("a blocked annotation says unverifiable, not stale", () => {
+    const line = renderAnnotation(result({ blocked: [blockedMain] }))
+    expect(line).toContain("could not verify")
+    expect(line).not.toContain("is stale")
+  })
+
+  test("a clean run has no annotation at all", () => {
+    expect(renderAnnotation(result())).toBeUndefined()
+  })
 })
 
 describe("exit codes", () => {
-  test("clean is 0, any drift is 1", () => {
-    expect(exitCodeFor([])).toBe(0)
-    expect(exitCodeFor([{ kind: "orphaned", file: "x.js", artifact: BINDINGS_DIR }])).toBe(1)
+  test("clean is 0, drift is 1, blocked is 2", () => {
+    expect(exitCodeFor(result())).toBe(0)
+    expect(
+      exitCodeFor(result({ drifts: [{ kind: "orphaned", file: "x.js", artifact: BINDINGS_DIR }] })),
+    ).toBe(1)
+    expect(exitCodeFor(result({ blocked: [{ artifact: MAIN_BUNDLE, reason: "no" }] }))).toBe(2)
+  })
+
+  // The silent-pass this replaces: if an artifact could not be judged, a clean
+  // result for the OTHER one must not be reported as success.
+  test("blocked outranks a clean run and a drifting one alike", () => {
+    const blocked = [{ artifact: MAIN_BUNDLE, reason: "no" }]
+    expect(exitCodeFor(result({ blocked }))).toBe(2)
+    expect(
+      exitCodeFor(
+        result({ blocked, drifts: [{ kind: "orphaned", file: "x.js", artifact: BINDINGS_DIR }] }),
+      ),
+    ).toBe(2)
   })
 
   test("main returns 0 when the rebuild matches the index", () => {
@@ -346,7 +506,7 @@ describe("exit codes", () => {
       main({
         artifacts: [fakeArtifact(fakeBuild({ "client.js": "same" }))],
         git: splitGit({ "client.js": blob }),
-        preflight: okPreflight,
+        annotate: false,
       }),
     ).toBe(0)
   })
@@ -356,7 +516,7 @@ describe("exit codes", () => {
       main({
         artifacts: [fakeArtifact(fakeBuild({ "client.js": "new" }))],
         git: splitGit({ "client.js": "0".repeat(40) }),
-        preflight: okPreflight,
+        annotate: false,
       }),
     ).toBe(1)
   })
@@ -373,19 +533,54 @@ describe("exit codes", () => {
       main({
         artifacts: [bundle],
         git: splitGit({ "main.js": "0".repeat(40) }, "dist"),
-        preflight: okPreflight,
+        annotate: false,
       }),
     ).toBe(1)
+  })
+
+  test("an unmet requirement is exit 2, and that artifact never builds", () => {
+    let built = false
+    const build: BuildRunner = () => {
+      built = true
+      return { status: 0, output: "" }
+    }
+    const code = main({
+      artifacts: [fakeArtifact(build, { requires: [() => "toolchain differs"] })],
+      annotate: false,
+    })
+    expect(code).toBe(2)
+    expect(built).toBe(false)
+  })
+
+  // The mixed case end to end: one artifact verified clean, one blocked. If the
+  // blocked one were dropped this would be a green run that checked half.
+  test("one artifact blocked and one clean is still exit 2", () => {
+    const dir = makeDir({ "client.js": "same" })
+    const blob = hashBuiltTree(realGit, dir)["client.js"]
+    fs.rmSync(dir, { recursive: true, force: true })
+    expect(
+      main({
+        artifacts: [
+          fakeArtifact(fakeBuild({ "client.js": "same" })),
+          fakeArtifact(fakeBuild({ "main.js": "x" }), {
+            id: MAIN_BUNDLE,
+            base: "dist",
+            script: "build",
+            requires: [() => "Bun differs from the pin"],
+          }),
+        ],
+        git: splitGit({ "client.js": blob }),
+        annotate: false,
+      }),
+    ).toBe(2)
   })
 
   // A broken build must never read as "no drift" — that is the silent-green
   // failure the gate exists to remove.
   test("a failed build is exit 2, never a silent pass", () => {
     const failing = fakeArtifact(() => ({ status: 1, output: "tsup exploded" }))
-    expect(main({ artifacts: [failing], preflight: okPreflight })).toBe(2)
-    expect(() => collectDrift({ artifacts: [failing], preflight: okPreflight })).toThrow(
-      "build:lib exited 1",
-    )
+    expect(main({ artifacts: [failing], annotate: false })).toBe(2)
+    expect(() => collectDrift({ artifacts: [failing] })).toThrow("build:lib exited 1")
   })
 
   test("a git failure is exit 2, never a silent pass", () => {
@@ -393,7 +588,7 @@ describe("exit codes", () => {
       main({
         artifacts: [fakeArtifact(fakeBuild({ "client.js": "x" }))],
         git: () => ({ status: 128, stdout: "", stderr: "not a git repository" }),
-        preflight: okPreflight,
+        annotate: false,
       }),
     ).toBe(2)
   })
@@ -411,7 +606,7 @@ describe("the repo tree is never touched", () => {
       }),
     ]
     try {
-      collectDrift({ artifacts, git: noDrift, preflight: okPreflight })
+      collectDrift({ artifacts, git: noDrift })
     } catch {
       // a failing build is the point of the second case
     }
@@ -447,12 +642,23 @@ describe("the repo tree is never touched", () => {
         seen.push(outDir)
         return { status: 0, output: "" }
       }, { id })
-    collectDrift({
-      artifacts: [probe(BINDINGS_DIR), probe(MAIN_BUNDLE)],
-      git: noDrift,
-      preflight: okPreflight,
-    })
+    collectDrift({ artifacts: [probe(BINDINGS_DIR), probe(MAIN_BUNDLE)], git: noDrift })
     expect(seen).toHaveLength(2)
     expect(seen[0]).not.toBe(seen[1])
+  })
+
+  // A blocked artifact must not even create a scratch dir, let alone build.
+  test("a blocked artifact creates no scratch dir", () => {
+    let called = false
+    collectDrift({
+      artifacts: [
+        fakeArtifact(() => {
+          called = true
+          return { status: 0, output: "" }
+        }, { requires: [() => "nope"] }),
+      ],
+      git: noDrift,
+    })
+    expect(called).toBe(false)
   })
 })
