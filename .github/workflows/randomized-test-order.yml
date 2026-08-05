@@ -1,0 +1,156 @@
+# Nightly randomized-order test run.
+#
+# ci.yml runs `bun test` in the declared file order. That order is stable, so a
+# test that depends on state another file left behind passes forever — until an
+# unrelated PR adds a file and shifts the order, at which point it fails
+# somewhere else entirely. `bun test --randomize` shuffles both file order and
+# within-file test order, and is the only mechanical detector we have for that
+# class (docs/dev/testing-strategy.md §5.1, §5.6).
+#
+# It is deliberately NOT a PR gate:
+#   - it fails PRs for latent defects they did not introduce (the three flakes
+#     fixed in #34 were months old and surfaced on seeds unrelated to any
+#     change), which trains people to re-run a required check until it goes
+#     green — worse than no check;
+#   - some suites here spawn real engines on real ports and fail under runner
+#     load at any seed, so a red result does not reliably mean "your change is
+#     wrong". A gate must separate those two; this one cannot.
+# Reproducibility is NOT among the objections: `bun test --randomize` prints
+# `--seed=<N>` in its run summary on every run, pass or fail, and the seeds
+# below are a pure function of the run number, so they are recorded before the
+# run starts and replay exactly.
+#
+# On failure it files/refreshes ONE idempotent `flaky-order`-labelled issue —
+# the same detect-and-hand-off shape as watch-external-drift.yml, and the same
+# reason: the job stays green so a nightly can never look like a broken build,
+# and the issue is the durable signal. It does not auto-close on a clean night:
+# this class is intermittent by nature and one green run is not evidence.
+
+name: randomized-test-order
+
+on:
+  schedule:
+    - cron: "41 5 * * *" # nightly, 05:41 UTC
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Pin one seed (to replay a reported failure). Blank = the nightly rotation."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: randomized-test-order
+  cancel-in-progress: false
+
+jobs:
+  randomize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      # Bun from the repo's source of truth (docs/bun-version-policy.md). The
+      # runner IS the test runner, so a version delta changes outcomes — and
+      # this job exists to compare outcomes.
+      - name: Read Bun version
+        id: bun
+        run: |
+          set -euo pipefail
+          echo "version=$(cat .bun-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ steps.bun.outputs.version }}
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run the suite under randomized order
+        id: run
+        env:
+          PINNED_SEED: ${{ inputs.seed }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -uo pipefail
+          if [ -n "${PINNED_SEED}" ]; then
+            SEEDS="${PINNED_SEED}"
+          else
+            SEEDS="$(seq $(( RUN_NUMBER * 8 )) $(( RUN_NUMBER * 8 + 7 )))"
+          fi
+
+          {
+            echo "## Randomized-order run"
+            echo
+            echo "Bun \`$(cat .bun-version)\`, commit \`${GITHUB_SHA}\`."
+            echo
+            echo "| seed | result |"
+            echo "| --- | --- |"
+          } > randomize-report.md
+
+          FAILED=""
+          for SEED in ${SEEDS}; do
+            echo "::group::seed ${SEED}"
+            if bun test --randomize --seed "${SEED}" 2>&1 | tee "run-${SEED}.log"; then
+              echo "| \`${SEED}\` | pass |" >> randomize-report.md
+            else
+              FAILED="${FAILED} ${SEED}"
+              echo "| \`${SEED}\` | **FAIL** |" >> randomize-report.md
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ -n "${FAILED}" ]; then
+            {
+              echo
+              echo "### Failing tests"
+              for SEED in ${FAILED}; do
+                echo
+                echo "<details><summary>seed <code>${SEED}</code></summary>"
+                echo
+                echo '```'
+                grep -F '(fail)' "run-${SEED}.log" | head -50
+                echo '```'
+                echo
+                echo "Reproduce: \`bun test --randomize --seed ${SEED}\`"
+                echo
+                echo "</details>"
+              done
+              echo
+              echo "Read \`docs/dev/testing-strategy.md\` §5.1 and §5.6 first. The"
+              echo "usual cause is process-global state a test reads but does not"
+              echo "own, or a \`mock.module\` a sibling linked during Bun's eval"
+              echo "phase. Do **not** fix by reordering, retrying, or sleeping —"
+              echo "if another test must run first, that dependency is the bug."
+            } >> randomize-report.md
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          cat randomize-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: File or refresh the flaky-order issue
+        if: steps.run.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh label create flaky-order --color FBCA04 \
+            --description "Order-dependent test failure found by the nightly randomized run" --force
+          NUM=$(gh issue list --label flaky-order --state open --json number --jq '.[0].number // empty')
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --body-file randomize-report.md
+            echo "Commented on issue #$NUM"
+          else
+            gh issue create --label flaky-order \
+              --title "Order-dependent test failure under bun test --randomize" \
+              --body-file randomize-report.md
+          fi
