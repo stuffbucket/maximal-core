@@ -1,6 +1,6 @@
 // src/lib/live/contract.ts
 import { z } from "zod";
-var CONTROL_PROTOCOL_VERSION = 1;
+var CONTROL_PROTOCOL_VERSION = 2;
 var CONTROL_TOPICS = [
   "snapshot",
   "auth",
@@ -12,16 +12,21 @@ var CONTROL_TOPICS = [
   "config",
   "boot"
 ];
+function methodForTopic(topic) {
+  return `control/${topic}`;
+}
 var frameEnvelopeSchema = z.object({
-  id: z.number().int().nonnegative().optional(),
-  event: z.enum(CONTROL_TOPICS),
-  data: z.unknown()
+  jsonrpc: z.literal("2.0"),
+  method: z.string().min(1),
+  params: z.unknown().optional()
 });
 function serializeFrame(frame) {
-  const idLine = frame.cursor === void 0 ? "" : `id: ${frame.cursor}
-`;
-  return `${idLine}event: ${frame.topic}
-data: ${JSON.stringify(frame.data)}
+  const payload = {
+    jsonrpc: "2.0",
+    method: methodForTopic(frame.topic),
+    params: frame.data
+  };
+  return `data: ${JSON.stringify(payload)}
 
 `;
 }
@@ -29,6 +34,7 @@ data: ${JSON.stringify(frame.data)}
 export {
   CONTROL_PROTOCOL_VERSION,
   CONTROL_TOPICS,
+  methodForTopic,
   frameEnvelopeSchema,
   serializeFrame
 };
