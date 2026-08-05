@@ -138,11 +138,11 @@ and config are shared with the parent `maximal` app.
 The full `AppConfig` shape is `src/lib/config/config.ts`; the `start` flags are
 `src/lib/start/cli.ts` (or `maximal start --help`).
 
-**One documented exception to the precedence order:** the Anthropic key resolves
-`config.anthropicApiKey` **before** `ANTHROPIC_API_KEY`
-(`getAnthropicApiKey()` in `src/lib/config/config.ts`), so a config-file value
-shadows the env var rather than the other way round. Every other secret follows
-env → file → unset (`readSecret()` in `src/lib/auth/secrets.ts`).
+Secrets follow that order with no exceptions: `readSecret()` in
+`src/lib/auth/secrets.ts` resolves env → file → unset, and the Anthropic key
+adds the config tier below both (`getAnthropicApiKey()` in
+`src/lib/config/config.ts`). The boot loader materializes each secrets file into
+its env var, so an env read covers tiers 2 and 3 together.
 
 To inspect what the proxy actually thinks its config is:
 
