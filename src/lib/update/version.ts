@@ -154,7 +154,7 @@ import { BUILD_GIT_BRANCH, BUILD_GIT_SHA } from "~/lib/update/build-info"
  * In a `bun --compile` binary the .git directory we'd normally read
  * is gone, so `readGitVersion()` returns `{ sha: undefined }` and
  * users see `Git: unknown`. Fall back to the build-time defines
- * (release.yml passes --define __MAXIMAL_GIT_SHA__ /
+ * (`scripts/dev/build-binary.ts` passes --define __MAXIMAL_GIT_SHA__ /
  * __MAXIMAL_GIT_BRANCH__) when the live read produces nothing.
  */
 export function getGitVersion(): GitVersion {

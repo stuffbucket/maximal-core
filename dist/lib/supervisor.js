@@ -3,7 +3,17 @@ import { z } from "zod";
 var READY_MARKER = "@@MAXIMAL_READY@@";
 var port = z.number().int().min(0).max(65535);
 var readyLineSchema = z.object({
-  /** Schema version — see `READY_LINE_VERSION`. */
+  /**
+   * Schema version — see `READY_LINE_VERSION`. Always **>= 1**: a running engine
+   * always states its version, and this bound is what keeps the synthesised
+   * `v: 0` of a normalised legacy line from validating as a current one.
+   *
+   * Do **not** widen this to `min(0)` to make a parser's return type fit. Emit
+   * and parse are different contracts — `ParsedReadyLine` is the one with the
+   * wider version — and widening here would let the engine emit a `v: 0` line
+   * that means "I am a pre-split engine", which is a lie on the wire rather than
+   * just in a type.
+   */
   v: z.number().int().min(1),
   /** The **control plane** port: JSON-RPC, subscriptions, config, auth. This is
    *  what a supervising host connects to. Load-bearing: a supervisor asks for

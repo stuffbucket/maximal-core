@@ -14,9 +14,30 @@
  */
 import {
   anyReadyLineSchema,
+  type ParsedReadyLine,
   READY_MARKER,
-  type ReadyLine,
 } from "~/lib/start/boot-status"
+
+/**
+ * The ready-line payloads, re-exported so a consumer of `./supervisor` can
+ * *name* what these functions return.
+ *
+ * They were previously reachable only by inference, which is a contract defect
+ * in its own right: a host could not declare a field, write a helper signature,
+ * or narrow on the version without re-deriving the shape by hand — the exact
+ * drift this module exists to prevent.
+ *
+ * - `ParsedReadyLine` — what `parseReadyLine`/`awaitReadyLine` return.
+ * - `ReadyLine` — the subset an engine at the current version emits (`v >= 1`).
+ *
+ * The zod schemas themselves are deliberately **not** re-exported. A consumer
+ * that wants validation should call `parseReadyLine`, which is the one parser
+ * that also strips the marker prefix and honours the null-on-garbage contract;
+ * handing out the raw schemas invites a second, subtly different parser, which
+ * is the drift this module exists to prevent. There is nothing a caller can do
+ * with a bare schema that `parseReadyLine` does not already do correctly.
+ */
+export type { ParsedReadyLine, ReadyLine } from "~/lib/start/boot-status"
 
 /** Thrown when the sidecar never announces readiness. Distinguishes "it died"
  *  from "it is still starting", which a supervisor must report differently. */
@@ -38,19 +59,27 @@ export class SidecarExitedError extends Error {
 /**
  * Parse one stdout line, returning the ready payload or null for anything else.
  *
- * Validated with the schema the emitter is typed from (`anyReadyLineSchema`),
- * so the two cannot drift — and it accepts both versions, because this parser
- * ships to hosts that may supervise an older or newer engine than themselves:
+ * Validated with the schema the emitter is typed from (`anyReadyLineSchema`,
+ * whose current-version branch *is* `readyLineSchema`), so the two cannot drift
+ * — and it accepts both versions, because this parser ships to hosts that may
+ * supervise an older or newer engine than themselves:
  *
- * - **v1** — `{v:1, controlPort, proxyPort, pid}`, two listeners.
+ * - **v1** — `{v:1, controlPort, proxyPort, pid}`, two listeners. Any higher `v`
+ *   carrying those fields parses too: a newer engine must not hang an older host.
  * - **v0** (no `v`) — the original `{port, pid}`, normalised by pointing both
  *   ports at it, which is what that engine actually did.
+ *
+ * Returns `ParsedReadyLine`, **not** `ReadyLine`: the v0 branch reports `v: 0`,
+ * which the emitter's `v >= 1` does not admit. Annotating this `ReadyLine` type-
+ * checks (`0` is a `number`) and is exactly the lie this signature avoids.
+ * Nothing else changes for a caller — normalisation is total, so the ports and
+ * pid are usable without narrowing on `v`.
  *
  * Returns null rather than throwing on a malformed marker line: a supervisor
  * should keep reading (the real line may follow) instead of aborting a healthy
  * boot over one garbled write.
  */
-export function parseReadyLine(line: string): ReadyLine | null {
+export function parseReadyLine(line: string): ParsedReadyLine | null {
   const trimmed = line.trim()
   if (!trimmed.startsWith(`${READY_MARKER} `)) return null
   try {
@@ -91,6 +120,11 @@ function flushTrailing(buffer: string, onLine?: (line: string) => void): void {
  * (maximal-core#10), and the pid because it is the invalidation key for a cached
  * `server/discover` (maximal-core#8).
  *
+ * Resolves with a `ParsedReadyLine`, so an engine older than this host resolves
+ * too (`v: 0`, both ports pointing at its single listener). A host that wants to
+ * log which protocol version it is supervising narrows on `v`; a host that only
+ * wants to connect does not have to.
+ *
  * Lines are re-assembled across chunk boundaries: stdout is a byte stream, and a
  * marker can straddle two reads. A supervisor that split on chunks rather than
  * newlines would drop the line intermittently under load, which is exactly the
@@ -105,7 +139,7 @@ function flushTrailing(buffer: string, onLine?: (line: string) => void): void {
 export async function awaitReadyLine(
   stdout: AsyncIterable<Uint8Array | string>,
   options: AwaitReadyOptions = {},
-): Promise<ReadyLine> {
+): Promise<ParsedReadyLine> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_READY_TIMEOUT_MS
 
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -116,7 +150,7 @@ export async function awaitReadyLine(
     )
   })
 
-  const scan = async (): Promise<ReadyLine> => {
+  const scan = async (): Promise<ParsedReadyLine> => {
     const decoder = new TextDecoder()
     const iterator = stdout[Symbol.asyncIterator]()
     let buffer = ""
