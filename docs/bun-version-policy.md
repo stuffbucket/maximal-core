@@ -54,6 +54,45 @@ pinned one it reports **"could not verify"** (exit 2) rather than "stale" — a
 stale report would have you regenerate on the wrong toolchain and commit bytes
 CI still cannot reproduce.
 
+## The pin also decides the published tarball
+
+`bindings:check` guards the bundle in **git**. The bundle in the **tarball** is
+a second artifact built at a second time: `bun publish` fires `prepack`, which
+rebuilds `dist/` into what gets uploaded. Measured against Bun 1.3.14 rather
+than assumed from npm's docs, because the exposure depends on it:
+
+```
+bun publish  →  prepublishOnly → prepack → prepare → (pack) → upload
+bun pm pack  →                   prepack → prepare → (pack)
+```
+
+So an off-pin releaser publishes an off-pin bundle. On `main` at v0.3.2:
+
+```
+committed dist/main.js   85697a48…   (Bun 1.3.11, the pin)
+tarball   dist/main.js   ffdee378…   (Bun 1.3.14, whatever was on PATH)
+```
+
+**Installing the pinned Bun does not fix this by itself.** Bun runs lifecycle
+scripts through a shell whose PATH contains neither `node_modules/.bin` nor
+Bun's own bindir, so a bare `bun` inside a script re-resolves from the
+developer's PATH. Invoking the pin explicitly still produced the unpinned
+bundle:
+
+```
+$ /path/to/1.3.11/bin/bun pm pack     # tarball dist/main.js → ffdee378… (1.3.14)
+```
+
+That is the same trap `check-bindings.ts` solved with `process.execPath`, and it
+is why `prepack` is [`scripts/ops/prepack.ts`](../scripts/ops/prepack.ts) rather
+than `bun run build && bun run build:lib`: it version-checks
+`process.versions.bun` and then bundles with `process.execPath`, so the binary
+that was checked is the binary that bundles. Off-pin it refuses — before writing
+anything into `dist/` — instead of shipping a tarball nobody can regenerate.
+`bun run release:preflight` runs the same assertion with no build, ahead of
+`bumpp`, because everything after `bumpp` is a pushed tag or an irreversible
+publish. See [`docs/release-runbook.md`](release-runbook.md) § 4.
+
 Don't float `latest`. Bun ships fast; a release in a single afternoon
 can ship a regression that breaks our test loader, and the difference
 between "we picked this Bun" and "CI happened to pull this Bun" is

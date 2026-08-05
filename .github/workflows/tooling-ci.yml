@@ -9,6 +9,14 @@ on:
   pull_request:
     paths:
       - "scripts/ops/**"
+      # The parity guards in check-bindings.test.ts and prepack.test.ts assert
+      # against the REAL package.json — that `build`'s argv is the argv they
+      # rebuild with, that `bin` is the file they check, and that `prepack`
+      # still routes through the pin guard. A package.json-only edit can break
+      # every one of them, so it has to trigger this lane too or the guards are
+      # only checked when someone happens to touch scripts/ops.
+      - "package.json"
+      - ".bun-version"
       - ".github/workflows/tooling-ci.yml"
 
 permissions:
