@@ -2,11 +2,15 @@
  * Compile-time build metadata.
  *
  * Values are injected by `bun build --compile --define ...` for
- * release binaries (see release.yml). When unset — running source
- * via `bun src/main.ts`, or after a stock `bun build` without the
- * defines — we fall back to package.json's version and leave the
- * git SHA undefined (the live `.git` walk in src/lib/version.ts
- * picks it up in dev).
+ * release binaries — `buildBinary()` in `scripts/dev/build-binary.ts`
+ * is the single place that passes them, and it injects all four:
+ * `__MAXIMAL_VERSION__` (from package.json), `__MAXIMAL_GIT_SHA__`
+ * (short SHA), `__MAXIMAL_GIT_BRANCH__`, and `__MAXIMAL_CHANNEL__`
+ * (derived from the version's prerelease tag). When unset — running
+ * source via `bun src/main.ts`, or after a stock `bun build` without
+ * the defines — we fall back to package.json's version and leave the
+ * git SHA undefined (the live `.git` walk in
+ * `src/lib/update/version.ts` picks it up in dev).
  *
  * Why globals + --define instead of build-time codegen: identical
  * effect, no .gen.ts file to gitignore, no extra prebuild script
@@ -49,7 +53,7 @@ export const BUILD_GIT_BRANCH: string | undefined =
  * `--define __MAXIMAL_CHANNEL__` for release/beta binaries; defaults to
  * `stable` for source runs and stock builds. The update manifest is
  * channel-keyed, so this is what decides which channel's version a build
- * polls (see src/lib/update-check.ts).
+ * polls (see `src/lib/update/update-check.ts`).
  */
 export const BUILD_CHANNEL: string =
   typeof __MAXIMAL_CHANNEL__ === "string" && __MAXIMAL_CHANNEL__.length > 0 ?
