@@ -46,6 +46,30 @@ export interface StartOptions {
 }
 
 /**
+ * How to launch the engine under test.
+ *
+ * Defaults to running from source. Set `MAXIMAL_E2E_BINARY` to a compiled
+ * binary's path and every harness runs against *that* instead — same checks,
+ * different artifact. That matters because the shipped artifact is the compiled
+ * one, and `--compile` is its own execution environment: bundled asset
+ * resolution, `--define` substitution, and embedded-runtime behaviour all differ
+ * from a source run. A regression that only appears once compiled would
+ * otherwise reach a signed DMG unnoticed.
+ */
+function launchCommand(): { cmd: string; args: Array<string> } {
+  const binary = process.env.MAXIMAL_E2E_BINARY
+  if (binary) return { cmd: binary, args: ["start", "--port", "0"] }
+  return { cmd: "bun", args: ["src/main.ts", "start", "--port", "0"] }
+}
+
+/** What the current run is exercising, for harness output. */
+export function launchLabel(): string {
+  return process.env.MAXIMAL_E2E_BINARY ?
+      `compiled binary (${process.env.MAXIMAL_E2E_BINARY})`
+    : "source"
+}
+
+/**
  * Spawn the real binary and wait until it announces its bound port.
  *
  * Always `--port 0` and always a fresh temp home: a harness must never read or
@@ -56,7 +80,8 @@ export async function startSidecar(
   options: StartOptions = {},
 ): Promise<Sidecar> {
   const home = mkdtempSync(join(tmpdir(), "maximal-e2e-"))
-  const child = spawn("bun", ["src/main.ts", "start", "--port", "0"], {
+  const { cmd, args } = launchCommand()
+  const child = spawn(cmd, args, {
     cwd: process.cwd(),
     env: {
       ...process.env,
@@ -102,7 +127,7 @@ export interface Reporter {
 /** One-line-per-assertion reporter. Deliberately plain: the output is read in a
  *  terminal and in CI logs, not parsed. */
 export function createReporter(title: string): Reporter {
-  console.log(`\n${title}\n`)
+  console.log(`\n${title}  [${launchLabel()}]\n`)
   let failed = false
   return {
     check: (label, ok, detail) => {
