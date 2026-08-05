@@ -11,7 +11,8 @@ split and was never carried over. Do not go looking for it.
 
 What exists instead is deliberate and manual, in five steps. Nothing cuts a
 release for you; three [gates](#the-gates) check that the one you cut by hand is
-well-formed.
+well-formed, and one workflow builds and attaches the binaries once the tag
+exists ([step 5](#5-publish-the-artifacts)).
 
 ---
 
@@ -144,20 +145,74 @@ git push && git push origin vX.Y.Z
 > re-cutting is the lesser evil; after that, ship a new patch instead.
 
 
-## 5. Build the artifact and publish
+## 5. Publish the artifacts
+
+Pushing the tag fires [`release-artifacts.yml`](../.github/workflows/release-artifacts.yml).
+It builds `bun-darwin-arm64` on a macOS arm64 runner and `bun-windows-x64` on a
+Windows x64 runner — **natively, because every check it runs executes the
+binary** — verifies each one, and attaches both plus `SHA256SUMS` and
+`ARTIFACTS.md` to the release for the tag.
+
+> **Wait for it to go green before you run `gh release create`.** The workflow
+> creates the release itself, **as a draft**, if none exists — so the order that
+> makes a failed build harmless is: push the tag, watch the run, then fill in
+> the notes and publish the draft.
+>
+> ```sh
+> gh run watch "$(gh run list --workflow release-artifacts.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+> gh release edit vX.Y.Z --title "vX.Y.Z — <summary>" --draft=false \
+>   --notes "$(bun run release:notes vX.Y.Z --release-body)"
+> ```
+>
+> If you create the release first (the old order), the workflow uploads into it
+> and everything still works — **but a failed build then leaves a release that
+> is already public and has no assets, and nothing in CI can un-publish it.**
+> That is the state `v0.2.1`, `v0.3.0` and `v0.3.1` are in. It is recoverable
+> only by fixing the build and re-running the workflow by hand
+> (`gh workflow run release-artifacts.yml -f ref=vX.Y.Z -f publish=true`).
+
+**Failure behaviour.** A build or verify leg that fails skips the publish job
+entirely: nothing is uploaded, no partial set is attached, and the run is red.
+Both legs always run to completion, so one report tells you whether it was one
+platform or both.
+
+### Running the same checks locally
 
 ```sh
-bun run build:binary      # compiled, signable Mach-O / PE per target
-bun run verify:build      # asserts x-maximal-version matches the build
-bun run e2e:binary        # the e2e suite against the compiled artifact
+bun run build:binary                                   # dist-bin/maximal, host target
+bun run verify:artifact -- --binary=dist-bin/maximal   # --version, boot, x-maximal-version, SIGTERM
+bun run e2e:binary -- --binary=dist-bin/maximal        # seam + feed + lifecycle vs that exact file
 ```
 
-```sh
-gh release create vX.Y.Z --title "vX.Y.Z — <summary>" \
-  --notes "$(bun run release:notes vX.Y.Z --release-body)"
+> **`bun run verify:build` is not this check and never was.** It probes a proxy
+> already *running* on your machine and compares the `+<sha>` an `app:dev` build
+> embeds in `x-maximal-version` against `origin/main`. A release binary embeds no
+> `+<sha>`, so it reports `UNKNOWN` and exits 1 on every release artifact, by
+> construction. It answers "is my dev sidecar stale"; `verify:artifact` answers
+> "is this file the release it claims to be". Earlier revisions of this step
+> listed `verify:build` here. That was wrong.
+
+### The binaries are unsigned, and that is not a formality
+
+There is no Apple Developer ID, no notarization credential and no Windows
+code-signing certificate in this repo, so CI cannot sign anything. `--compile`
+also appends the bundled JS onto the Bun runtime *after* the linker signed it,
+so the ad-hoc signature the Mach-O carries is invalid on arrival — verified, not
+assumed:
+
+```
+$ codesign --verify --verbose dist-bin/maximal
+dist-bin/maximal: invalid signature (code or signature have been modified)
 ```
 
-Attach the binaries if the release ships them.
+So: assets are named `…-unsigned`, a browser download of the macOS binary is
+Gatekeeper-quarantined and **will not launch** without
+`xattr -d com.apple.quarantine`, and the Windows binary trips SmartScreen. The
+`ARTIFACTS.md` asset published alongside them says all of this to the person
+downloading, including the `codesign --force` + `com.apple.security.cs.allow-jit`
+entitlement a host needs to re-sign the binary into a notarized bundle. Do not
+soften that text — someone will otherwise download it expecting a double-click
+app.
 
 ---
 
@@ -260,9 +315,15 @@ Listed so nobody re-derives it from a stale doc:
 - No `Release-As:` handling. Nothing reads the trailer; the milestone title
   carries that intent now. (Commit `867dfc4` used one and a human honoured it
   by hand.)
-- No CI signing, notarization, stapling, DMG packaging, checksums, Homebrew tap,
-  Windows MSI, or Pages deploy. `build:binary` produces a **signable** artifact;
-  it does not sign it.
+- No CI signing, notarization, stapling, DMG packaging, Homebrew tap, Windows
+  MSI, or Pages deploy. `build:binary` produces a **signable** artifact and
+  `release-artifacts.yml` publishes it with a `SHA256SUMS`; neither signs it,
+  and there is no Apple or Authenticode credential in this repo to sign it with.
+  See [step 5](#the-binaries-are-unsigned-and-that-is-not-a-formality).
+- No verification that the Windows binary passes the behavioural e2e suite.
+  `e2e:lifecycle` spawns POSIX `sleep` as its decoy parent, so the Windows leg
+  of `release-artifacts.yml` runs `verify:artifact` only — boot, serve, version
+  header, clean shutdown. Making the lifecycle harness portable is the fix.
 - No check that a tag is *annotated*. `release-tag-check.yml` compares the
   version and nothing else; `-a` is still on you.
 - No prerelease support anywhere. `vX.Y.Z-rc.1` is not a release tag to any of

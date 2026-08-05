@@ -2313,6 +2313,7 @@ var init_package = __esm(() => {
       typecheck: "tsc",
       "typecheck:downstream": "bun downstream/check.ts",
       "typecheck:ops": "tsc -p scripts/ops/tsconfig.json",
+      "verify:artifact": "bun scripts/dev/verify-artifact.ts",
       "verify:build": "bun scripts/dev/verify-build.ts",
       "watch:drift": "bun scripts/ops/watch-external-drift.ts"
     },
