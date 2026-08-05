@@ -44,3 +44,16 @@ if (!process.env.COPILOT_API_HOME) {
   fs.mkdirSync(dir, { recursive: true })
   process.env.COPILOT_API_HOME = dir
 }
+
+// Opt-in diagnostic for the cross-file leak class (testing-strategy §5.1/§5.6).
+// `MAXIMAL_TEST_TRACE=1` records module EVALUATION order and every
+// `mock.module` install with its call site — the phase the normal log never
+// covers, because Bun's reporter only prints tests, in execution order.
+// `=all` widens the trace from the test tree to every first-party module.
+//
+// Off (the default) this is one `process.env` read: the tracer module is never
+// imported, no `Bun.plugin` loader hook is installed, and no output changes.
+if (process.env.MAXIMAL_TEST_TRACE) {
+  const { installModuleTrace } = await import("./helpers/module-trace")
+  installModuleTrace(process.env.MAXIMAL_TEST_TRACE)
+}
