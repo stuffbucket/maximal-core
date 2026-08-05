@@ -38,6 +38,29 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:notes` output is inserted here -->
 
+## [0.3.0](https://github.com/stuffbucket/maximal-core/compare/v0.2.1...v0.3.0) (2026-08-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **server:** split /v1 and the control plane onto separate listeners ([#14](https://github.com/stuffbucket/maximal-core/issues/14)) ([4418483](https://github.com/stuffbucket/maximal-core/commit/4418483658d7e977ec2fc2b88cd413e42ae08a16)), closes [#10](https://github.com/stuffbucket/maximal-core/issues/10)
+
+
+### Features
+
+* **server:** split /v1 and the control plane onto separate listeners ([#14](https://github.com/stuffbucket/maximal-core/issues/14)) ([4418483](https://github.com/stuffbucket/maximal-core/commit/4418483658d7e977ec2fc2b88cd413e42ae08a16)), closes [#10](https://github.com/stuffbucket/maximal-core/issues/10)
+
+
+### Bug Fixes
+
+* **supervisor:** regenerate published bindings stranded by the listener split ([#19](https://github.com/stuffbucket/maximal-core/issues/19)) ([7a78b4f](https://github.com/stuffbucket/maximal-core/commit/7a78b4f9251e0be944bfa73edd5dc13da3c9f6cc))
+* **supervisor:** stop the ready-line schema lying about its own version field ([#20](https://github.com/stuffbucket/maximal-core/issues/20)) ([9fb5fcf](https://github.com/stuffbucket/maximal-core/commit/9fb5fcfa6c707ba042e6d0fd17f840304a81d5cb))
+
+
+### Documentation
+
+* **changelog:** backfill v0.1.0, v0.1.1 and v0.2.0 entries ([#18](https://github.com/stuffbucket/maximal-core/issues/18)) ([f1c21c6](https://github.com/stuffbucket/maximal-core/commit/f1c21c6a5771b501d5692a28379cd2cea3da2110))
+
 ## [0.2.1](https://github.com/stuffbucket/maximal-core/compare/v0.2.0...v0.2.1) (2026-08-05)
 
 
