@@ -30,3 +30,17 @@ Two notes on what is *not* here:
   It is retained because it is the accurate history of the code that became this
   package, but every link in it points at the parent repo and none of its
   entries describes a `maximal-core` release.
+
+<!-- releases below — newest first; `release:notes` output is inserted here -->
+
+## [0.2.1](https://github.com/stuffbucket/maximal-core/compare/v0.2.0...v0.2.1) (2026-08-05)
+
+
+### Features
+
+* **ops:** generate release notes from a milestone ([#17](https://github.com/stuffbucket/maximal-core/issues/17)) ([862cf7c](https://github.com/stuffbucket/maximal-core/commit/862cf7c535c96407aed038071fd8b775b2ea22dd))
+
+
+### Bug Fixes
+
+* **messages:** stop message_start reporting zero input tokens on the Responses flow ([#16](https://github.com/stuffbucket/maximal-core/issues/16)) ([9b294df](https://github.com/stuffbucket/maximal-core/commit/9b294df27b8037cd874ff4443a0e6c2d44b7a42f))
