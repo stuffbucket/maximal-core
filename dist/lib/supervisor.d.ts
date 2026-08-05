@@ -1,12 +1,39 @@
+import { z } from 'zod';
+
+/**
+ * Structured stdout markers the desktop shell reads from the sidecar it spawns.
+ *
+ * `BOOT_STATUS_MARKER` — boot-phase lines relayed to the splash as live status
+ * (so a slow/failed start isn't a blank "Starting…"). `QUIT_REQUEST_MARKER` — the
+ * browser-tab UI's way to quit the whole app: a tab has no shell IPC to ask for
+ * a quit, so it POSTs the sidecar, which signals the shell over this same channel.
+ * `UPDATE_REQUEST_MARKER` — the same pattern for the in-place self-update: the
+ * Settings "Upgrade" button POSTs the sidecar, which signals the shell to run the
+ * signed download+install+relaunch (the shell owns the updater plugin, a tab can't).
+ *
+ * All are no-ops for plain CLI users — gated on the parent-pid env the shell sets
+ * when it spawns the sidecar — so their terminal never sees a marker. MUST stay in
+ * `READY_MARKER` — the structured `{port,pid}` ready-line a supervisor parses to
+ * discover an ephemeral port (maximal-core#3); see `emitReadyLine`.
+ *
+ * All marker constants MUST stay in sync with the supervisor that parses them.
+ */
+
+/**
+ * The current ready-line payload.
+ *
+ * Schema rather than a bare interface because this is a **wire boundary** — the
+ * line is read back out of another process's stdout — and because emitter and
+ * parser then share one definition instead of two that drift.
+ */
+declare const readyLineSchema: z.ZodObject<{
+    v: z.ZodNumber;
+    controlPort: z.ZodNumber;
+    proxyPort: z.ZodNumber;
+    pid: z.ZodNumber;
+}, z.core.$strip>;
 /** What a supervisor needs to reach and manage a freshly-spawned sidecar. */
-interface ReadyLine {
-    /** The port actually bound. Load-bearing: a supervisor asks for port 0 to get
-     *  an ephemeral port, so this is the only way it learns where to connect. */
-    port: number;
-    /** The sidecar's pid — the key a client uses to invalidate cached
-     *  `server/discover` results when the process is replaced (maximal-core#8). */
-    pid: number;
-}
+type ReadyLine = z.infer<typeof readyLineSchema>;
 
 /**
  * Sidecar supervision helpers for a host that spawns `maximal start`
@@ -35,6 +62,14 @@ declare class SidecarExitedError extends Error {
 /**
  * Parse one stdout line, returning the ready payload or null for anything else.
  *
+ * Validated with the schema the emitter is typed from (`anyReadyLineSchema`),
+ * so the two cannot drift — and it accepts both versions, because this parser
+ * ships to hosts that may supervise an older or newer engine than themselves:
+ *
+ * - **v1** — `{v:1, controlPort, proxyPort, pid}`, two listeners.
+ * - **v0** (no `v`) — the original `{port, pid}`, normalised by pointing both
+ *   ports at it, which is what that engine actually did.
+ *
  * Returns null rather than throwing on a malformed marker line: a supervisor
  * should keep reading (the real line may follow) instead of aborting a healthy
  * boot over one garbled write.
@@ -51,10 +86,11 @@ interface AwaitReadyOptions {
 /**
  * Read the sidecar's stdout until it announces readiness.
  *
- * Resolves with the bound port and pid — the port because a supervised sidecar
- * binds an **ephemeral** port and this is the only way to learn it, and the pid
- * because it is the invalidation key for a cached `server/discover`
- * (maximal-core#8).
+ * Resolves with the bound ports and pid — `controlPort` because a supervised
+ * sidecar binds an **ephemeral** control port and this is the only way to learn
+ * it, `proxyPort` because the public `/v1` port falls back when 4141 is busy
+ * (maximal-core#10), and the pid because it is the invalidation key for a cached
+ * `server/discover` (maximal-core#8).
  *
  * Lines are re-assembled across chunk boundaries: stdout is a byte stream, and a
  * marker can straddle two reads. A supervisor that split on chunks rather than

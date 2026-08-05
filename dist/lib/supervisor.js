@@ -1,5 +1,29 @@
 // src/lib/start/boot-status.ts
+import { z } from "zod";
 var READY_MARKER = "@@MAXIMAL_READY@@";
+var port = z.number().int().min(0).max(65535);
+var readyLineSchema = z.object({
+  /** Schema version — see `READY_LINE_VERSION`. */
+  v: z.number().int().min(1),
+  /** The **control plane** port: JSON-RPC, subscriptions, config, auth. This is
+   *  what a supervising host connects to. Load-bearing: a supervisor asks for
+   *  port 0, so this is the only way it learns where to connect. */
+  controlPort: port,
+  /** The **public data plane** port serving `/v1` for third-party tools. Not
+   *  necessarily the requested 4141 — a busy port falls back (maximal-core#10),
+   *  so a host that wants to advertise this URL must read it here. */
+  proxyPort: port,
+  /** The sidecar's pid — the key a client uses to invalidate cached
+   *  `server/discover` results when the process is replaced (maximal-core#8). */
+  pid: z.number().int()
+});
+var readyLineV0Schema = z.object({ port, pid: z.number().int() }).transform((line) => ({
+  v: 0,
+  controlPort: line.port,
+  proxyPort: line.port,
+  pid: line.pid
+}));
+var anyReadyLineSchema = z.union([readyLineSchema, readyLineV0Schema]);
 
 // src/lib/live/supervisor.ts
 var SidecarReadyTimeoutError = class extends Error {
@@ -18,10 +42,10 @@ function parseReadyLine(line) {
   const trimmed = line.trim();
   if (!trimmed.startsWith(`${READY_MARKER} `)) return null;
   try {
-    const parsed = JSON.parse(trimmed.slice(READY_MARKER.length + 1));
-    const { port, pid } = parsed ?? {};
-    if (typeof port !== "number" || typeof pid !== "number") return null;
-    return { port, pid };
+    const parsed = anyReadyLineSchema.safeParse(
+      JSON.parse(trimmed.slice(READY_MARKER.length + 1))
+    );
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }

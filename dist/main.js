@@ -2230,7 +2230,7 @@ var init_package = __esm(() => {
   package_default = {
     $schema: "https://json.schemastore.org/package.json",
     name: "@stuffbucket/maximal-core",
-    version: "0.2.0",
+    version: "0.2.1",
     description: "Headless core of maximal: a local proxy that exposes GitHub Copilot as OpenAI- and Anthropic-compatible HTTP endpoints. No UI.",
     keywords: [
       "proxy",
@@ -2303,6 +2303,7 @@ var init_package = __esm(() => {
       prepack: "bun run build && bun run build:lib",
       prepare: "simple-git-hooks",
       "release:manual": "bumpp && bun publish --access public",
+      "release:notes": "bun scripts/ops/release-notes.ts",
       sbom: "bun scripts/sbom.ts",
       "scan:secrets": "trufflehog filesystem . --no-verification --fail --no-update --exclude-paths .trufflehog-exclude",
       start: "NODE_ENV=production bun run ./src/main.ts",
