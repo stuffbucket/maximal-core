@@ -14,6 +14,7 @@ import {
   type AnthropicStreamState,
 } from "~/lib/models/anthropic-types"
 import { resolveModelProfile } from "~/lib/models/model-profile"
+import { getTokenCount } from "~/lib/models/tokenizer"
 import { debugJson, debugJsonTail, debugLazy } from "~/lib/platform/logger"
 import { parseUserIdMetadata } from "~/lib/platform/utils"
 import {
@@ -158,6 +159,34 @@ export const handleWithChatCompletions = async (
   })
 }
 
+/**
+ * Estimate the prompt size locally, for `message_start` only.
+ *
+ * Reuses exactly the path `/v1/messages/count_tokens` already uses — translate
+ * to the OpenAI shape, then the model's own tokenizer — rather than inventing a
+ * second counting scheme that could disagree with the one clients can query.
+ *
+ * Best-effort by design: any failure yields `undefined` and `message_start`
+ * falls back to its previous behaviour. A wrong estimate would be worse than a
+ * missing one, and this must never be able to fail a request that would
+ * otherwise have succeeded.
+ */
+const estimateInputTokens = async (
+  anthropicPayload: AnthropicMessagesPayload,
+  selectedModel: Model | undefined,
+): Promise<number | undefined> => {
+  if (!selectedModel) return undefined
+  try {
+    const count = await getTokenCount(
+      translateToOpenAI(anthropicPayload),
+      selectedModel,
+    )
+    return count.input > 0 ? count.input : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export const handleWithResponsesApi = async (
   c: Context,
   anthropicPayload: AnthropicMessagesPayload,
@@ -196,6 +225,9 @@ export const handleWithResponsesApi = async (
   debugJson(logger, "Translated Responses payload:", responsesPayload)
 
   const { vision, initiator } = getResponsesRequestOptions(responsesPayload)
+  // Started before the upstream call and awaited after: the network round-trip
+  // dwarfs local tokenization, so overlapping them costs no added latency.
+  const inputEstimate = estimateInputTokens(anthropicPayload, selectedModel)
   const response = await createResponses(responsesPayload, {
     vision,
     initiator,
@@ -205,7 +237,7 @@ export const handleWithResponsesApi = async (
   if (responsesPayload.stream && isAsyncIterable(response)) {
     logger.debug("Streaming response from Copilot (Responses API)")
     return streamSSE(c, async (stream) => {
-      const streamState = createResponsesStreamState()
+      const streamState = createResponsesStreamState(await inputEstimate)
       let usage: UsageTokens = {}
 
       try {

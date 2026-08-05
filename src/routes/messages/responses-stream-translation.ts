@@ -59,6 +59,20 @@ const updateWhitespaceRunState = (
 }
 
 export interface ResponsesStreamState {
+  /**
+   * Locally-estimated prompt size, used only for `message_start`.
+   *
+   * The Responses API sends `usage: null` on `response.created`, so upstream has
+   * nothing to give us at the moment Anthropic's contract wants the input side
+   * of the ledger. Emitting 0 there is not a harmless placeholder: a client
+   * stamps it onto every record it flushes before the terminal `message_delta`,
+   * which is how ~30% of Claude Code's assistant rows for a Responses-flow model
+   * ended up reporting zero context (maximal-core: gpt-5.6-sol context meter).
+   *
+   * Undefined when the estimate could not be produced — then we fall back to the
+   * old zero rather than inventing a number.
+   */
+  estimatedInputTokens?: number
   messageStartSent: boolean
   messageCompleted: boolean
   nextContentBlockIndex: number
@@ -75,7 +89,10 @@ type FunctionCallStreamState = {
   consecutiveWhitespaceCount: number
 }
 
-export const createResponsesStreamState = (): ResponsesStreamState => ({
+export const createResponsesStreamState = (
+  estimatedInputTokens?: number,
+): ResponsesStreamState => ({
+  estimatedInputTokens,
   messageStartSent: false,
   messageCompleted: false,
   nextContentBlockIndex: 0,
@@ -532,8 +549,17 @@ const messageStart = (
 ): Array<AnthropicStreamEventData> => {
   state.messageStartSent = true
   const inputCachedTokens = response.usage?.input_tokens_details?.cached_tokens
+  // Upstream usage when it exists, the local estimate when it does not. On the
+  // Responses API it never does at `response.created` — usage only appears on
+  // `response.completed` — so in practice this is the estimate, corrected by the
+  // authoritative numbers in the terminal `message_delta`. The estimate only has
+  // to be good enough that a context meter is not reading zero for the whole
+  // response; being approximate beats being wrong.
+  const upstreamInput = response.usage?.input_tokens
   const inputTokens =
-    (response.usage?.input_tokens ?? 0) - (inputCachedTokens ?? 0)
+    upstreamInput === undefined ?
+      (state.estimatedInputTokens ?? 0)
+    : upstreamInput - (inputCachedTokens ?? 0)
   return [
     {
       type: "message_start",
