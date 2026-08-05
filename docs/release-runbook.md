@@ -3,10 +3,9 @@
 Single source of truth for shipping a release.
 
 **This repo has no release automation.** `release-please.yml` and `release.yml`
-do not exist in `.github/workflows/`, nothing reads `release-please-config.json`
-or `.release-please-manifest.json`, and every tag so far was cut by hand. If you
-came here from an older revision of this file, or from a doc that describes a
-release PR opening itself: that pipeline was inherited from
+do not exist in `.github/workflows/`, and every tag so far was cut by hand. If
+you came here from an older revision of this file, or from a doc that describes
+a release PR opening itself: that pipeline was inherited from
 [`stuffbucket/maximal`](https://github.com/stuffbucket/maximal) in the core
 split and was never carried over. Do not go looking for it.
 
@@ -38,9 +37,11 @@ Pre-1.0, and non-negotiably:
 | `feat:` | patch | `0.2.1` → `0.2.2` |
 | `feat!:` / `fix!:` / `BREAKING CHANGE:` | **minor** | `0.2.2` → `0.3.0` |
 
-`feat:` cutting a *patch* is the pre-1.0 convention `release-please-config.json`
-declares (`bump-minor-pre-major` + `bump-patch-for-minor-pre-major`). It is kept
-because the reason for it is load-bearing:
+`feat:` cutting a *patch* is the pre-1.0 convention this repo inherited from
+release-please (`bump-minor-pre-major` + `bump-patch-for-minor-pre-major`). The
+table above and `requiredBump` in
+[`scripts/ops/release-gates.ts`](../scripts/ops/release-gates.ts) are now the
+only statements of it. It is kept because the reason for it is load-bearing:
 
 > A consumer's `^0.2.0` resolves to `>=0.2.0 <0.3.0`. A breaking change released
 > as a patch is therefore **auto-installed** on a routine `npm update`. Minor is
@@ -251,9 +252,11 @@ but does not block the merge button.
 Listed so nobody re-derives it from a stale doc:
 
 - No `release-please.yml`, no `release.yml`, no auto-opened release PR, no
-  `autorelease:` labels. `release-please-config.json` and
-  `.release-please-manifest.json` are inert — kept only because they record the
-  pre-1.0 bump convention above.
+  `autorelease:` labels, and no release-please config. `release-please-config.json`
+  and `.release-please-manifest.json` were inert leftovers of the split and are
+  deleted; the bump convention they recorded lives in
+  [Choosing the version](#choosing-the-version) and in `requiredBump`, and the
+  manifest's copy of the version had already drifted from `package.json`.
 - No `Release-As:` handling. Nothing reads the trailer; the milestone title
   carries that intent now. (Commit `867dfc4` used one and a human honoured it
   by hand.)

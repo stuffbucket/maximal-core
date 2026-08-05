@@ -174,7 +174,7 @@ a held port falls back).
 
 `./supervisor` publishes the helpers for that (`awaitReadyLine`,
 `parseReadyLine`, `sidecarSpawnEnv`) and owns the ready-line parser so hosts do
-not re-derive the format. It accepts the pre-#10 single-port line too, so a
+not re-derive the format. It accepts the pre-#14 single-port line too, so a
 newer host can supervise an older engine. `./control-contract` publishes the
 wire types with no engine dependency.
 
