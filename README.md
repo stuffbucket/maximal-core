@@ -8,7 +8,7 @@ rewriting, and an Ollama Cloud–backed search/fetch executor.
 
 This package (`@stuffbucket/maximal-core`) is **headless** — there is no UI,
 no menu-bar shell, and it serves no browser pages. It exposes a decoupled
-`/control` HTTP + SSE API that a separate UI tier or desktop app consumes over
+`/control` JSON-RPC 2.0 API that a separate UI tier or desktop app consumes over
 loopback (Ollama-style). See [Relation to `maximal`](#relation-to-maximal).
 
 ## What this gives you
@@ -39,7 +39,7 @@ All bound to `127.0.0.1:4141` by default.
 | `POST /embeddings`, `/v1/embeddings` | Embeddings |
 | `GET /models`, `/v1/models` | Model catalog |
 | `GET /status` | Identity + liveness probe (unauthenticated) |
-| `GET /control/*`, `GET /control/events` | Decoupled control API + live SSE event stream for a UI (loopback-only) |
+| `POST /control/rpc` | Decoupled control API — stateless JSON-RPC 2.0; live push via `subscriptions/listen` (loopback-only) |
 | `GET /_debug/state` | Live effective state, gated on `--verbose` |
 
 The proxy endpoints require a GitHub token (from `maximal auth`); without one
@@ -100,6 +100,7 @@ and config are shared with the parent `maximal` app.
 | Knob | CLI | Env | File | Default |
 |---|---|---|---|---|
 | Listen port | `--port` | — | — | `4141` |
+| Busy-port policy | — | — | `config.server.portPolicy` | `next` |
 | Account type | `--account-type` | — | — | `individual` |
 | Verbose logging | `--verbose` | — | — | off |
 | Manual approval | `--manual` | — | — | off |
@@ -131,12 +132,18 @@ Secrets are masked everywhere — the debug output reports `<env>` /
 `maximal-core` was extracted from
 [`stuffbucket/maximal`](https://github.com/stuffbucket/maximal) to hold only
 the headless proxy engine. The UI that used to live in the parent repo (the
-Tauri menu-bar shell, the React settings UI, and the engine-served `/ui`,
+menu-bar shell, the React settings UI, and the engine-served `/ui`,
 `/settings/api`, and `/ws` surfaces) is **not** part of core. In its place,
-core exposes the decoupled `/control` API + SSE event stream
-([`docs/spec/control-api.md`](docs/spec/control-api.md)) so a separate
-UI-server tier or desktop app can drive it over loopback HTTP, the same way a
-client talks to Ollama. Auth is CLI-only (`maximal auth`, device-code flow).
+core exposes the decoupled `/control` JSON-RPC 2.0 API
+([`docs/architecture.md`](docs/architecture.md)) so a separate UI-server tier or
+desktop app can drive it over loopback HTTP, the same way a client talks to
+Ollama. Auth is CLI-only (`maximal auth`, device-code flow).
+
+A desktop shell consumes core as a **sidecar binary**, not a library: it spawns
+`maximal start --port 0`, reads the bound port off the stdout ready-line, and
+supervises the process. `./supervisor` publishes the helpers for that
+(`awaitReadyLine`, `sidecarSpawnEnv`); `./control-contract` publishes the wire
+types with no engine dependency.
 
 ## Layout
 
@@ -146,7 +153,7 @@ src/routes/                HTTP handlers grouped by endpoint family.
 src/lib/                   Shared utilities (config, auth, http, models, live/control hub).
 src/services/              Upstream API clients (Copilot, GitHub, providers).
 tests/                     bun-test suites.
-docs/spec/                 Feature specs (control-api, web-tools, tool-bridge).
+docs/spec/                 Feature specs (web-tools, tool-bridge, observability).
 docs/admin/                Operator/MDM reference.
 scripts/                   Operator helpers.
 LICENSE                    MIT.
@@ -162,5 +169,5 @@ that bumps the version and updates `CHANGELOG.md`; merging it tags `vX.Y.Z`.
 ## Status
 
 Pre-alpha. Functional end-to-end against enterprise Copilot. See
-`docs/spec/control-api.md` for the control surface and
+[`docs/architecture.md`](docs/architecture.md) for the control surface and
 `docs/spec/archive/web-tools.md` for the agent-loop spec.

@@ -6,4 +6,8 @@ context and set the conventions that aren't fully captured in docs.
 
 | Area | Trusted expert | Read first |
 |---|---|---|
-| Internationalization / localization (i18n catalogs, translation wording, per-language terminology) | `@jessicadowney` | [`docs/dev/i18n.md`](docs/dev/i18n.md) |
+
+_No core-owned areas currently have a designated expert. i18n moved out with
+the UI tier — core emits typed, prose-free payloads and the consuming tier
+owns wording._
+

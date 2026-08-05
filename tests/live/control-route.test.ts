@@ -109,18 +109,17 @@ describe("control route — SSE event stream", () => {
     hub.dispose()
     const block = new TextDecoder().decode(value).trim()
 
-    expect(block).toContain("id: 0")
-    expect(block).toContain("event: snapshot")
+    // v2: a JSON-RPC notification on the data line. No `id:` (nothing is
+    // resumable) and no `event:` (the method names the topic).
+    expect(block).not.toContain("id: 0")
     expect(block).toContain("snap-ok")
 
     const dataLine =
       block.split("\n").find((line) => line.startsWith("data:")) ?? ""
-    const env: FrameEnvelope = frameEnvelopeSchema.parse({
-      id: 0,
-      event: "snapshot",
-      data: JSON.parse(dataLine.slice("data:".length).trim()) as unknown,
-    })
-    expect(env.event).toBe("snapshot")
+    const env: FrameEnvelope = frameEnvelopeSchema.parse(
+      JSON.parse(dataLine.slice("data:".length).trim()),
+    )
+    expect(env.method).toBe("control/snapshot")
   })
 })
 

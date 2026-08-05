@@ -162,7 +162,7 @@ export function extractRequestApiKey(c: Context): string | null {
 }
 
 /**
- * Shell-internal key match. When the Tauri menu-bar app spawns the sidecar it
+ * Shell-internal key match. When the desktop shell spawns the sidecar it
  * injects MAXIMAL_SHELL_KEY as env; a request carrying that exact key bypasses
  * the enforce flag so a user who turns on "Block unknown connections" can't lock
  * themselves out of their own Settings UI — and it keeps the mandatory-auth
@@ -272,7 +272,7 @@ type AuthDecision =
  * to {@link createAuthMiddleware} (which validates the *client's* API key);
  * this one short-circuits when the proxy itself has no GitHub token to
  * forward with. Lets the HTTP server come up in "unauthenticated mode"
- * (settings + diagnostics still reachable) without the Tauri shell
+ * (settings + diagnostics still reachable) without the desktop shell
  * needing to handshake the device-code flow before port 4141 listens.
  */
 export const requireGithubAuth: MiddlewareHandler = async (c, next) => {

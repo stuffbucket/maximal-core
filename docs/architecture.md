@@ -86,18 +86,54 @@ models use the native Messages API or fall back to Chat Completions.
 - `src/lib/auth/secrets.ts` — file-based provider keys at `~/.local/share/maximal/secrets/<name>` (mode 0600). Env wins; file fills in unset values.
 - `src/lib/runtime-state/cache.ts` — `Cache<K,V>` LRU wrapper with hit/miss/eviction metrics. Wrapped instances register globally for `/_debug/state`.
 
+### Port selection
+
+`src/lib/start/port.ts` decides what to bind, driven by `config.server.portPolicy`:
+
+| Policy | Behaviour |
+|---|---|
+| `next` (default) | Requested port busy → scan upward for the first usable one, up to `PORT_SCAN_LIMIT` (20). Announces the move. |
+| `fail` | Report who holds it and exit 1. The pre-policy behaviour. |
+| `replace` | Evict a *maximal* instance holding it, then bind. Never evicts a foreign process — that degrades to `fail`. |
+
+Two properties worth preserving:
+
+- **`--port 0` bypasses the policy entirely.** A supervised sidecar asks the OS to choose, so there is nothing to resolve. Every desktop-spawned engine takes this path.
+- **A port is usable only when nothing answers HTTP there *and* `isPortBindable` succeeds.** These answer different questions. An HTTP probe cannot see a non-HTTP listener, and one that resolves `::1` cannot see an app holding `127.0.0.1`. The bind test deliberately tries the *specific* loopback addresses rather than only the wildcard, because Node sets `SO_REUSEADDR` and a wildcard bind will otherwise succeed alongside a specific-address one — reporting free a port the engine would then be unreachable on for any IPv4-first client.
+
+`resolvePort` returns a decision and never exits; `portOrExit` is the single place that reports and exits. That split is what makes the policy testable without stubbing process globals.
+
 ## Control API + live event stream
 
 Core is headless: sign-in is CLI-only and the engine serves no UI. A decoupled
 UI-server tier or desktop app consumes core over the loopback `/control`
 surface (Ollama-style), which replaces the removed `/settings/api` request API
-and `/ws` live feed. Full contract in
-[`docs/spec/control-api.md`](spec/control-api.md).
+and `/ws` live feed. The wire types are `src/lib/live/contract.ts` (published as
+`./control-contract`) and the callable method set is whatever `server/discover`
+returns at runtime — both are generated from the code that serves them, so
+neither can drift from it the way a prose spec does.
 
-- **Reads** (`src/routes/control/route.ts`): `GET /control/{auth,accounts,apps,models,usage,config,clients}` — each mirrors a live topic; a topic's event `data` is byte-identical to its GET body.
-- **Actions:** `POST /control/accounts/switch`, `POST /control/accounts/remove` — serialized through an `AsyncMutex`; each broadcasts the resulting accounts list.
-- **Live stream:** `GET /control/events` (SSE). A single `ControlHub` (`src/lib/live/hub.ts`) owns the monotonic cursor, replay ring, epoch, and fan-out; the HTTP route is a thin adapter. On connect it emits a `snapshot` frame under lock, then full-resource upsert deltas per topic. `Last-Event-ID` + `epoch` resume from the ring (K8s list-watch semantics); a gap past the ring forces a re-snapshot.
-- **Loopback gate:** the whole `/control` surface re-checks the caller IP itself — a remote caller gets `404`, exactly like `/_internal`. Cross-origin browser requests are additionally 403'd by the Origin guard.
+- **JSON-RPC (canonical):** `POST /control/rpc` — stateless JSON-RPC 2.0 per
+  **ADR-0023** (`stuffbucket/maximal` `docs/decisions/0023-…`). Methods are
+  registered in `src/routes/control/rpc.ts`; the message layer is
+  `src/lib/jsonrpc/`. No session, no cursor, no `Last-Event-ID` — MCP removed all
+  three in spec 2026-07-28 and we follow that shape. `GET`/`DELETE` are `405`.
+- **Capability discovery:** `server/discover` returns
+  `{ protocolVersion, capabilities, identity }` with no handshake, callable at
+  any time. Clients mirror the version into an `MCP-Protocol-Version` header; a
+  pinned mismatch fails legibly naming both versions.
+- **Live stream:** the `subscriptions/listen` method's response *is* the
+  subscription — an SSE stream carrying a `control/snapshot` notification, then
+  `control/<topic>` notifications until either side closes. Closing the stream is
+  the unsubscribe. `ControlHub` (`src/lib/live/hub.ts`) owns fan-out and
+  per-subscriber bounded queues (drop-slow-then-disconnect); it holds **no**
+  cursor, ring, or epoch. A dropped feed reconnects and re-snapshots.
+- **Errors** are JSON-RPC error objects carrying a string discriminant in
+  `data.reason` plus `retryable`. Clients discriminate on that, never on an HTTP
+  status. Application codes are positive integers: JSON-RPC reserves
+  `-32768..-32000` and MCP reserves `-32020..-32099` within it.
+- **REST (deprecated, one cycle):** `GET /control/{auth,accounts,apps,models,usage,config,clients}` and the `POST` actions still work and share the same builders, so the two surfaces cannot drift. `GET /control/events` still streams but is **no longer resumable** — it ignores `Last-Event-ID`/`epoch`.
+- **Loopback gate:** the whole `/control` surface re-checks the caller IP itself — a remote caller gets `404`, exactly like `/_internal`, *above* the JSON-RPC layer so no well-formed error confirms the endpoint exists. Cross-origin browser requests are additionally 403'd by the Origin guard.
 
 ## Diagnostic surfaces
 
@@ -116,47 +152,24 @@ multiplier (`src/lib/models/tokenizer.ts`).
 ## Parallel-agent convention
 
 This repo can collide on a shared working tree (lint-staged stash + concurrent
-merge ate a turn already). For parallel agents:
+merge ate a turn already). The `git stash pop` prohibition is in
+[`AGENTS.md`](../AGENTS.md); the isolation mechanics are:
 
 - **Spawned subagents:** pass `isolation: "worktree"` to the Agent tool.
 - **Sessions:** create a worktree manually with `git worktree add ../maximal-<task> -b agent/<task>`; clean up with `git worktree remove ../maximal-<task>` after merging back. `git worktree add` does **not** run `bun install`, so run it in the new tree if you need its node_modules.
-- **Never run `git stash pop` in a shared working tree.** It silently merges another in-flight worker's stash into your tree, and on conflict it leaves an inconsistent state that's easy to "clean up" by `rm`-ing files that aren't yours. If you need an isolated bisect, use a worktree. If you must inspect a stash, use `git stash show -p stash@{N}` (read-only) and never `pop` / `apply` outside an isolated tree.
+- **Inspecting a stash is fine** — `git stash show -p stash@{N}` is read-only. It is `pop`/`apply` outside an isolated tree that corrupts another worker's state.
 
 See also: `docs/codegen-feedback-loops-practices.md` → Dispatch and review loops.
 
 ## Testing gotchas
 
-- **`mock.module` persists forward across files in a run — now lint-enforced.**
-  Bun does not reset module mocks between test files, and CI orders files
-  differently than local, so an unrestored mock leaks its stub into a
-  *sibling* file that then reads stale state — the classic "green locally,
-  red on CI" (or vice-versa) failure. This bit us **four times** (the last
-  cost a long #229 debugging loop), so an ESLint rule (`mockModuleLeakGuard`
-  in `eslint.config.js`, scoped to `tests/**`) now **bans the fire-and-forget
-  forms**: `void mock.module(...)` and a bare `mock.module(...)` expression
-  statement both error.
-  - **Awaited is *not* automatically safe.** `await mock.module(...)` passes
-    the lint rule, but an awaited `afterAll` *restore* does **not** reliably
-    land before the next file's static imports on CI — so a module mock that
-    intercepts a *shared* module still leaks across files even when restored.
-    The rule catches the common footgun, not this one.
-  - **The durable fix is to not mock a shared module across files at all.**
-    Prefer the **real** module (the test preload redirects `COPILOT_API_HOME`
-    to a temp dir, and `getClaudeCodeSettingsPath()` honors `CLAUDE_CONFIG_DIR`
-    — so config/settings round-trips are already isolated), or **injectable
-    function options**. Only stub a module with no env/injection seam, keep the
-    wrapper behaviorally identical (spread `...actual`, forward `...rest`), and
-    prove via a sequential-import repro that it can't break a later file.
-- **Green tests can still test nothing.** Mutation testing (`bun run mutate`)
-  caught classification tests that passed without exercising the branch
-  they claimed to cover (the fixture hit a different code path that
-  returned the same value). For security-critical or branchy logic, run
-  Stryker and confirm the targeted mutants actually die — don't trust a
-  passing assertion alone. Every surviving mutant must land in exactly one of
-  three buckets — **killable** (write the test), **dead** (delete it / encode
-  the impossibility in types), or **proven-equivalent** (written proof + reason
-  to keep). See [`dev/testing-strategy.md`](dev/testing-strategy.md) §6 for the
-  disposition rule and the hot-path modules that warrant periodic sweeps.
+The rule is in [`AGENTS.md`](../AGENTS.md); the mechanism, the four incidents
+behind it, and the mutant-disposition procedure are in
+[`dev/testing-strategy.md`](dev/testing-strategy.md) §5.1 (module-mock leakage,
+`mockModuleLeakGuard`, why an awaited restore is still unsafe) and §6 (mutation
+testing — every surviving mutant is killable, dead, or proven-equivalent). The
+decision itself is [ADR-0011](decisions/0011-mock-module-leakage-discipline.md).
+
 
 ## Release & PR conventions
 

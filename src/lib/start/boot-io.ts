@@ -39,11 +39,11 @@ export function initBootLogger(
 export function printReadyBanner(serverUrl: string): void {
   consola.box(
     [
-      `🌐 Settings:     ${serverUrl}/ui/settings/`,
-      `📊 Usage:        ${serverUrl}/ui/settings/#usage`,
+      `Proxy:   ${serverUrl}/v1`,
+      `Status:  ${serverUrl}/status`,
       ``,
-      `Fast UI iteration: \`bun run app:ui\` rebuilds the UI on save`,
-      `(reload the window to pick up changes).`,
+      `Core is headless — point a client at the proxy, or drive it over`,
+      `the loopback control plane at ${serverUrl}/control/rpc.`,
     ].join("\n"),
   )
 }

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Shared type contracts between the proxy and the Tauri shell's
+ * Shared type contracts between the proxy and the desktop shell's
  * Settings UI. The shapes here are the *stable* contract — distinct
  * from `/_debug/state`, which is a free-form dev dump.
  *
@@ -205,7 +205,7 @@ type UpstreamRejection = z.infer<typeof UpstreamRejection>;
  *  `kind` values MIRROR `NETWORK_DIAGNOSIS_KIND` and `scope` MIRRORS
  *  `NETWORK_SCOPE` (both in `~/lib/net/network-diagnostics`). The literals are
  *  DELIBERATELY re-declared here rather than imported: this wire-type module is
- *  consumed by the Tauri shell, and importing network-diagnostics (which pulls
+ *  consumed by the desktop shell, and importing network-diagnostics (which pulls
  *  `node:dns`/`node:net`/`node:os`) would drag those into the browser bundle.
  *  A drift guard in `tests/network-hysteresis.test.ts` fails the build if these
  *  fall out of sync with the source-of-truth constants. */

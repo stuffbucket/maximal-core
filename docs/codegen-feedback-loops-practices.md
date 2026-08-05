@@ -20,7 +20,7 @@ Anything slower is a manual aggregate or a CI gate. Anything faster than the LSP
 | Inner | PostToolUse on Edit/Write/MultiEdit | Every file write | <2s | Fast lint + logic lint + typecheck, parallel |
 | Outer | Stop (end of agent turn) | Every assistant turn | <5s | Test suite (affected) + dead-code finder, parallel |
 | Manual fast | `check:fast` script | On demand | <10s | Full typecheck + full lint |
-| Manual deep | `check:deep` script | On demand, pre-PR | minutes | check:fast + tests + knip + dependency-cruiser + mutation |
+| Manual deep | `check:deep` script | On demand, pre-PR | minutes | check:fast + tests + dead-code finder |
 | Observation | Side process tailing JSONL | Continuous | non-blocking | Local LLM meta-analysis |
 
 The harness hook points are the load-bearing concept. In Claude Code these are `PostToolUse` and `Stop` in `.claude/settings.json`. In Cursor they are project rules + commands. In Cline they are workflow scripts. In a plain pre-commit setup the inner loop degrades to `pre-commit` and the outer loop degrades to `pre-push`. The two-tier shape survives the translation; only the wiring differs.

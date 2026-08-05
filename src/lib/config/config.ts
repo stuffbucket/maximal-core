@@ -73,6 +73,7 @@ export interface AppConfig {
   checkUpdates?: boolean
   editorVersion?: string
   apps?: AppsConfig
+  server?: ServerConfig
   ui?: {
     /**
      * When true, Maximal lives ONLY in the macOS menu bar / Windows system
@@ -81,6 +82,26 @@ export interface AppConfig {
      */
     menuBarOnly?: boolean
   }
+}
+
+/**
+ * What to do when the port we were asked to bind is already held.
+ *
+ * - `next` — scan upward for the first free port and bind that. The default:
+ *   a second instance starting is far more common than a port being sacred,
+ *   and failing to launch is a worse outcome than launching somewhere else.
+ * - `fail` — report who holds it and exit 1. Right when something downstream
+ *   has the port hardcoded and a silent move would be worse than not starting.
+ * - `replace` — evict a *maximal* instance holding it, then bind. Never evicts
+ *   a foreign process; that case falls back to `fail`.
+ */
+export type PortPolicy = "next" | "fail" | "replace"
+
+export const DEFAULT_PORT_POLICY: PortPolicy = "next"
+
+export interface ServerConfig {
+  /** How to react to a busy port. Defaults to `DEFAULT_PORT_POLICY`. */
+  portPolicy?: PortPolicy
 }
 
 export interface AppsConfig {
@@ -167,6 +188,11 @@ const defaultConfig: AppConfig = {
   },
   smallModel: "gpt-5-mini",
   responsesApiContextManagementModels: [],
+  // Written into the user's config on first run rather than left implicit, so
+  // the knob is discoverable by reading the file instead of the source.
+  server: {
+    portPolicy: DEFAULT_PORT_POLICY,
+  },
   modelReasoningEfforts: {
     "gpt-5-mini": "low",
     "gpt-5.3-codex": "xhigh",

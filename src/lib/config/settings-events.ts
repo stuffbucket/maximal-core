@@ -1,7 +1,7 @@
 /**
  * Settings event bus (ADR-0007) — the producer side of the shell's live
  * update channel. Replaces the shell's per-section poll loops: instead of
- * the Tauri webview re-fetching `/settings/api/*` every couple of seconds,
+ * the desktop shell re-fetching `/settings/api/*` every couple of seconds,
  * the sidecar pushes a typed event the instant observable state changes and
  * the shell renders it.
  *
@@ -58,7 +58,7 @@ export function emitAuthChanged(): void {
  * Publish a ONE-SHOT `auth.changed` carrying the transient
  * `notify_on_reconnect` flag on top of the current projected status. Used by the
  * network-recovery path: the sidecar can't fire an OS notification directly (the
- * Tauri shell owns native notifications and reads them off this payload — same
+ * desktop shell owns native notifications and reads them off this payload — same
  * model as `last_upstream_rejection`), so recovery from a long outage rides a
  * single event with `notify_on_reconnect: true` and the shell fires the toast.
  *

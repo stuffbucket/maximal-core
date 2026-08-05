@@ -1,8 +1,5 @@
-import { randomUUID } from "node:crypto"
-
 import {
   CONTROL_PROTOCOL_VERSION,
-  type ControlFrame,
   type ControlTopic,
   serializeFrame,
   type SnapshotPayload,
@@ -26,19 +23,10 @@ interface Subscriber {
   alive: boolean
 }
 
-export interface SubscribeOptions {
-  /** The client's Last-Event-ID cursor, if it is resuming. */
-  lastEventId?: string | number
-  /** The epoch the client last saw; must match for a replay, else re-snapshot. */
-  epoch?: string
-}
-
 export interface ControlHubOptions<Snapshot = unknown> {
   /** Builds the full current-state snapshot for a connecting client. Injected so
    *  the hub stays decoupled from the (still being re-homed) aggregators. */
   buildSnapshot: () => Promise<Snapshot>
-  /** Delta ring depth — how far back a resume can reach before re-snapshotting. */
-  ringCapacity?: number
   /** Per-subscriber queue depth before a slow client is dropped. */
   queueCapacity?: number
   /** If set, send an SSE keepalive comment to every subscriber this often.
@@ -47,7 +35,6 @@ export interface ControlHubOptions<Snapshot = unknown> {
   heartbeatMs?: number
 }
 
-const DEFAULT_RING_CAPACITY = 512
 const DEFAULT_QUEUE_CAPACITY = 256
 
 /** SSE comment sent on each heartbeat tick — keeps idle connections open
@@ -56,29 +43,29 @@ const DEFAULT_QUEUE_CAPACITY = 256
 const HEARTBEAT_FRAME = ": keepalive\n\n"
 
 /**
- * Owns the cursor, the delta ring, the epoch, and fan-out to every connected
- * subscriber. Library-first: the SSE route and any in-process embedder both
- * drive this same API. Modeled on Tailscale's per-session channel +
- * drop-slow-then-disconnect, with Kubernetes list-watch resume (monotonic
- * cursor + replay ring). See docs/spec/control-api.md.
+ * Owns fan-out to every connected subscriber. Library-first: the SSE route and
+ * any in-process embedder drive this same API. Per-subscriber bounded queue with
+ * drop-slow-then-disconnect (Tailscale's shape), so one wedged client can never
+ * stall the shared producer.
+ *
+ * There is deliberately **no cursor, ring, or epoch**. ADR-0023 makes the
+ * control plane stateless, so a dropped feed reconnects and re-snapshots rather
+ * than replaying. That removes the resume bookkeeping entirely — and with it the
+ * reason `emit` and `emitEdge` had to be different methods, since nothing is
+ * ringed for a transient frame to evict.
  */
 export class ControlHub<Snapshot = unknown> {
-  private cursor = 0
-  private readonly epoch = randomUUID()
-  private readonly ring: Array<ControlFrame> = []
   private readonly subscribers = new Set<Subscriber>()
 
   private latestUsage: unknown = undefined
   private usageDirty = false
 
   private readonly buildSnapshot: () => Promise<Snapshot>
-  private readonly ringCapacity: number
   private readonly queueCapacity: number
   private readonly heartbeatTimer: ReturnType<typeof setInterval> | null
 
   constructor(options: ControlHubOptions<Snapshot>) {
     this.buildSnapshot = options.buildSnapshot
-    this.ringCapacity = options.ringCapacity ?? DEFAULT_RING_CAPACITY
     this.queueCapacity = options.queueCapacity ?? DEFAULT_QUEUE_CAPACITY
     this.heartbeatTimer =
       options.heartbeatMs === undefined ?
@@ -102,30 +89,19 @@ export class ControlHub<Snapshot = unknown> {
   // ── Producer API ────────────────────────────────────────────────────────
 
   /**
-   * Publish a full-resource state upsert — cursored, ringed, resumable. MUST run
-   * synchronously with no await before the cursor is assigned, so two concurrent
-   * emits can never ring out of monotonic order.
+   * Publish a state change to every live subscriber.
+   *
+   * One method, not the old cursored/edge pair: with nothing ringed there is no
+   * ring for a high-frequency topic to evict, so the distinction that justified
+   * two methods no longer exists.
    */
   emit(topic: ControlTopic, data: unknown): void {
-    const cursor = ++this.cursor
-    const frame: ControlFrame = { topic, data, cursor }
-    this.ring.push(frame)
-    if (this.ring.length > this.ringCapacity) this.ring.shift()
-    this.fanout(serializeFrame(frame))
-  }
-
-  /**
-   * Publish a transient / side-effecting signal on the live edge only — no
-   * cursor, never ringed, never replayed. This is what keeps a gap-free
-   * reconnect from re-firing something like an OS toast
-   * (`notify_on_reconnect`).
-   */
-  emitEdge(topic: ControlTopic, data: unknown): void {
     this.fanout(serializeFrame({ topic, data }))
   }
 
-  /** Record a usage tick. Coalesced (only the latest is flushed) and edge-only,
-   *  so a per-request storm can't evict resumable frames from the ring. */
+  /** Record a usage tick. Still coalesced — that was always about volume, not
+   *  resume: a per-request storm would otherwise overflow every subscriber's
+   *  bounded queue and get slow clients dropped. */
   recordUsage(data: unknown): void {
     this.latestUsage = data
     this.usageDirty = true
@@ -136,81 +112,46 @@ export class ControlHub<Snapshot = unknown> {
   flushUsage(): void {
     if (!this.usageDirty) return
     this.usageDirty = false
-    this.emitEdge("usage", this.latestUsage)
+    this.emit("usage", this.latestUsage)
   }
 
   // ── Consumer API ────────────────────────────────────────────────────────
 
   /**
-   * Attach a subscriber. Registers it for fan-out synchronously (so no delta is
-   * missed during the snapshot build), then either replays the ring (gap-free
-   * resume) or pushes a fresh snapshot at the head of its queue, then starts the
-   * single drain loop. Returns an unsubscribe function.
+   * Attach a subscriber. Registers it for fan-out synchronously (so no frame is
+   * missed during the snapshot build), pushes the snapshot at the head of its
+   * queue, then starts the single drain loop. Returns an unsubscribe function.
+   *
+   * Every connect is a fresh snapshot — there is no resume path to take instead.
    */
-  async subscribe(
-    sink: ControlSink,
-    options: SubscribeOptions = {},
-  ): Promise<() => void> {
+  async subscribe(sink: ControlSink): Promise<() => void> {
     const subscriber: Subscriber = {
       sink,
       queue: new BoundedQueue<string>(this.queueCapacity),
       alive: true,
     }
-    const baseline = this.cursor
     this.subscribers.add(subscriber)
 
-    const replay =
-      options.lastEventId === undefined ?
-        null
-      : this.replayFrom(options.lastEventId, options.epoch)
-
-    if (replay) {
-      for (const frame of replay) {
-        subscriber.queue.push(serializeFrame(frame))
-      }
-    } else {
-      let snapshot: Snapshot
-      try {
-        snapshot = await this.buildSnapshot()
-      } catch (error) {
-        // Registered before the await, so a failed build cannot leak it.
-        this.remove(subscriber, "snapshot_failed")
-        throw error
-      }
-      const payload: SnapshotPayload<Snapshot> = {
-        protocolVersion: CONTROL_PROTOCOL_VERSION,
-        epoch: this.epoch,
-        snapshot,
-      }
-      subscriber.queue.pushFront(
-        serializeFrame({ topic: "snapshot", cursor: baseline, data: payload }),
-      )
+    let snapshot: Snapshot
+    try {
+      snapshot = await this.buildSnapshot()
+    } catch (error) {
+      // Registered before the await, so a failed build cannot leak it.
+      this.remove(subscriber, "snapshot_failed")
+      throw error
     }
+    const payload: SnapshotPayload<Snapshot> = {
+      protocolVersion: CONTROL_PROTOCOL_VERSION,
+      snapshot,
+    }
+    subscriber.queue.pushFront(
+      serializeFrame({ topic: "snapshot", data: payload }),
+    )
 
     void this.drain(subscriber)
     return () => {
       this.remove(subscriber, "client_close")
     }
-  }
-
-  /**
-   * The cursored frames a resuming client missed, or null if it must
-   * re-snapshot. Forces a re-snapshot on epoch mismatch, a non-integer or
-   * negative id, a future cursor (never silently go live with stale state), or a
-   * gap past the ring's oldest entry.
-   */
-  replayFrom(
-    lastEventId: string | number,
-    epoch?: string,
-  ): Array<ControlFrame> | null {
-    if (epoch !== this.epoch) return null
-    const since = Number(lastEventId)
-    if (!Number.isInteger(since) || since < 0) return null
-    if (since > this.cursor) return null
-    if (this.ring.length === 0) return since === this.cursor ? [] : null
-    const oldest = this.ring[0].cursor ?? 0
-    if (since + 1 < oldest) return null
-    return this.ring.filter((frame) => (frame.cursor ?? 0) > since)
   }
 
   // ── Internals ───────────────────────────────────────────────────────────
@@ -250,17 +191,7 @@ export class ControlHub<Snapshot = unknown> {
 
   // ── Introspection (tests / diagnostics) ─────────────────────────────────
 
-  get stats(): {
-    subscribers: number
-    cursor: number
-    ringSize: number
-    epoch: string
-  } {
-    return {
-      subscribers: this.subscribers.size,
-      cursor: this.cursor,
-      ringSize: this.ring.length,
-      epoch: this.epoch,
-    }
+  get stats(): { subscribers: number } {
+    return { subscribers: this.subscribers.size }
   }
 }

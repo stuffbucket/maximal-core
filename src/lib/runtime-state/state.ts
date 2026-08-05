@@ -51,7 +51,7 @@ export interface State {
   boundPort: number
 
   /**
-   * Set by the Tauri shell at sidecar spawn (env var MAXIMAL_SHELL_KEY).
+   * Set by the desktop shell at sidecar spawn (env var MAXIMAL_SHELL_KEY).
    * When a request carries this exact key, auth always succeeds — even
    * if the user has flipped "Block unknown connections" on. Lets the
    * shell webview talk to its own backend without locking the user out.

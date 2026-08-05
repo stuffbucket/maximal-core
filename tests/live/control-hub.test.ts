@@ -8,43 +8,27 @@ import { ControlHub, type ControlSink } from "~/lib/live/hub"
 const settle = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, 5))
 
+/** A feed frame is a JSON-RPC notification on the `data:` line — no `id:`, no
+ *  `event:`. Those were the v1 envelope and the resume mechanism it implied. */
 interface ParsedFrame {
-  id?: number
-  event: string
-  data: unknown
+  jsonrpc: string
+  method: string
+  params?: unknown
 }
 
 function parseSse(block: string): ParsedFrame {
-  const parsed: { id?: number; event?: string; data?: unknown } = {}
+  let dataStr: string | undefined
   for (const line of block.trimEnd().split("\n")) {
-    const idx = line.indexOf(":")
-    const key = line.slice(0, idx)
-    const value = line.slice(idx + 1).trim()
-    switch (key) {
-      case "id": {
-        parsed.id = Number(value)
-        break
-      }
-      case "event": {
-        parsed.event = value
-        break
-      }
-      case "data": {
-        parsed.data = JSON.parse(value)
-        break
-      }
-      default: {
-        break
-      }
-    }
+    if (line.startsWith("data:")) dataStr = line.slice("data:".length).trim()
   }
+  if (dataStr === undefined) throw new Error(`no data line in block: ${block}`)
   // Validate against the shared wire contract while we're here.
-  frameEnvelopeSchema.parse({
-    id: parsed.id,
-    event: parsed.event,
-    data: parsed.data,
-  })
-  return parsed as ParsedFrame
+  return frameEnvelopeSchema.parse(JSON.parse(dataStr))
+}
+
+/** Topic a frame carries, with the `control/` namespace stripped. */
+function topicOf(frame: ParsedFrame): string {
+  return frame.method.replace(/^control\//, "")
 }
 
 async function expectRejects(
@@ -116,18 +100,21 @@ describe("ControlHub — connect + fan-out", () => {
 
     for (const sink of sinks) {
       const frames = sink.frames
-      expect(frames[0].event).toBe("snapshot")
-      expect(frames[0].id).toBe(0)
+      expect(topicOf(frames[0])).toBe("snapshot")
       const deltas = frames.slice(1)
-      expect(deltas.map((f) => f.event)).toEqual([
+      expect(deltas.map((f) => topicOf(f))).toEqual([
         "auth",
         "auth",
         "auth",
         "auth",
         "auth",
       ])
-      // Strictly increasing cursors, no gaps, no interleave.
-      expect(deltas.map((f) => f.id)).toEqual([1, 2, 3, 4, 5])
+      // Order is still guaranteed — the per-subscriber queue is FIFO and the
+      // drain loop is the sole writer. It just isn't expressed as a cursor any
+      // more, so assert it on the payloads the producer emitted.
+      expect(deltas.map((f) => (f.params as { n: number }).n)).toEqual([
+        0, 1, 2, 3, 4,
+      ])
     }
     expect(hub.stats.subscribers).toBe(3)
   })
@@ -147,106 +134,71 @@ describe("ControlHub — connect + fan-out", () => {
   })
 })
 
-describe("ControlHub — resume", () => {
-  test("in-window Last-Event-ID replays exactly the gap, no snapshot", async () => {
-    const hub = new ControlHub({ buildSnapshot: snapshotBuilder() })
-    const a = new FakeSink()
-    await hub.subscribe(a)
-    hub.emit("auth", { n: 1 })
-    hub.emit("auth", { n: 2 })
-    hub.emit("auth", { n: 3 })
+describe("ControlHub — statelessness", () => {
+  test("a reconnecting subscriber re-snapshots; there is no replay path", async () => {
+    const hub = new ControlHub({ buildSnapshot: snapshotBuilder({ n: 1 }) })
+    const first = new FakeSink()
+    const un = await hub.subscribe(first)
+    hub.emit("auth", { a: 1 })
+    await settle()
+    un()
+
+    // Reconnect. A v1 client would have sent Last-Event-ID here and expected the
+    // gap replayed; there is deliberately nothing to send and nothing to replay.
+    const second = new FakeSink()
+    await hub.subscribe(second)
     await settle()
 
-    const resumed = new FakeSink()
-    await hub.subscribe(resumed, {
-      lastEventId: 1,
-      epoch: hub.stats.epoch,
-    })
-    await settle()
-
-    const frames = resumed.frames
-    expect(frames.map((f) => f.event)).toEqual(["auth", "auth"])
-    expect(frames.map((f) => f.id)).toEqual([2, 3])
-    // A subsequent live delta continues the sequence.
-    hub.emit("auth", { n: 4 })
-    await settle()
-    expect(resumed.frames.at(-1)?.id).toBe(4)
+    const topics = second.frames.map((f) => topicOf(f))
+    expect(topics[0]).toBe("snapshot")
+    // The delta emitted while it was away is gone — the fresh snapshot is the
+    // only source of truth, which is the whole point of dropping the ring.
+    expect(topics).not.toContain("auth")
+    hub.dispose()
   })
 
-  test.each([
-    ["evicted cursor (past the ring)", { lastEventId: 1 }],
-    ["future cursor", { lastEventId: 999 }],
-    ["non-numeric cursor", { lastEventId: "not-a-number" }],
-  ])("forces a re-snapshot on %s", async (_label, resume) => {
-    // Ring holds only the last 2 deltas.
-    const hub = new ControlHub({
-      buildSnapshot: snapshotBuilder(),
-      ringCapacity: 2,
-    })
-    const warm = new FakeSink()
-    await hub.subscribe(warm)
-    for (let i = 1; i <= 5; i++) hub.emit("auth", { n: i })
-    await settle()
-
-    const sink = new FakeSink()
-    await hub.subscribe(sink, { ...resume, epoch: hub.stats.epoch })
-    await settle()
-    expect(sink.frames[0].event).toBe("snapshot")
-  })
-
-  test("epoch mismatch forces a re-snapshot", async () => {
-    const hub = new ControlHub({ buildSnapshot: snapshotBuilder() })
-    const warm = new FakeSink()
-    await hub.subscribe(warm)
-    hub.emit("auth", { n: 1 })
-    await settle()
-
-    const sink = new FakeSink()
-    await hub.subscribe(sink, { lastEventId: 0, epoch: "stale-epoch" })
-    await settle()
-    expect(sink.frames[0].event).toBe("snapshot")
-  })
-})
-
-describe("ControlHub — idempotent upserts + edge-only frames", () => {
-  test("edge-only frames carry no id and are never replayed", async () => {
-    const hub = new ControlHub({ buildSnapshot: snapshotBuilder() })
-    const live = new FakeSink()
-    await hub.subscribe(live)
-
-    hub.emit("auth", { state: "authenticated" }) // cursor 1, ringed
-    hub.emitEdge("auth", { notify_on_reconnect: true }) // edge, no cursor
-    await settle()
-
-    const liveFrames = live.frames
-    const edge = liveFrames.at(-1)
-    expect(edge?.event).toBe("auth")
-    expect(edge?.id).toBeUndefined()
-
-    // A client resuming from before the edge only replays the ringed upsert.
-    const replay = hub.replayFrom(0, hub.stats.epoch)
-    expect(replay).not.toBeNull()
-    expect(replay).toHaveLength(1)
-    expect(replay?.[0].cursor).toBe(1)
-  })
-
-  test("coalesced usage flushes at most one frame and never enters the ring", async () => {
+  test("frames carry no SSE id, so a client cannot advertise a resume it won't get", async () => {
     const hub = new ControlHub({ buildSnapshot: snapshotBuilder() })
     const sink = new FakeSink()
     await hub.subscribe(sink)
-
-    hub.recordUsage({ tokens: 10 })
-    hub.recordUsage({ tokens: 20 })
-    hub.recordUsage({ tokens: 30 })
-    hub.flushUsage()
-    hub.flushUsage() // no-op, nothing dirty
+    hub.emit("auth", { a: 1 })
     await settle()
+    for (const raw of sink.rawFrames) {
+      expect(raw.startsWith("id:")).toBe(false)
+      expect(raw).not.toContain("\nid:")
+    }
+    hub.dispose()
+  })
 
-    const usageFrames = sink.frames.filter((f) => f.event === "usage")
-    expect(usageFrames).toHaveLength(1)
-    expect(usageFrames[0].data).toEqual({ tokens: 30 })
-    expect(usageFrames[0].id).toBeUndefined()
-    expect(hub.stats.ringSize).toBe(0) // usage never ringed
+  test("every frame is a JSON-RPC notification — no id, method names the topic", async () => {
+    const hub = new ControlHub({ buildSnapshot: snapshotBuilder() })
+    const sink = new FakeSink()
+    await hub.subscribe(sink)
+    hub.emit("accounts", { list: [] })
+    await settle()
+    const parsed = sink.frames
+    expect(parsed.every((f) => f.jsonrpc === "2.0")).toBe(true)
+    // A notification must never carry an id: the server expects no reply.
+    expect(parsed.every((f) => !("id" in f))).toBe(true)
+    expect(parsed.at(-1)?.method).toBe("control/accounts")
+    hub.dispose()
+  })
+
+  test("coalesced usage still flushes at most one frame", async () => {
+    const hub = new ControlHub({ buildSnapshot: snapshotBuilder() })
+    const sink = new FakeSink()
+    await hub.subscribe(sink)
+    hub.recordUsage({ t: 1 })
+    hub.recordUsage({ t: 2 })
+    hub.recordUsage({ t: 3 })
+    hub.flushUsage()
+    hub.flushUsage() // nothing dirty
+    await settle()
+    const usage = sink.frames.filter((f) => topicOf(f) === "usage")
+    expect(usage).toHaveLength(1)
+    // Coalescing was always about volume, not resume — the latest wins.
+    expect(usage[0].params).toEqual({ t: 3 })
+    hub.dispose()
   })
 })
 
@@ -272,8 +224,10 @@ describe("ControlHub — backpressure + cleanup", () => {
     expect(slow.closedReason).toBe("overflow")
     expect(hub.stats.subscribers).toBe(1) // only healthy remains
     // The healthy client got everything.
-    const healthyDeltas = healthy.frames.filter((f) => f.event === "auth")
-    expect(healthyDeltas.map((f) => f.id)).toEqual([1, 2, 3, 4])
+    const healthyDeltas = healthy.frames.filter((f) => topicOf(f) === "auth")
+    expect(healthyDeltas.map((f) => (f.params as { n: number }).n)).toEqual([
+      1, 2, 3, 4,
+    ])
 
     slow.unblock()
     await settle()

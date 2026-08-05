@@ -414,7 +414,7 @@ function noteConnectivityFailure(
  * Signal that connectivity recovered: feed a null through the hysteresis, clear
  * the banner, and — if the outage lasted long enough — fire the reconnect
  * notification. The sidecar can't fire a native OS notification itself (the
- * Tauri shell owns notifications and reads the flag off the auth.changed
+ * desktop shell owns notifications and reads the flag off the auth.changed
  * payload, same model as last_upstream_rejection), so a qualifying recovery
  * rides a single `notify_on_reconnect: true` event. Best-effort — never throws.
  */

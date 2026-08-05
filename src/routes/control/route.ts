@@ -11,7 +11,7 @@
 import type { Context, Hono as HonoApp } from "hono"
 
 import { Hono } from "hono"
-import { streamSSE } from "hono/streaming"
+import { z } from "zod"
 
 import {
   cancelDeviceFlow,
@@ -30,7 +30,10 @@ import { defaultGetRequestIp, isLoopbackAddress } from "~/lib/auth/request-auth"
 import { getConfig } from "~/lib/config/config"
 import { forwardError } from "~/lib/errors/error"
 import { listActiveClients } from "~/lib/http/active-clients"
-import { type ControlHub, type ControlSink } from "~/lib/live/hub"
+import { createRpcHandler } from "~/lib/jsonrpc/dispatch"
+import { controlError } from "~/lib/jsonrpc/errors"
+import { errorResponse } from "~/lib/jsonrpc/message"
+import { type ControlHub } from "~/lib/live/hub"
 import { AsyncMutex } from "~/lib/live/mutex"
 import {
   buildAccountsList,
@@ -39,11 +42,17 @@ import {
   type ControlSnapshot,
 } from "~/lib/live/resources"
 import { getControlHub } from "~/lib/live/service"
+import { streamSubscription } from "~/lib/live/stream-subscription"
 import { cacheModels } from "~/lib/platform/utils"
 import { emitQuitRequest, emitUpdateRequest } from "~/lib/start/boot-status"
 import { getTokenUsageSummary } from "~/lib/token-usage"
 import { getUpdateStatus } from "~/lib/update/update-check"
 
+import {
+  createControlRpcMethods,
+  SUPPORTED_PROTOCOL_VERSION,
+  unsupportedVersion,
+} from "./rpc"
 import { registerSettingsEndpoints } from "./settings-endpoints"
 
 type HubAccessor = () => ControlHub<ControlSnapshot>
@@ -55,38 +64,24 @@ export interface ControlRoutesOptions {
   hub?: ControlHub<ControlSnapshot>
 }
 
+/** Validated rather than cast: `c.req.json()` returns `any`, and asserting a
+ *  shape onto it moves an untrusted payload into the type system unchecked. */
+const keyBodySchema = z.object({ key: z.string().min(1) })
+
 async function readKey(c: Context): Promise<string | null> {
-  const body = (await c.req.json().catch(() => null)) as {
-    key?: unknown
-  } | null
-  const key = body?.key
-  return typeof key === "string" && key ? key : null
+  const parsed = keyBodySchema.safeParse(await c.req.json().catch(() => null))
+  return parsed.success ? parsed.data.key : null
 }
 
-/** Live SSE stream. The hub's per-subscriber drain loop is the SOLE writer for
- *  the stream; the handler just holds it open until the client disconnects. */
+/**
+ * Live SSE stream (deprecated — prefer the `subscriptions/listen` RPC).
+ *
+ * Retained for one cycle so existing consumers keep working, but it is no longer
+ * resumable: `Last-Event-ID` and `epoch` are ignored because the hub no longer
+ * rings frames. Every connect gets a fresh snapshot.
+ */
 function registerEventStream(app: HonoApp, hub: HubAccessor): void {
-  app.get("/events", (c) => {
-    const lastEventId = c.req.header("last-event-id")
-    const epoch = c.req.query("epoch")
-    return streamSSE(c, async (stream) => {
-      const sink: ControlSink = {
-        write: async (frame) => {
-          await stream.write(frame)
-        },
-        close: () => {
-          // The handler resolves on abort below; nothing to do here.
-        },
-      }
-      const unsubscribe = await hub().subscribe(sink, { lastEventId, epoch })
-      await new Promise<void>((resolve) => {
-        stream.onAbort(() => {
-          unsubscribe()
-          resolve()
-        })
-      })
-    })
-  })
+  app.get("/events", (c) => streamSubscription(c, hub))
 }
 
 /** Read endpoints — each mirrors a live topic and shares its type. */
@@ -245,6 +240,41 @@ function registerAccountActions(
   )
 }
 
+/**
+ * JSON-RPC control plane (ADR-0023). One POST endpoint, stateless, no session.
+ *
+ * The hub- and mutex-dependent methods are composed here rather than in the
+ * static registry because they need the same injected accessors the REST
+ * account actions use — and they call the SAME underlying operations, so the two
+ * surfaces cannot diverge while both exist.
+ */
+function registerRpc(app: HonoApp, hub: HubAccessor, mutex: AsyncMutex): void {
+  const dispatch = createRpcHandler(createControlRpcMethods({ hub, mutex }))
+
+  app.post("/rpc", async (c) => {
+    // A client that pins a version we don't speak gets told so explicitly,
+    // rather than failing later on a shape it didn't expect (maximal-core#8).
+    const pinned = unsupportedVersion(c)
+    if (pinned !== null) {
+      return c.json(
+        errorResponse(
+          undefined,
+          controlError(
+            "unsupported_version",
+            `Unsupported protocol version ${pinned}; this sidecar speaks ${SUPPORTED_PROTOCOL_VERSION}.`,
+          ),
+        ),
+        400,
+      )
+    }
+    return dispatch(c)
+  })
+
+  // The transport is POST-only; GET/DELETE were the session-era verbs MCP
+  // removed in 2026-07-28 and we never had.
+  app.on(["GET", "DELETE"], "/rpc", (c) => c.body(null, 405))
+}
+
 export function createControlRoutes(options: ControlRoutesOptions = {}): Hono {
   const getRequestIp = options.getRequestIp ?? defaultGetRequestIp
   // Resolved lazily so importing this module doesn't eagerly build the wired
@@ -266,6 +296,7 @@ export function createControlRoutes(options: ControlRoutesOptions = {}): Hono {
   registerSettingsEndpoints(app)
   registerShellSignals(app)
   registerAccountActions(app, hub, new AsyncMutex())
+  registerRpc(app, hub, new AsyncMutex())
 
   return app
 }

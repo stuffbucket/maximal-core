@@ -60,10 +60,14 @@ export function describeLaunchSource(
 ): LaunchSource {
   if (isAppBundlePath(execPath)) return { path: execPath, kind: "dmg-app" }
   // Dev first: `bun src/main.ts` runs from a `bun` interpreter (often
-  // itself Homebrew-installed at /opt/homebrew/bin/bun), and the Tauri
-  // dev build runs from `target/debug|release/`. Check these before the
-  // Homebrew prefix so a brew-installed `bun` isn't misread as a brew
+  // itself Homebrew-installed at /opt/homebrew/bin/bun). Check this before
+  // the Homebrew prefix so a brew-installed `bun` isn't misread as a brew
   // *maximal* install.
+  //
+  // The `target/debug|release/` arm is a leftover from the removed Rust
+  // shell — nothing produces that path today. Kept because it is inert
+  // (no current install shape can match it) and dropping it is a
+  // behaviour change that belongs in its own commit, not a comment sweep.
   if (
     /\/target\/(?:debug|release)\//u.test(execPath)
     || /\/bun$/u.test(execPath)

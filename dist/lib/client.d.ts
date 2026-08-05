@@ -7,15 +7,30 @@ import 'zod';
  * with the live event stream. Isomorphic (uses `fetch` + ReadableStream, no
  * browser-only APIs), so it runs in a browser, Bun, or Node.
  *
- * Transport is the locked decision (docs/spec/control-api.md): a fetch-based SSE
- * reader, NOT native EventSource — so it can send auth headers, at the cost of
- * re-implementing reconnect/backoff and Last-Event-ID resume here.
+ * Speaks the stateless JSON-RPC 2.0 control plane (ADR-0023): `call()` for
+ * request/response, and a `subscriptions/listen` stream for push. Both go to the
+ * one `POST /control/rpc` endpoint.
  *
- * State model mirrors the server: a `snapshot` frame seeds per-topic state, then
- * full-resource `upsert` deltas overwrite by topic. Heartbeat comments and the
- * cursor/epoch bookkeeping are handled transparently.
+ * A fetch-based SSE reader, NOT native EventSource — so it can send auth headers
+ * and issue the subscription as a POST, at the cost of re-implementing
+ * reconnect/backoff here.
+ *
+ * State model mirrors the server: a `control/snapshot` notification seeds
+ * per-topic state, then `control/<topic>` notifications overwrite by topic.
+ * Heartbeat comments are skipped transparently. There is no resume bookkeeping —
+ * a dropped feed reconnects and re-snapshots.
  */
 
+/** Thrown when a method answers with a JSON-RPC error object. Carries the code
+ *  and the `data` discriminant so a caller switches on the payload, never on an
+ *  HTTP status (ADR-0023). */
+declare class ControlRpcError extends Error {
+    readonly code: number;
+    readonly data: unknown;
+    constructor(code: number, message: string, data: unknown);
+    /** True when the server said the failure is worth re-issuing unprompted. */
+    get retryable(): boolean;
+}
 interface ControlClientOptions {
     /** Origin the proxy is listening on, e.g. "http://127.0.0.1:4141". */
     baseUrl: string;
@@ -43,10 +58,9 @@ declare class ControlClient {
     private readonly sleep;
     private state;
     private readonly listeners;
-    private lastEventId;
-    private epoch;
     private abort;
     private closed;
+    private nextId;
     constructor(options: ControlClientOptions);
     /** Subscribe to state changes; the callback fires immediately with the
      *  current state and on every subsequent change. Returns an unsubscribe. */
@@ -58,7 +72,17 @@ declare class ControlClient {
     close(): void;
     private isClosed;
     private url;
+    /**
+     * Invoke a control method and return its result.
+     *
+     * Every call is self-contained — no session, no handshake. Use
+     * `server/discover` to learn the protocol version and the callable method set
+     * rather than assuming either.
+     */
+    call<T = unknown>(method: string, params?: unknown): Promise<T>;
     private streamOnce;
+    /** Each SSE block carries one JSON-RPC notification on its `data:` line. There
+     *  is no `id:` line to track — the transport advertises no resumability. */
     private handleBlock;
     private applyFrame;
     private request;
@@ -72,4 +96,4 @@ declare class ControlClient {
     upgrade(): Promise<unknown>;
 }
 
-export { ControlClient, type ControlClientOptions, type ControlState, type StateListener };
+export { ControlClient, type ControlClientOptions, ControlRpcError, type ControlState, type StateListener };

@@ -120,7 +120,7 @@ remaining surfaces below are additive and were scoped out of the first PR:
    `notify_on_reconnect: true` on the `auth.changed` event when an outage longer
    than `NOTIFY_ON_RECONNECT_MS` (30s) recovers. Nothing consumes it yet — the
    shell has no native-notification path (the tray covers other out-of-band
-   nudges). Wiring it needs the Tauri notification plugin (permission flow) or a
+   nudges). Wiring it needs the shell's native-notification API (permission flow) or a
    tray toast; until then a long outage recovers silently (the banner just
    disappears).
 

@@ -1,12 +1,19 @@
 import { z } from "zod"
 
-/** Bumped when the wire envelope changes shape. Sent on the snapshot frame so a
- *  consumer can refuse a stream it doesn't understand. */
-export const CONTROL_PROTOCOL_VERSION = 1
+/**
+ * Wire contract for the control feed.
+ *
+ * **Version 2 is a break.** Version 1 was a bespoke `{id, event, data}` SSE
+ * envelope with `Last-Event-ID` + epoch resume. Per ADR-0023 the control plane
+ * is stateless JSON-RPC 2.0: the feed now carries JSON-RPC *notifications*, and
+ * a dropped connection reconnects fresh rather than replaying a ring. MCP
+ * removed resumable streams in spec 2026-07-28 for the same reason — session
+ * state on the server is what made it not a plain HTTP workload.
+ */
+export const CONTROL_PROTOCOL_VERSION = 2
 
-/** Every topic the control stream can carry. State topics mirror a GET
- *  resource; `snapshot` is the connect/re-sync frame; `usage`/`boot` are the
- *  edge-only signals. */
+/** Every topic the control feed can carry. `snapshot` is the connect frame;
+ *  `usage`/`boot` are transient signals. */
 export const CONTROL_TOPICS = [
   "snapshot",
   "auth",
@@ -21,37 +28,54 @@ export const CONTROL_TOPICS = [
 
 export type ControlTopic = (typeof CONTROL_TOPICS)[number]
 
-/** A frame as it lives inside the hub before serialization. `cursor` is present
- *  only on ringable, resumable state upserts; edge-only frames (transient
- *  signals, coalesced usage) carry none, so they never advance a client's
- *  Last-Event-ID and are never replayed. */
+/** JSON-RPC method name a topic is published under. Namespacing keeps the feed
+ *  in the same vocabulary as the request methods, so one client dispatch table
+ *  handles both. */
+export function methodForTopic(topic: ControlTopic): string {
+  return `control/${topic}`
+}
+
+/** A frame as it lives inside the hub before serialization. There is no cursor:
+ *  nothing is ringed, nothing is replayed. */
 export interface ControlFrame {
   topic: ControlTopic
   data: unknown
-  cursor?: number
 }
 
-/** Schema a consumer validates each decoded SSE frame against — the contract
- *  the UI and any third-party embedder share (replaces the deleted
- *  feed-types.ts). Resource-specific `data` schemas layer on top per topic. */
+/**
+ * Schema a consumer validates each decoded feed frame against.
+ *
+ * A feed frame is a JSON-RPC notification — no `id`, because the server never
+ * expects a reply to it and a client that tries to correlate one has misread the
+ * push/close contract.
+ */
 export const frameEnvelopeSchema = z.object({
-  id: z.number().int().nonnegative().optional(),
-  event: z.enum(CONTROL_TOPICS),
-  data: z.unknown(),
+  jsonrpc: z.literal("2.0"),
+  method: z.string().min(1),
+  params: z.unknown().optional(),
 })
 export type FrameEnvelope = z.infer<typeof frameEnvelopeSchema>
 
-/** Payload of the `snapshot` frame: the epoch a client must echo to resume, the
- *  protocol version, and the full current state. */
+/** Payload of the `snapshot` notification: the protocol version a client can
+ *  refuse on, and the full current state. No epoch — there is nothing to resume
+ *  against. */
 export interface SnapshotPayload<Snapshot = unknown> {
   protocolVersion: number
-  epoch: string
   snapshot: Snapshot
 }
 
-/** Render a frame as an SSE block. `id:` is emitted only for cursored frames, so
- *  edge-only frames leave a client's Last-Event-ID untouched. */
+/**
+ * Render a frame as an SSE block carrying a JSON-RPC notification.
+ *
+ * No `id:` line — emitting one would advertise a resumability this transport
+ * does not have, and a client would set `Last-Event-ID` on reconnect expecting a
+ * replay that never comes.
+ */
 export function serializeFrame(frame: ControlFrame): string {
-  const idLine = frame.cursor === undefined ? "" : `id: ${frame.cursor}\n`
-  return `${idLine}event: ${frame.topic}\ndata: ${JSON.stringify(frame.data)}\n\n`
+  const payload = {
+    jsonrpc: "2.0" as const,
+    method: methodForTopic(frame.topic),
+    params: frame.data,
+  }
+  return `data: ${JSON.stringify(payload)}\n\n`
 }
