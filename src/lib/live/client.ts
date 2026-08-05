@@ -52,8 +52,6 @@ export class ControlClient {
 
   private state: ControlState = {}
   private readonly listeners = new Set<StateListener>()
-  private lastEventId: string | null = null
-  private epoch: string | null = null
   private abort: AbortController | null = null
   private closed = false
 
@@ -123,12 +121,10 @@ export class ControlClient {
       ...this.headers,
       accept: "text/event-stream",
     }
-    if (this.lastEventId !== null) headers["last-event-id"] = this.lastEventId
-    const query =
-      this.epoch !== null && this.lastEventId !== null ?
-        `?epoch=${encodeURIComponent(this.epoch)}`
-      : ""
-    const res = await this.fetchImpl(this.url(`/events${query}`), {
+    // No `Last-Event-ID` / epoch: the feed is not resumable (ADR-0023). A drop
+    // reconnects and re-snapshots, which is why this is a plain GET with no
+    // resume state to carry.
+    const res = await this.fetchImpl(this.url("/events"), {
       headers,
       signal: this.abort.signal,
     })
@@ -153,32 +149,26 @@ export class ControlClient {
     }
   }
 
+  /** Each SSE block carries one JSON-RPC notification on its `data:` line. There
+   *  is no `id:` line to track — the transport advertises no resumability. */
   private handleBlock(raw: string): void {
-    let id: string | undefined
-    let event: string | undefined
     let dataStr: string | undefined
     for (const line of raw.split("\n")) {
       if (line.startsWith(":")) continue // heartbeat comment
-      if (line.startsWith("id:")) id = line.slice("id:".length).trim()
-      else if (line.startsWith("event:"))
-        event = line.slice("event:".length).trim()
-      else if (line.startsWith("data:"))
-        dataStr = line.slice("data:".length).trim()
+      if (line.startsWith("data:")) dataStr = line.slice("data:".length).trim()
     }
-    if (event === undefined || dataStr === undefined) return
-    const frame = frameEnvelopeSchema.parse({
-      id: id === undefined ? undefined : Number(id),
-      event,
-      data: JSON.parse(dataStr) as unknown,
-    })
-    if (id !== undefined) this.lastEventId = id
-    this.applyFrame(frame.event, frame.data)
+    if (dataStr === undefined) return
+    const frame = frameEnvelopeSchema.parse(JSON.parse(dataStr))
+    const topic =
+      frame.method.startsWith("control/") ?
+        frame.method.slice("control/".length)
+      : frame.method
+    this.applyFrame(topic as ControlTopic, frame.params)
   }
 
   private applyFrame(topic: ControlTopic, data: unknown): void {
     if (topic === "snapshot") {
       const payload = data as SnapshotPayload<Record<string, unknown>>
-      this.epoch = payload.epoch
       // The snapshot's resource keys are themselves topics.
       this.state = { ...(payload.snapshot as ControlState) }
     } else {

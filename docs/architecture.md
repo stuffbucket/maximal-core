@@ -94,10 +94,27 @@ surface (Ollama-style), which replaces the removed `/settings/api` request API
 and `/ws` live feed. Full contract in
 [`docs/spec/control-api.md`](spec/control-api.md).
 
-- **Reads** (`src/routes/control/route.ts`): `GET /control/{auth,accounts,apps,models,usage,config,clients}` — each mirrors a live topic; a topic's event `data` is byte-identical to its GET body.
-- **Actions:** `POST /control/accounts/switch`, `POST /control/accounts/remove` — serialized through an `AsyncMutex`; each broadcasts the resulting accounts list.
-- **Live stream:** `GET /control/events` (SSE). A single `ControlHub` (`src/lib/live/hub.ts`) owns the monotonic cursor, replay ring, epoch, and fan-out; the HTTP route is a thin adapter. On connect it emits a `snapshot` frame under lock, then full-resource upsert deltas per topic. `Last-Event-ID` + `epoch` resume from the ring (K8s list-watch semantics); a gap past the ring forces a re-snapshot.
-- **Loopback gate:** the whole `/control` surface re-checks the caller IP itself — a remote caller gets `404`, exactly like `/_internal`. Cross-origin browser requests are additionally 403'd by the Origin guard.
+- **JSON-RPC (canonical):** `POST /control/rpc` — stateless JSON-RPC 2.0 per
+  **ADR-0023** (`stuffbucket/maximal` `docs/decisions/0023-…`). Methods are
+  registered in `src/routes/control/rpc.ts`; the message layer is
+  `src/lib/jsonrpc/`. No session, no cursor, no `Last-Event-ID` — MCP removed all
+  three in spec 2026-07-28 and we follow that shape. `GET`/`DELETE` are `405`.
+- **Capability discovery:** `server/discover` returns
+  `{ protocolVersion, capabilities, identity }` with no handshake, callable at
+  any time. Clients mirror the version into an `MCP-Protocol-Version` header; a
+  pinned mismatch fails legibly naming both versions.
+- **Live stream:** the `subscriptions/listen` method's response *is* the
+  subscription — an SSE stream carrying a `control/snapshot` notification, then
+  `control/<topic>` notifications until either side closes. Closing the stream is
+  the unsubscribe. `ControlHub` (`src/lib/live/hub.ts`) owns fan-out and
+  per-subscriber bounded queues (drop-slow-then-disconnect); it holds **no**
+  cursor, ring, or epoch. A dropped feed reconnects and re-snapshots.
+- **Errors** are JSON-RPC error objects carrying a string discriminant in
+  `data.reason` plus `retryable`. Clients discriminate on that, never on an HTTP
+  status. Application codes are positive integers: JSON-RPC reserves
+  `-32768..-32000` and MCP reserves `-32020..-32099` within it.
+- **REST (deprecated, one cycle):** `GET /control/{auth,accounts,apps,models,usage,config,clients}` and the `POST` actions still work and share the same builders, so the two surfaces cannot drift. `GET /control/events` still streams but is **no longer resumable** — it ignores `Last-Event-ID`/`epoch`.
+- **Loopback gate:** the whole `/control` surface re-checks the caller IP itself — a remote caller gets `404`, exactly like `/_internal`, *above* the JSON-RPC layer so no well-formed error confirms the endpoint exists. Cross-origin browser requests are additionally 403'd by the Origin guard.
 
 ## Diagnostic surfaces
 

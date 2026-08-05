@@ -71,12 +71,15 @@ async function readKey(c: Context): Promise<string | null> {
   return typeof key === "string" && key ? key : null
 }
 
-/** Live SSE stream. The hub's per-subscriber drain loop is the SOLE writer for
- *  the stream; the handler just holds it open until the client disconnects. */
+/**
+ * Live SSE stream (deprecated — prefer the `subscriptions/listen` RPC).
+ *
+ * Retained for one cycle so existing consumers keep working, but it is no longer
+ * resumable: `Last-Event-ID` and `epoch` are ignored because the hub no longer
+ * rings frames. Every connect gets a fresh snapshot.
+ */
 function registerEventStream(app: HonoApp, hub: HubAccessor): void {
   app.get("/events", (c) => {
-    const lastEventId = c.req.header("last-event-id")
-    const epoch = c.req.query("epoch")
     return streamSSE(c, async (stream) => {
       const sink: ControlSink = {
         write: async (frame) => {
@@ -86,7 +89,7 @@ function registerEventStream(app: HonoApp, hub: HubAccessor): void {
           // The handler resolves on abort below; nothing to do here.
         },
       }
-      const unsubscribe = await hub().subscribe(sink, { lastEventId, epoch })
+      const unsubscribe = await hub().subscribe(sink)
       await new Promise<void>((resolve) => {
         stream.onAbort(() => {
           unsubscribe()

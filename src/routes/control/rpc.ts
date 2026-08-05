@@ -11,8 +11,10 @@
  */
 import type { Context } from "hono"
 
+import { streamSSE } from "hono/streaming"
+
 import type { RpcRegistry } from "~/lib/jsonrpc/dispatch"
-import type { ControlHub } from "~/lib/live/hub"
+import type { ControlHub, ControlSink } from "~/lib/live/hub"
 import type { AsyncMutex } from "~/lib/live/mutex"
 import type { ControlSnapshot } from "~/lib/live/resources"
 
@@ -150,6 +152,32 @@ export function createControlRpcMethods(deps: ControlRpcDeps): RpcRegistry {
         await writeDefaultRegistry(removeAccount(reg, key))
         hub().emit("accounts", await buildAccountsList())
         return { ok: true, key, was_active: wasActive }
+      }),
+
+    /**
+     * Long-lived push stream. The response IS the subscription: a snapshot
+     * notification first, then per-topic change notifications until either side
+     * closes. Closing the stream is the unsubscribe — there is no cancel method,
+     * because a transport-level disconnect is unambiguous and a separate cancel
+     * would race it.
+     */
+    "subscriptions/listen": (_params: unknown, c: Context) =>
+      streamSSE(c, async (stream) => {
+        const sink: ControlSink = {
+          write: async (frame) => {
+            await stream.write(frame)
+          },
+          close: () => {
+            // Resolved by the abort handler below.
+          },
+        }
+        const unsubscribe = await hub().subscribe(sink)
+        await new Promise<void>((resolve) => {
+          stream.onAbort(() => {
+            unsubscribe()
+            resolve()
+          })
+        })
       }),
 
     "app/quit": relayToShell(emitQuitRequest, "quitting"),
