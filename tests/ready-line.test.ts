@@ -35,7 +35,9 @@ describe("ready-line (maximal-core#3)", () => {
   test("emits one parseable line carrying the bound port and pid", () => {
     process.env.MAXIMAL_SIDECAR_PARENT_PID = "4242"
     const out = captureStdout(() => {
-      expect(emitReadyLine({ port: 51234, pid: 99 })).toBe(true)
+      expect(
+        emitReadyLine({ v: 1, controlPort: 51234, proxyPort: 4141, pid: 99 }),
+      ).toBe(true)
     })
 
     const lines = out.split("\n").filter(Boolean)
@@ -45,23 +47,28 @@ describe("ready-line (maximal-core#3)", () => {
     const payload = JSON.parse(
       lines[0].slice(READY_MARKER.length + 1),
     ) as ReadyLine
-    // The port is the whole point: a supervisor asks for an ephemeral port, so
-    // this is the only way it learns where to connect.
-    expect(payload.port).toBe(51234)
+    // The control port is the whole point: a supervisor asks for an ephemeral
+    // one, so this is the only way it learns where to connect. The proxy port
+    // matters too — it falls back when 4141 is held (maximal-core#10).
+    expect(payload.v).toBe(1)
+    expect(payload.controlPort).toBe(51234)
+    expect(payload.proxyPort).toBe(4141)
     expect(payload.pid).toBe(99)
   })
 
   test("a plain CLI run emits nothing — the user's terminal stays clean", () => {
     delete process.env.MAXIMAL_SIDECAR_PARENT_PID
     const out = captureStdout(() => {
-      expect(emitReadyLine({ port: 4141, pid: 1 })).toBe(false)
+      expect(
+        emitReadyLine({ v: 1, controlPort: 4141, proxyPort: 4141, pid: 1 }),
+      ).toBe(false)
     })
     expect(out).toBe("")
   })
 
   test("the payload survives a strict round-trip, so a supervisor can parse it", () => {
     process.env.MAXIMAL_SIDECAR_PARENT_PID = "1"
-    const ready: ReadyLine = { port: 0, pid: 7 }
+    const ready: ReadyLine = { v: 1, controlPort: 0, proxyPort: 4141, pid: 7 }
     const out = captureStdout(() => {
       emitReadyLine(ready)
     })

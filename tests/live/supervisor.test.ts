@@ -9,7 +9,9 @@ import {
 } from "~/lib/live/supervisor"
 import { READY_MARKER } from "~/lib/start/boot-status"
 
-const READY = `${READY_MARKER} {"port":51234,"pid":99}`
+const READY = `${READY_MARKER} {"v":1,"controlPort":51234,"proxyPort":4141,"pid":99}`
+/** The pre-#10 shape: one listener served both planes. */
+const READY_V0 = `${READY_MARKER} {"port":51234,"pid":99}`
 
 /** Feed stdout as arbitrary chunks so the reassembly path is exercised. */
 
@@ -43,8 +45,29 @@ async function expectRejection(
 }
 
 describe("parseReadyLine", () => {
-  test("extracts the port and pid", () => {
-    expect(parseReadyLine(READY)).toEqual({ port: 51234, pid: 99 })
+  test("extracts both ports and the pid", () => {
+    expect(parseReadyLine(READY)).toEqual({
+      v: 1,
+      controlPort: 51234,
+      proxyPort: 4141,
+      pid: 99,
+    })
+  })
+
+  test("a v0 line still parses — one listener served both planes", () => {
+    // This parser ships to hosts that may supervise an older engine. Rejecting
+    // the old shape would hang them on a ready-line they silently dropped.
+    expect(parseReadyLine(READY_V0)).toEqual({
+      v: 0,
+      controlPort: 51234,
+      proxyPort: 51234,
+      pid: 99,
+    })
+  })
+
+  test("an unknown future version parses if the v1 fields are there", () => {
+    const future = `${READY_MARKER} {"v":9,"controlPort":1,"proxyPort":2,"pid":3}`
+    expect(parseReadyLine(future)).toMatchObject({ v: 9, controlPort: 1 })
   })
 
   test("ignores ordinary log lines", () => {
@@ -56,6 +79,8 @@ describe("parseReadyLine", () => {
     expect(parseReadyLine(`${READY_MARKER} {not json`)).toBeNull()
     expect(parseReadyLine(`${READY_MARKER} {"port":"51234"}`)).toBeNull()
     expect(parseReadyLine(`${READY_MARKER} {"pid":1}`)).toBeNull()
+    // v1 claimed but the fields are missing — do not silently half-parse.
+    expect(parseReadyLine(`${READY_MARKER} {"v":1,"pid":1}`)).toBeNull()
   })
 })
 
@@ -64,7 +89,12 @@ describe("awaitReadyLine", () => {
     const ready = await awaitReadyLine(
       chunks("booting\n", "@@MAXIMAL_STATUS@@ Auth…\n", `${READY}\n`),
     )
-    expect(ready).toEqual({ port: 51234, pid: 99 })
+    expect(ready).toEqual({
+      v: 1,
+      controlPort: 51234,
+      proxyPort: 4141,
+      pid: 99,
+    })
   })
 
   test("reassembles a marker split across chunk boundaries", async () => {
@@ -74,7 +104,7 @@ describe("awaitReadyLine", () => {
     const ready = await awaitReadyLine(
       chunks(READY.slice(0, mid), READY.slice(mid), "\n"),
     )
-    expect(ready.port).toBe(51234)
+    expect(ready.controlPort).toBe(51234)
   })
 
   test("surfaces preceding boot lines so a splash can show progress", async () => {
@@ -113,7 +143,7 @@ describe("awaitReadyLine — stream ownership", () => {
     stream.push(`${READY}\n`)
 
     const ready = await awaitReadyLine(stream)
-    expect(ready.port).toBe(51234)
+    expect(ready.controlPort).toBe(51234)
     // The assertion that matters: destroying this is what kills the sidecar.
     expect(stream.destroyed).toBe(false)
     expect(stream.readableEnded).toBe(false)

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test"
 
 import { state } from "~/lib/runtime-state/state"
-import { server } from "~/server"
+import { controlApp } from "~/server"
 
 const originalVerbose = state.verbose
 
@@ -12,13 +12,13 @@ afterEach(() => {
 describe("/_debug/state route", () => {
   it("returns 404 when state.verbose is false", async () => {
     state.verbose = false
-    const res = await server.request("/_debug/state")
+    const res = await controlApp.request("/_debug/state")
     expect(res.status).toBe(404)
   })
 
   it("returns 200 with shape when state.verbose is true", async () => {
     state.verbose = true
-    const res = await server.request("/_debug/state")
+    const res = await controlApp.request("/_debug/state")
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
       runtime: Record<string, unknown>
@@ -42,7 +42,7 @@ describe("/_debug/state route", () => {
     process.env.OLLAMA_API_KEY = sentinel
     let text: string
     try {
-      const res = await server.request("/_debug/state")
+      const res = await controlApp.request("/_debug/state")
       text = await res.text()
     } finally {
       /* eslint-disable require-atomic-updates -- single-test scope; no concurrent env mutation possible */

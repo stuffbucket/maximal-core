@@ -25,7 +25,10 @@ import { awaitReadyLine, sidecarSpawnEnv } from "~/lib/live/supervisor"
 
 export interface Sidecar {
   child: ChildProcessWithoutNullStreams
+  /** Control plane — JSON-RPC, subscriptions. Ephemeral (maximal-core#10). */
   port: number
+  /** Public data plane — `/v1`. A separate listener on a separate port. */
+  proxyPort: number
   pid: number
   /** Everything stdout emitted before the ready-line, in order. */
   bootLines: Array<string>
@@ -35,6 +38,8 @@ export interface Sidecar {
   logLines: Array<string>
   /** Base URL of the bound control plane. */
   baseUrl: string
+  /** Base URL of the public `/v1` listener. */
+  proxyUrl: string
 }
 
 export interface StartOptions {
@@ -58,8 +63,11 @@ export interface StartOptions {
  */
 function launchCommand(): { cmd: string; args: Array<string> } {
   const binary = process.env.MAXIMAL_E2E_BINARY
-  if (binary) return { cmd: binary, args: ["start", "--port", "0"] }
-  return { cmd: "bun", args: ["src/main.ts", "start", "--port", "0"] }
+  if (binary) return { cmd: binary, args: ["start", "--port", "0", "--control-port", "0"] }
+  return {
+    cmd: "bun",
+    args: ["src/main.ts", "start", "--port", "0", "--control-port", "0"],
+  }
 }
 
 /** What the current run is exercising, for harness output. */
@@ -110,11 +118,13 @@ export async function startSidecar(
 
   return {
     child,
-    port: ready.port,
+    port: ready.controlPort,
+    proxyPort: ready.proxyPort,
     pid: ready.pid,
     bootLines,
     logLines,
-    baseUrl: `http://127.0.0.1:${ready.port}`,
+    baseUrl: `http://127.0.0.1:${ready.controlPort}`,
+    proxyUrl: `http://127.0.0.1:${ready.proxyPort}`,
   }
 }
 
@@ -132,7 +142,7 @@ export function createReporter(title: string): Reporter {
   return {
     check: (label, ok, detail) => {
       if (!ok) failed = true
-      console.log(`${ok ? "ok  " : "FAIL"}  ${label.padEnd(14)} ${detail}`)
+      console.log(`${ok ? "ok  " : "FAIL"}  ${label.padEnd(18)} ${detail}`)
     },
     finish: () => {
       console.log("")

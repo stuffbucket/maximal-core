@@ -24,7 +24,14 @@ export const start = defineCommand({
       alias: "p",
       type: "string",
       default: "4141",
-      description: "Port to listen on",
+      description:
+        "Public port for the /v1 proxy that third-party tools call. Falls back to the next free port if held.",
+    },
+    "control-port": {
+      type: "string",
+      default: "0",
+      description:
+        "Port for the private control plane (JSON-RPC, events). 0 picks an ephemeral port; the boot banner reports it.",
     },
     verbose: {
       alias: "v",
@@ -92,6 +99,10 @@ export const start = defineCommand({
 
     return runServer({
       port: Number.parseInt(args.port, 10),
+      // A programmatic caller of `start.run` may omit this, yielding NaN.
+      // `runServer` treats any non-integer as "let the OS choose" rather than
+      // passing it through to the bind.
+      controlPort: Number.parseInt(args["control-port"], 10),
       verbose: args.verbose,
       // Fail closed on an invalid account type rather than constructing a
       // bogus host from a typo (boundary D1).

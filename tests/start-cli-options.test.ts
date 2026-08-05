@@ -45,6 +45,7 @@ describe("start command CLI args — exact key set", () => {
       [
         "account-type",
         "claude-code",
+        "control-port",
         "github-token",
         "manual",
         "port",
@@ -70,7 +71,7 @@ describe("start command CLI args — port", () => {
     expect(args.port.default).toBe("4141")
   })
   test("description is human-readable", () => {
-    expect(args.port.description).toBe("Port to listen on")
+    expect(args.port.description).toContain("Public port")
   })
 })
 

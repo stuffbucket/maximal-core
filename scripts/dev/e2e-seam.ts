@@ -37,6 +37,44 @@ try {
     `${sidecar.bootLines.length} relayed`,
   )
 
+  // ── Two listeners, actually separated (maximal-core#10) ──────────────────
+  // The whole point of the split is that the sensitive surface is not on the
+  // port third-party tools call. Asserting the two ports differ is not enough —
+  // check that each app really refuses the other's routes, because a mounting
+  // mistake would leave both reachable on both and nobody would notice.
+  report.check(
+    "two listeners",
+    sidecar.port !== sidecar.proxyPort
+      && sidecar.port > 0
+      && sidecar.proxyPort > 0,
+    `control=${sidecar.port} proxy=${sidecar.proxyPort} (distinct)`,
+  )
+
+  const v1OnControl = await fetch(`${sidecar.baseUrl}/v1/models`)
+  report.check(
+    "no /v1 on control",
+    v1OnControl.status === 404,
+    `${v1OnControl.status} — the data plane is not mounted on the private port`,
+  )
+
+  const rpcOnProxy = await fetch(`${sidecar.proxyUrl}/control/rpc`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "health" }),
+  })
+  report.check(
+    "no control on proxy",
+    rpcOnProxy.status === 404,
+    `${rpcOnProxy.status} — the control plane is not on the well-known port`,
+  )
+
+  const identity = await fetch(`${sidecar.proxyUrl}/`)
+  report.check(
+    "identity probe",
+    (await identity.text()).trim() === "Server running",
+    "the public port answers the probe `resolvePort` uses to spot another maximal",
+  )
+
   const client = new ControlClient({ baseUrl: sidecar.baseUrl })
 
   const discovered = await client.call<{

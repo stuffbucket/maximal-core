@@ -32,7 +32,7 @@ let shuttingDown = false
 /** Stop the HTTP server, then exit 0. Capped at ~2.5s by an unref'd
  *  watchdog timer so a hung close() can't keep the process alive. */
 export async function initiateShutdown(
-  httpServer: ReturnType<typeof serve>,
+  servers: Array<ReturnType<typeof serve>>,
   reason: string,
 ): Promise<void> {
   if (shuttingDown) return
@@ -55,11 +55,16 @@ export async function initiateShutdown(
   }, 2500)
   watchdog.unref()
 
-  try {
-    // srvx Server exposes close(); pass true to drop in-flight conns.
-    await httpServer.close(true)
-  } catch (error) {
-    consola.warn("shutdown: server.close() threw", error)
+  // Close every listener. Since maximal-core#10 there are two (public /v1 and
+  // the private control plane); one left open would keep the port held and make
+  // the next start fall back to a different one for no reason.
+  for (const server of servers) {
+    try {
+      // srvx Server exposes close(); pass true to drop in-flight conns.
+      await server.close(true)
+    } catch (error) {
+      consola.warn("shutdown: server.close() threw", error)
+    }
   }
 
   // Pidfile is a hint, not a lock — best-effort cleanup.
@@ -86,13 +91,13 @@ export async function initiateShutdown(
  *  reverter is idempotent (no-op when the URL is absent or foreign),
  *  so it's safe even when initiateShutdown ALSO runs first. */
 export function installShutdownHandlers(
-  httpServer: ReturnType<typeof serve>,
+  ...servers: Array<ReturnType<typeof serve>>
 ): void {
   process.on("SIGTERM", () => {
-    void initiateShutdown(httpServer, "received SIGTERM")
+    void initiateShutdown(servers, "received SIGTERM")
   })
   process.on("SIGINT", () => {
-    void initiateShutdown(httpServer, "received SIGINT")
+    void initiateShutdown(servers, "received SIGINT")
   })
 
   // Safety net: synchronous revert on any Node-controlled exit path,
@@ -125,7 +130,7 @@ export function installShutdownHandlers(
       } catch {
         clearInterval(interval)
         consola.warn(`shutdown: parent ${parentPid} gone`)
-        void initiateShutdown(httpServer, `parent ${parentPid} exited`)
+        void initiateShutdown(servers, `parent ${parentPid} exited`)
       }
     }, 3000)
     interval.unref()

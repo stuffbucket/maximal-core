@@ -42,13 +42,22 @@ export interface State {
   copilotApiUrl?: CopilotHost
 
   /**
-   * The port the HTTP server actually bound to this run. Set by `runServer`
-   * from the resolved `--port` (default 4141). The control-surface Origin guard
-   * + narrowed CORS read it to decide which `http://localhost:<port>` origin is
-   * "us" (§6, ADR-0021) — it must reflect the real bound port, not a literal,
-   * so a non-default `--port` UI still passes its own origin gate (§1.1).
+   * The **control plane** port bound this run (maximal-core#10) — JSON-RPC,
+   * subscriptions, `/_debug`. Ephemeral under a supervisor. The control-surface
+   * Origin guard + narrowed CORS read it to decide which
+   * `http://localhost:<port>` origin is "us" (§6, ADR-0021); it must reflect the
+   * real bound port, not a literal, so a non-default port still passes its own
+   * origin gate (§1.1). The guarded prefixes all live on this listener, which is
+   * why the guard keys off this and not the proxy port.
    */
-  boundPort: number
+  controlPort: number
+
+  /**
+   * The **public data plane** port bound this run — `/v1` and the other proxy
+   * routes third-party tools call. Prefers 4141 but falls back when held, so it
+   * is not a literal either.
+   */
+  proxyPort: number
 
   /**
    * Set by the desktop shell at sidecar spawn (env var MAXIMAL_SHELL_KEY).
@@ -106,10 +115,11 @@ export const state: State = {
   rateLimitWait: false,
   showToken: false,
   verbose: false,
-  // Default port; `runServer` overwrites with the resolved `--port` at boot.
-  // In-memory tests (`server.request(...)`, no runServer) see this default,
-  // which matches the CLI's own 4141 default (src/lib/start/cli.ts).
-  boundPort: 4141,
+  // Defaults; `runServer` overwrites both with the resolved ports at boot.
+  // In-memory tests (`app.request(...)`, no runServer) see these, which match
+  // the CLI's own defaults (src/lib/start/cli.ts).
+  controlPort: 4141,
+  proxyPort: 4141,
   vsCodeDeviceId: randomUUID(),
   shellApiKey: process.env.MAXIMAL_SHELL_KEY?.trim() || undefined,
 }

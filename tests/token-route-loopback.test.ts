@@ -14,7 +14,7 @@
  * caller (that list only *relaxes* auth for loopback callers — see
  * src/lib/request-auth.ts), which is why deletion is the correct fix.
  *
- * In-process `server.request(...)` carries no socket, so
+ * In-process `publicApp.request(...)` carries no socket, so
  * `defaultGetRequestIp` resolves to null → the caller is treated as
  * non-loopback. We authenticate via `state.shellApiKey`, whose
  * presented key bypasses the enforce flag in the auth middleware.
@@ -23,7 +23,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import { state } from "~/lib/runtime-state/state"
-import { server } from "~/server"
+import { publicApp } from "~/server"
 
 const SHELL_KEY = "test-shell-key-230"
 
@@ -47,7 +47,7 @@ describe("GET /token is removed (security defect #230)", () => {
   })
 
   test("authenticated non-loopback caller gets 404, never the raw secret", async () => {
-    const res = await server.request("/token", {
+    const res = await publicApp.request("/token", {
       headers: { "x-api-key": SHELL_KEY },
     })
 
@@ -60,7 +60,7 @@ describe("GET /token is removed (security defect #230)", () => {
   })
 
   test("unauthenticated caller also never receives the secret", async () => {
-    const res = await server.request("/token")
+    const res = await publicApp.request("/token")
 
     // Either 401 (auth gate) or 404 (route absent) — never a 200 with the
     // token. The key property: no code path serves state.copilotToken.

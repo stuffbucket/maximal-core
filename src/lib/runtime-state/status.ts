@@ -66,6 +66,16 @@ export interface StatusResponse {
     copilot: CopilotSubsystemStatus
     models: ModelsSubsystemStatus
   }
+  /**
+   * Both bound listeners (maximal-core#10). `/status` is served on the public
+   * port, so a caller that found *this* already knows `proxy` — `control` is the
+   * useful half: it is ephemeral, and this is the only unauthenticated way to
+   * discover it without having caught the ready-line at spawn time.
+   */
+  ports: {
+    proxy: number
+    control: number
+  }
 }
 
 /**
@@ -93,6 +103,10 @@ export function buildStatus(startMs: number): StatusResponse {
       models: {
         cached: modelsCached(),
       },
+    },
+    ports: {
+      proxy: state.proxyPort,
+      control: state.controlPort,
     },
   }
 }
