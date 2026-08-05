@@ -1,11 +1,12 @@
 # Bun version policy
 
-Pinned in `.bun-version` — read by `bun install`, by Bun's own version
-manager, and at runtime by every CI workflow (`ci.yml`, `tooling-ci.yml`,
-`watch-external-drift.yml` each `cat .bun-version` into `setup-bun`). No
-workflow holds a copy of the version literal, so dev/CI drift is not
-representable — which is the point: drift is what got us a 22-test failure on
-a Bun `latest` regression once.
+Pinned in `.bun-version` — read by `bun install`, by Bun's own version manager,
+and at runtime by every CI workflow that needs Bun: `ci.yml`, `tooling-ci.yml`,
+`watch-external-drift.yml`, `release-gates.yml`, and `release-tag-check.yml`
+each `cat .bun-version` into `setup-bun`. No workflow — and no doc — holds a
+copy of the version literal, so dev/CI drift is not representable — which is
+the point: drift is what got us a 22-test failure on a Bun `latest` regression
+once.
 
 Bump intentionally — edit `.bun-version`, nothing else:
 

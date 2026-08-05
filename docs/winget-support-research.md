@@ -1,5 +1,9 @@
 # Research: winget support for Maximal
 
+> **Scope:** the `maximal` desktop app, which ships the MSI. `maximal-core`
+> builds no installer and has no `installers.yml` — every workflow path below
+> refers to the parent repo.
+
 **Bottom line:** yes, this is easy. We already ship the only thing
 winget needs (a silent-installable MSI). A first submission is
 ~1–2 hours; auto-update on every release is another ~1–2 hours of CI

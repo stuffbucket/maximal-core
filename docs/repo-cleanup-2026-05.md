@@ -1,5 +1,9 @@
 # Repo cleanup — 2026-05
 
+> **Historical.** Written against the pre-split `stuffbucket/maximal` repo. Most
+> `src/`, `build/`, and `scripts/` paths below do not exist in `maximal-core`.
+> Kept as a record of what was done and why; do not treat its paths as current.
+
 One PR. Disjoint work units so subagents in parallel worktrees don't
 collide. Each unit is independently revertible.
 

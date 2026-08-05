@@ -11,8 +11,12 @@ Last verified: 2026-07-03.
 Claude Desktop's "Cowork on third-party inference" mode has two
 configuration tiers:
 
-1. **UI preferences** in `~/Library/Application Support/Claude/claude_desktop_config.json`
-   — what you see in Settings panels.
+1. **UI preferences** in `claude_desktop_config.json`. maximal writes to the
+   third-party user-data dir — `~/Library/Application Support/Claude-3p/` on
+   macOS, `%LOCALAPPDATA%\Claude-3p\` on Windows (`getClaude3pDir`,
+   `src/apps/claude-desktop/config.ts`) — with the profile itself under
+   `configLibrary/<uuid>.json` and a `configLibrary/_meta.json` pointer.
+   Interactive Claude Desktop uses the un-suffixed `Claude/` dir.
 2. **MDM / managed preferences** in the macOS user defaults domain
    `com.anthropic.claudefordesktop` (or Windows `HKCU\SOFTWARE\Policies\Claude`)
    — what an admin pushes via Jamf / Kandji / Intune in production.
@@ -66,16 +70,24 @@ gateway-wiring keys. The complete set:
 }
 ```
 
-`allowedWorkspaceFolders` is parameterized to the running user's
-`$HOME` and the directory is created on disk if missing. The merge is
-allowlist-only — keys outside this set are preserved verbatim, and
-`maximal app claude-desktop --disable` (or `maximal uninstall --force`)
-removes exactly these keys.
+`allowedWorkspaceFolders` is parameterized to the running user's `$HOME` and
+the directory is created on disk if missing.
 
-`preferences` is the one **nested** block we touch: we set only the
-`coworkWebSearchEnabled` sub-key and preserve every other preference
-the app stores there, so revert strips just that sub-key (dropping the
-`preferences` object only if it was the last thing left).
+Two files, two write strategies (`applyConfigLibraryProfile`):
+
+- **`configLibrary/<uuid>.json`** — the profile above is written **wholesale**
+  (`atomicWriteJson(profilePath, values)`). It is maximal's own profile entry,
+  so there is nothing foreign in it to preserve.
+- **`claude_desktop_config.json`** — **merged**. Only `deploymentMode: "3p"` and
+  the nested `preferences.coworkWebSearchEnabled: true` are set; every other
+  top-level key and every other `preferences` sub-key is preserved verbatim.
+
+`maximal app claude-desktop --disable` (or `maximal uninstall --force`) reverts
+via `revertConfigLibraryProfile`, which deletes the profile file, clears
+`_meta.json`'s `appliedId`, and removes `deploymentMode`.
+
+**Known gap:** revert does **not** strip `preferences.coworkWebSearchEnabled`
+— that sub-key survives a disable. Fixing it is a `src/` change, not a doc one.
 
 ### Why `deploymentMode` is in the profile
 
@@ -92,15 +104,22 @@ picks third-party) is what skips the sign-in on a clean install.
 
 ### MDM-tier interaction
 
-The wizard owns one egress knob: file-tier `coworkEgressAllowedHosts:
-["*"]`. Because MDM-tier defaults take precedence over the file, the
-wizard reads `defaults read com.anthropic.claudefordesktop
-coworkEgressAllowedHosts` and **deletes the MDM key if present** — most
-commonly populated by Claude Desktop's own installer — so the
-file-tier `["*"]` becomes the effective value. Uninstall does not
-re-create the MDM key; users who want it back run `defaults write`
-manually or re-run `scripts/install-cowork-egress.sh` for the curated
-list.
+The wizard owns one egress knob: file-tier `coworkEgressAllowedHosts: ["*"]`.
+Because MDM-tier defaults take precedence over the file, an MDM value for
+`coworkEgressAllowedHosts` in `com.anthropic.claudefordesktop` — most commonly
+populated by Claude Desktop's own installer — **wins over** what maximal writes.
+
+maximal does **not** read or delete that MDM key: nothing in `src/` shells out
+to `defaults`, and `CLAUDE_3P_PREF_DOMAIN` is used only to emit the
+`.mobileconfig` under `--managed`. If the effective allowlist looks wrong,
+check the MDM tier by hand:
+
+```sh
+defaults read com.anthropic.claudefordesktop coworkEgressAllowedHosts
+defaults delete com.anthropic.claudefordesktop coworkEgressAllowedHosts
+```
+
+Run `scripts/install-cowork-egress.sh` for the curated list instead of `*`.
 
 ## Key reference (subset relevant to this proxy)
 
@@ -145,7 +164,7 @@ WebSearch / fetch egress filter. Three useful shapes:
 
 ```sh
 # Curated allowlist (what scripts/install-cowork-egress.sh writes —
-# ~120 entries spanning code hosting, package registries, language
+# ~140 entries spanning code hosting, package registries, language
 # docs, standards bodies, news outlets, search engines, AI labs,
 # cloud provider docs, and testing domains).
 bash scripts/install-cowork-egress.sh
@@ -163,18 +182,19 @@ gating without disabling the connector. Cowork's UI surfaces this as
 the `* Allow all` button under **Configure third-party inference →
 Sandbox & workspace → Allowed egress hosts**.
 
-With our proxy doing the actual web fetching via `OllamaWebExecutor`
-on the proxy side, the curated allowlist is optional — Cowork's
+With our proxy doing the actual web fetching (via whichever executor
+`chooseExecutor` selects — Ollama, Copilot `/responses`, or the in-process
+fallback), the curated allowlist is optional — Cowork's
 bundled connectors aren't on the proxy's path for `web_search` (the
-model emits a server-tool block, our proxy intercepts, Ollama
-executes). But for `web_fetch` and other URL-grabbing connectors that
+model emits a server-tool block, our proxy intercepts, the executor
+runs it). But for `web_fetch` and other URL-grabbing connectors that
 run inside the desktop process, the allowlist still gates them.
 
 ### Hide variant model IDs from the picker
 
-We already drop `-high`, `-xhigh`, `-1m` variants in our `/v1/models`
-listing (`fix(models): drop variant ids from listing` —
-`47a7439`). If you want belt-and-suspenders enforcement, also set:
+We already drop `-high`, `-xhigh`, `-1m`, `-1m-internal` variants in our
+`/v1/models` listing (`src/routes/models/route.ts`). If you want
+belt-and-suspenders enforcement, also set:
 
 ```sh
 defaults write com.anthropic.claudefordesktop inferenceModels \

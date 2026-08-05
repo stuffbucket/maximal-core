@@ -5,9 +5,13 @@ and how it relates to what Anthropic's hook documentation prescribes.
 Intent: give whoever owns the hooks a sharp problem statement before
 solutioning.
 
+**Scope:** describes an operator's local `.claude/` setup. `maximal-core`
+does not commit a `.claude/` tree, so none of the `.claude/…` or
+`scripts/gemma-watch.ts` paths below resolve in this repo.
+
 ## What's actually in place today
 
-`.claude/settings.json` registers two hooks. Both end-of-action,
+An operator's `.claude/settings.json` registers two hooks. Both end-of-action,
 neither pre-action; both veto-capable; both share one JSONL log.
 
 | Hook       | Event       | Matcher              | Script              | Timeout |
@@ -52,8 +56,7 @@ bugs.
 ### Shared sink — `.claude/logs/checks.jsonl`
 
 Both hooks append one JSONL line per run. The line is consumed by
-`scripts/gemma-watch.ts` (`bun run analyze`), a local Ollama meta-
-analyzer. The log is the only durable record of hook firings; nothing
+a local Ollama meta-analyzer side process (not committed here). The log is the only durable record of hook firings; nothing
 else reads it today.
 
 ### Implicit curation policy
@@ -163,8 +166,9 @@ visual noise in every firing and crowd out the actionable lines.
 
 ### 10. The analyze sink exists but no one consumes it interactively
 
-`.claude/logs/checks.jsonl` is the one durable record. `gemma-watch`
-exists. In practice no one runs `bun run analyze` during work — the
+`.claude/logs/checks.jsonl` is the one durable record. The `gemma-watch`
+analyzer exists in the operator's own tree. In practice no one starts it
+during work — the
 log accumulates and the realtime channel is the only one the
 assistant sees. There's a meta-signal layer designed in but the
 loop isn't closed.

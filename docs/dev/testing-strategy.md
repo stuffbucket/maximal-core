@@ -29,16 +29,16 @@ costs human judgment only where judgment is actually required:
   `bunfig.toml`, `stryker.conf.json`, `.bun-version`) and ADRs — are named
   directly. Renaming one *is* a policy change, so a doc edit is expected then.
 - **Inventory** — concrete `src/…` paths, function names, example test files —
-  is never hand-maintained as prose. Counts come from the `bun test` summary;
-  every path, `bun run` script, and relative markdown link this document names
-  is checked by `tests/docs-reference-parity.test.ts`, which fails the build the
-  moment one stops existing. Drift surfaces as a red test in CI, not as a stale
-  line an external reviewer finds first.
+  is kept to a minimum and never used as the load-bearing content of a section.
+  Counts come from the `bun test` summary rather than being hand-maintained
+  here.
 
 **So the contract is:** a pure rename never requires *rethinking* this document —
-at most it re-points a reference the parity test already flagged for you. And the
-verification status is unambiguous — if CI is green, every path, script, and
-config anchor this document names is currently true.
+at most it re-points a reference.
+
+**Nothing enforces that mechanically.** There is no doc-reference parity test in
+this repo, so a renamed path named here goes stale silently. Re-verify the
+`src/…` paths and `bun run` scripts below against the tree when you touch them.
 
 ---
 
@@ -121,14 +121,9 @@ Two global safeguards are registered via `bunfig.toml`'s `[test] preload`
    the real registry/token helpers would read and **write the developer's real
    sign-in state** — which has corrupted real credentials during test runs in
    the past. A test may set its own `COPILOT_API_HOME` and it wins.
-2. **Generated-stub guarantee.** The gitignored `src/generated/` stub tree is
-   force-created before any module imports it, so a fresh `git worktree` (which
-   never ran `bun install`) doesn't fail server-boot tests with an opaque
-   missing-module error.
-
-Additionally the preload resets `consola.level` to Info (3) before every test,
-because some tests raise verbosity and don't restore it, leaking flooding debug
-output into later tests.
+2. **Consola level reset.** `consola.level` is reset to Info (3) before every
+   test, because some tests raise verbosity and don't restore it, leaking
+   flooding debug output into later tests.
 
 The preload also registers the **outermost `afterEach(() => mock.restore())`**
 (`tests/test-setup.ts`): a defense-in-depth net that restores every `spyOn` spy
@@ -139,9 +134,9 @@ method for every later file in the Bun worker (the spy analog of the
 restored per-file (§5.1).
 
 **Shared fixtures/helpers** live in `tests/helpers/` (`fake-executor.ts`,
-`auth-flow-utils.ts`, `auth-status.ts`). Preference order for test doubles:
-**injectable function options > `mock.module`** — for a hazard reason spelled
-out in §5.
+`auth-flow-utils.ts`, `auth-status.ts`, `rfc-network-fixtures.ts`). Preference
+order for test doubles: **injectable function options > `mock.module`** — for a
+hazard reason spelled out in §5.
 
 ---
 
@@ -212,10 +207,10 @@ file you didn't stage passes locally and fails CI. **Always run `lint:all`
 before pushing.** This has produced red CI on otherwise-good PRs.
 
 ### 5.5 Fresh worktrees need setup
-A `git worktree` created for isolated work has no `node_modules` and no
-generated stub. `bun install` (matches lockfile) and `bun run ensure:ui-embed`
-may be required before typecheck/tests import cleanly. The preload handles the
-stub for the test path specifically; typecheck does not get that for free.
+A `git worktree` created for isolated work has no `node_modules` — `git worktree
+add` does not run an install. Run `bun install` (matches the lockfile) in the new
+tree before `bun run typecheck` or `bun test`, or imports fail with an opaque
+missing-module error.
 
 ---
 
@@ -334,16 +329,16 @@ We would specifically like external judgment on these:
    (§6), but we currently have no coverage *visibility* either — we cannot point
    at which modules are under-exercised without running Stryker on each. A
    reporting-only coverage signal (not a gate) may be worth adding.
-4. **Cross-file test-size cap friction.** Large single-domain test files
-   approach the repo's `max-lines: 800` ESLint cap; independent PRs appending to
-   the same file can collide and/or bust the cap on merge. Suggests a
-   convention for splitting test files by concern.
-6. **`mock.module` global-state hazard (§5.1)** — now partly enforced by a lint
+4. **Cross-file test-size friction.** Large single-domain test files keep
+   growing; independent PRs appending to the same file collide on merge. There
+   is no `max-lines` ESLint cap in this repo today, so nothing bounds this
+   mechanically. Suggests a convention for splitting test files by concern.
+5. **`mock.module` global-state hazard (§5.1)** — now partly enforced by a lint
    rule (`mockModuleLeakGuard`) that bans the fire-and-forget forms. **Residual
    gap:** the rule can't catch an *awaited-but-cross-file-leaky* mock of a shared
    module (an awaited restore doesn't reliably land on CI), so the convention
    "prefer real/injectable deps for shared modules" still rests on review.
-7. **No load/performance/soak coverage** for the proxy under sustained
+6. **No load/performance/soak coverage** for the proxy under sustained
    concurrent request load or long-running sidecar sessions.
 
 ---
@@ -354,12 +349,19 @@ CI (`.github/workflows/ci.yml`) runs on every push/PR and is the merge gate.
 Steps, in order:
 
 1. Verify Node `node:sqlite` support (the app uses it).
-2. Pinned Bun setup (`.github/actions/setup-bun`).
+2. Pinned Bun setup (`.github/actions/setup-bun`, version read from `.bun-version`).
 3. `bun install`.
 4. **`bun run lint:all`** (full-tree ESLint, `eslint --cache .`).
 5. **`bun run typecheck`** (`tsc`).
-6. **`bun test`** (full suite).
-7. **`bun run build`**.
+6. **`bun run typecheck:downstream`** — compiles the simulated consumer in
+   `downstream/` against the published exports map. Nothing else proves a
+   downstream package can resolve and compile against `./supervisor` and
+   `./control-contract`.
+7. **`bun run casts:check`** (`scripts/find-casts.ts --check`) — fails on a new
+   unannotated boundary cast.
+8. **`bun test`** (full suite).
+9. **`bun run knip`** (unused files / exports / deps).
+10. **`bun run build`**.
 
 Security workflows (CodeQL, trufflehog) run alongside, and `release-gates.yml`
 checks a PR's milestone and bump. There is **no** build/sign/publish pipeline —
@@ -369,9 +371,12 @@ a release is a GitHub milestone, tagged by hand (see `docs/architecture.md`
 
 **Local pre-merge equivalents:**
 
-- `bun run check:fast` = `ensure:ui-embed → lint:fast → typecheck → lint:all →
-  check:tokens`.
-- `bun run check:deep` = `check:fast → bun test → knip`.
+- `bun run check:fast` = `lint:fast → typecheck → lint:all`.
+- `bun run check:deep` = `check:fast → casts:check → bun test → knip → build →
+  typecheck:downstream`. This is a superset of the CI step list above, so green
+  here means green there.
+- `bun run check:ops` = `typecheck:ops → test:ops`, for `scripts/ops/` (its own
+  tsconfig and test run; `tooling-ci.yml` is the CI counterpart).
 - **Pre-commit hook** (simple-git-hooks → lint-staged): `bun run lint --fix` +
   `scripts/secret-scan.sh` on staged files. Note this runs the staged-file
   `lint`, not full-tree `lint:all`; §5.4 still applies — run `lint:all` yourself

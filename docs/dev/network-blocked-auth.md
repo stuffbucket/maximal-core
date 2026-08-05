@@ -77,6 +77,12 @@ Historically this was invisible:
 
 ## Follow-ups (intentionally not done yet)
 
+> **Scope note.** Every `shell/…` and `docs/design/…` path in this section lives
+> in the GUI repo [`stuffbucket/maximal`](https://github.com/stuffbucket/maximal),
+> not in `maximal-core`. Core is headless — it emits the signals; the shell
+> renders them. Only the `src/lib/net/…`, `src/lib/auth/…` and `tests/…` paths
+> below resolve in this repo.
+
 The **network-issue banner is built** for the Settings window: a global,
 account-aware, 12-locale banner that mirrors `.requirement-callout` in the
 warning tone, plus an account-type glyph (individual/team/enterprise) next to

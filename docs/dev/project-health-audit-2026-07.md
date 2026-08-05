@@ -2,6 +2,9 @@
 
 **Status:** Findings report for review. Read-only audit — no code changed.
 **Date:** 2026-07-04.
+**Scope:** the pre-split `stuffbucket/maximal` tree. Its `file:line` citations
+were accurate on that date and against that layout; many of those paths no
+longer exist in `maximal-core`. Read it as a record, not as a map.
 **Method:** Four parallel read-only audits over `src/` (155 files, ~25k LOC),
 partitioned by subsystem plus one signature-level lens. Every finding carries
 `file:line` evidence; the highest-stakes items were independently re-verified

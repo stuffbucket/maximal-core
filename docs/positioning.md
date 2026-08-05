@@ -2,7 +2,13 @@
 
 Internal messaging reference. Grounded in the *AI in Design* survey (Q1 2026,
 ~900 practising designers). Keeps our copy honest and consistent across the
-site, the guide, the README, and any pitch.
+site, the guide, and any pitch.
+
+**Scope:** this governs **end-user-facing** copy for the `maximal` product (the
+desktop app). It does **not** govern developer-facing surfaces of
+`@stuffbucket/maximal-core` — this package is a headless proxy, and its README,
+`package.json` description, and CLI help say so in exactly the words the
+guardrails below forbid. That is deliberate, not drift.
 
 ## What maximal is (canonical)
 
@@ -90,7 +96,8 @@ segment the messaging.
 - **Keep the hero billing-free.** The economic angle lives in the explainer's
   "No second bill" note, not the top tagline (a deliberate call — the hero stays
   human and universal for the non-technical end of the audience).
-- **Never** "proxy". Format-neutral desktop wording only (no "menu bar" / "tray").
+- **Never** "proxy" in end-user copy. Format-neutral desktop wording only (no
+  "menu bar" / "tray"). Developer-facing core surfaces are exempt — see *Scope*.
 
 ## Where each fact earns its place
 
@@ -98,5 +105,5 @@ segment the messaging.
 |---|---|
 | Hero | The human promise — the tools you love, the models you have (billing-free). |
 | Explainer ("maximalize your AI ecosystem") | The coding-layer sharpening + the tools→models rail; "No second bill" note carries the economics. |
-| Guide overview / README | The canonical definition above. |
+| Guide overview | The canonical definition above. |
 | Pitch / launch | The wedge: 65% Claude Code vs 9% Copilot; 3 → 7 toolstack. |

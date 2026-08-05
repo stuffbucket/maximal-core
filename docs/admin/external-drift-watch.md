@@ -20,11 +20,30 @@ deterministic check with no LLM and no interactive auth.
 Each pin is compared against an authoritative upstream. The pin in `src/` is the
 single source of truth — the watcher reads it, never a duplicate.
 
+**`VERSION_PINS`** — a machine-readable "latest" exists, so these are
+auto-`--fix`-able:
+
 | Pin (source of truth)                                               | Upstream authority                                          | Signal                                              |
 | ------------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------- |
 | `COPILOT_VERSION` — `src/lib/config/api-config.ts`                  | `microsoft/vscode-copilot-chat` latest release              | Copilot client version + proxy for `/models` schema |
 | `CLAUDE_AGENT_USER_AGENT` — same file                               | `anthropics/claude-code` latest release                     | impersonated agent version                          |
-| `OPENCODE_VERSION` — same file                                      | `sst/opencode` latest release                               | impersonated client version                         |
+| `OPENCODE_SEMVER` — same file (`OPENCODE_VERSION` derives from it)  | `sst/opencode` latest release                               | impersonated client version                         |
+
+**`HEADER_PINS`** — upstream API-version *header* date strings. No machine-readable
+"latest" exists and a bump needs a human changelog read, so these compare against
+a last-reviewed baseline in `scripts/ops/external-drift-baseline.json` and route
+to the **issue path only**, never `--fix`:
+
+| Pin (source of truth)                                                     | Review before bumping                     |
+| ------------------------------------------------------------------------- | ----------------------------------------- |
+| `ANTHROPIC_API_VERSION` — `src/lib/models/anthropic-types.ts`             | Anthropic API versioning docs             |
+| `x-github-api-version` (user/token endpoints) — `src/lib/config/api-config.ts` | GitHub REST API versions docs        |
+| `x-github-api-version` (token-exchange endpoint) — same file             | GitHub REST API versions docs             |
+
+**Baseline-only:**
+
+| Pin (source of truth)                                               | Upstream authority                                          | Signal                                              |
+| ------------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------- |
 | `anthropicSdkStatsSha` — `scripts/ops/external-drift-baseline.json` | `anthropics/anthropic-sdk-typescript` `.stats.yml` blob SHA | `/v1/messages` OpenAPI-spec change                  |
 
 The runtime Copilot `/models` **values** sit behind an authed token with no
@@ -104,9 +123,13 @@ maintainer can also pick it up from the labelled issue by hand. Either way:
 - **Version pin:** review the linked upstream release for behavioural changes,
   then bump the pin in `src/lib/config/api-config.ts` to the target version.
   Reconcile **every** occurrence — a version can also appear verbatim in a
-  coupled User-Agent string (e.g. `OPENCODE_VERSION` is echoed in the opencode
-  UA we send), so a search-and-replace on the bare value, reviewed before
-  committing, is safer than touching only the pinned constant.
+  coupled User-Agent string (e.g. `OPENCODE_SEMVER` is echoed in the opencode
+  UA we send via `OPENCODE_VERSION`), so a search-and-replace on the bare value,
+  reviewed before committing, is safer than touching only the pinned constant.
+- **Header pin:** read the provider changelog linked in the issue, reconcile any
+  behaviour change, then bump that pin's baseline value in
+  `scripts/ops/external-drift-baseline.json` in the same change. `--fix` never
+  touches these.
 - **Anthropic spec hash:** review the SDK diff for new/changed message params,
   content blocks, or stream events; reconcile `src/lib/models/anthropic-types.ts`
   if needed; then bump `anthropicSdkStatsSha` in

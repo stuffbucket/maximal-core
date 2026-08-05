@@ -2,7 +2,7 @@
 
 Once maximal is open, this is your map. You'll find a set of sections down the side — Account, Endpoint, API clients, Apps, Models, Usage, General, Logs, and Diagnostics. Here's what each one does and when you'd reach for it.
 
-New here? Start with [Install maximal](./install) and [Get started](./overview) first, then come back.
+New here? Start with [Install maximal](./install.md) and [Get started](./overview.md) first, then come back.
 
 ## Account
 
@@ -60,7 +60,7 @@ Mint a stable, named key for anything you want to keep pointed at maximal for th
 
 Every time maximal restarts, its auto-generated endpoint key rotates. That's fine for quick tests, but it'll break a long-running tool the next time you restart. A named key here stays put across restarts — give it a name you'll recognize later.
 
-One security note: if your key list is empty, maximal accepts *all* local requests with no client auth. That's convenient on a trusted machine, but if you want maximal to require a key, add at least one.
+One security note: maximal accepts *all* local requests with no client auth until enforcement is turned on (`auth.enforce`). Adding a key does not flip that by itself — the key list and the enforcement switch are separate. That's convenient on a trusted machine; turn enforcement on if you want maximal to require a key.
 
 ## Models
 
@@ -107,6 +107,6 @@ It's the first thing to check before filing an issue.
 
 - maximal is pre-alpha, so expect a few rough edges.
 - maximal auto-configures only Claude Code and Claude Desktop. Everything else connects through the [Endpoint](#endpoint) values.
-- Server-side web search needs an Ollama key configured. Without it, search reports as unavailable while fetch still works.
+- Server-side web search picks a backend automatically: an Ollama key if you set one, else Copilot's own server-side search, else an in-process fallback. **Diagnostics** shows which one is in use.
 
-Stuck on connecting a specific tool? See [Connect your tools](./connect-your-tools).
+Stuck on connecting a specific tool? See [Connect your tools](./connect-your-tools.md).
