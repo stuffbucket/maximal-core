@@ -133,6 +133,14 @@ export interface ApplyConfigLibraryResult {
   ensuredWorkspaceFolders: Array<string>
 }
 
+/** Every top-level `preferences` key `applyConfigLibraryProfile` writes. Apply
+ *  spreads this object in and revert strips exactly its keys, so the two can
+ *  never drift: adding a preference here automatically makes revert clean it up
+ *  rather than leaving state behind on disable. */
+const OWNED_PREFERENCES = { coworkWebSearchEnabled: true } as const
+
+const OWNED_PREFERENCE_KEYS = Object.keys(OWNED_PREFERENCES)
+
 export function applyConfigLibraryProfile(
   home: string = os.homedir(),
   values: GatewayProfileValues = gatewayProfile(home),
@@ -177,7 +185,7 @@ export function applyConfigLibraryProfile(
     typeof top.preferences === "object" && top.preferences !== null ?
       (top.preferences as Record<string, unknown>)
     : {}
-  top.preferences = { ...prefs, coworkWebSearchEnabled: true }
+  top.preferences = { ...prefs, ...OWNED_PREFERENCES }
   atomicWriteJson(topPath, top)
 
   return { dir, profileId, wrote: true, ensuredWorkspaceFolders }
@@ -204,6 +212,27 @@ export interface RevertResult {
   reverted: boolean
 }
 
+/** Remove our preference keys from `top`, dropping `preferences` entirely when
+ *  nothing of the user's is left. Returns whether anything changed. Never
+ *  touches a key we did not write. */
+function stripOwnedPreferences(top: Record<string, unknown>): boolean {
+  const prefs = top.preferences
+  if (typeof prefs !== "object" || prefs === null || Array.isArray(prefs)) {
+    return false
+  }
+
+  const entries = Object.entries(prefs as Record<string, unknown>)
+  const kept = entries.filter(([key]) => !OWNED_PREFERENCE_KEYS.includes(key))
+  if (kept.length === entries.length) return false
+
+  if (kept.length === 0) {
+    delete top.preferences
+  } else {
+    top.preferences = Object.fromEntries(kept)
+  }
+  return true
+}
+
 export function revertConfigLibraryProfile(
   home: string = os.homedir(),
 ): RevertResult {
@@ -224,10 +253,21 @@ export function revertConfigLibraryProfile(
   }
   const topPath = path.join(dir, "claude_desktop_config.json")
   const top = readJsonObject(topPath)
-  if (top && "deploymentMode" in top) {
-    delete top.deploymentMode
-    atomicWriteJson(topPath, top)
-    reverted = true
+  if (top) {
+    // Both writes apply/revert own in this file: `deploymentMode` and our
+    // `preferences` keys. Evaluate the preference strip unconditionally (not
+    // `&&`-chained behind deploymentMode) so a half-reverted config — one where
+    // deploymentMode is already gone but the preference is not — still heals.
+    let dirty = false
+    if ("deploymentMode" in top) {
+      delete top.deploymentMode
+      dirty = true
+    }
+    if (stripOwnedPreferences(top)) dirty = true
+    if (dirty) {
+      atomicWriteJson(topPath, top)
+      reverted = true
+    }
   }
   return { dir, reverted }
 }

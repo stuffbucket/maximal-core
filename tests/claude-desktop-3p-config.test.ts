@@ -203,6 +203,53 @@ describe("revertConfigLibraryProfile", () => {
     const result = revertConfigLibraryProfile(home)
     expect(result.reverted).toBe(false)
   })
+
+  it("strips coworkWebSearchEnabled — disabling leaves nothing of ours", () => {
+    // Apply writes exactly two things into the top-level config:
+    // `deploymentMode` and `preferences.coworkWebSearchEnabled`. Revert used to
+    // remove only the first, so turning the integration off left web search
+    // silently forced on in Claude Desktop with no trace of who set it.
+    applyConfigLibraryProfile(home)
+    revertConfigLibraryProfile(home)
+
+    const top = topConfig()
+    expect(top.deploymentMode).toBeUndefined()
+    expect(top.preferences).toBeUndefined()
+  })
+
+  it("keeps the user's own preferences while stripping ours", () => {
+    const dir = getClaude3pDir(home)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(
+      path.join(dir, "claude_desktop_config.json"),
+      JSON.stringify({
+        coworkUserFilesPath: "/keep/me",
+        preferences: { theme: "dark" },
+      }),
+    )
+    applyConfigLibraryProfile(home)
+    revertConfigLibraryProfile(home)
+
+    const top = topConfig()
+    expect(top.coworkUserFilesPath).toBe("/keep/me")
+    expect(top.preferences).toEqual({ theme: "dark" })
+  })
+
+  it("heals a config where only the preference is left over", () => {
+    // The state an older build left behind: deploymentMode already cleared, our
+    // preference still set. Revert must still clean it rather than short-circuit
+    // on the missing deploymentMode.
+    const dir = getClaude3pDir(home)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(
+      path.join(dir, "claude_desktop_config.json"),
+      JSON.stringify({ preferences: { coworkWebSearchEnabled: true } }),
+    )
+
+    const result = revertConfigLibraryProfile(home)
+    expect(result.reverted).toBe(true)
+    expect(topConfig().preferences).toBeUndefined()
+  })
 })
 
 describe("generateManagedProfile", () => {
