@@ -17345,8 +17345,11 @@ function isMessagesApiEnabled() {
   return config2.useMessagesApi ?? true;
 }
 function getAnthropicApiKey() {
-  const config2 = getConfig();
-  return config2.anthropicApiKey ?? process.env.ANTHROPIC_API_KEY ?? undefined;
+  const fromEnv = process.env.ANTHROPIC_API_KEY;
+  if (fromEnv !== undefined && fromEnv.length > 0)
+    return fromEnv;
+  const fromConfig = getConfig().anthropicApiKey;
+  return fromConfig !== undefined && fromConfig.length > 0 ? fromConfig : undefined;
 }
 function isResponsesApiWebSearchEnabled() {
   const config2 = getConfig();
@@ -38664,7 +38667,7 @@ function applyConfigLibraryProfile(home = os7.homedir(), values = gatewayProfile
   atomicWriteJson2(metaPath, { appliedId: profileId, entries });
   top.deploymentMode = "3p";
   const prefs = typeof top.preferences === "object" && top.preferences !== null ? top.preferences : {};
-  top.preferences = { ...prefs, coworkWebSearchEnabled: true };
+  top.preferences = { ...prefs, ...OWNED_PREFERENCES };
   atomicWriteJson2(topPath, top);
   return { dir, profileId, wrote: true, ensuredWorkspaceFolders };
 }
@@ -38679,6 +38682,22 @@ function isConfigLibraryApplied(home = os7.homedir(), values = gatewayProfile(ho
     return false;
   const top = readJsonObject(path22.join(dir, "claude_desktop_config.json"));
   return top?.deploymentMode === "3p";
+}
+function stripOwnedPreferences(top) {
+  const prefs = top.preferences;
+  if (typeof prefs !== "object" || prefs === null || Array.isArray(prefs)) {
+    return false;
+  }
+  const entries = Object.entries(prefs);
+  const kept = entries.filter(([key]) => !OWNED_PREFERENCE_KEYS.includes(key));
+  if (kept.length === entries.length)
+    return false;
+  if (kept.length === 0) {
+    delete top.preferences;
+  } else {
+    top.preferences = Object.fromEntries(kept);
+  }
+  return true;
 }
 function revertConfigLibraryProfile(home = os7.homedir()) {
   const dir = getClaude3pDir(home);
@@ -38696,10 +38715,18 @@ function revertConfigLibraryProfile(home = os7.homedir()) {
   }
   const topPath = path22.join(dir, "claude_desktop_config.json");
   const top = readJsonObject(topPath);
-  if (top && "deploymentMode" in top) {
-    delete top.deploymentMode;
-    atomicWriteJson2(topPath, top);
-    reverted = true;
+  if (top) {
+    let dirty = false;
+    if ("deploymentMode" in top) {
+      delete top.deploymentMode;
+      dirty = true;
+    }
+    if (stripOwnedPreferences(top))
+      dirty = true;
+    if (dirty) {
+      atomicWriteJson2(topPath, top);
+      reverted = true;
+    }
   }
   return { dir, reverted };
 }
@@ -38796,9 +38823,11 @@ ${settings}
 </plist>
 `;
 }
-var USERDATA_3P_SUFFIX = "-3p", CLAUDE_3P_PREF_DOMAIN = "com.anthropic.claudefordesktop";
+var USERDATA_3P_SUFFIX = "-3p", CLAUDE_3P_PREF_DOMAIN = "com.anthropic.claudefordesktop", OWNED_PREFERENCES, OWNED_PREFERENCE_KEYS;
 var init_config3 = __esm(() => {
   init_atomic_json();
+  OWNED_PREFERENCES = { coworkWebSearchEnabled: true };
+  OWNED_PREFERENCE_KEYS = Object.keys(OWNED_PREFERENCES);
 });
 
 // src/apps/claude-desktop/detect.ts
