@@ -10,6 +10,9 @@ SBOM.cdx.json
 .env
 .env.local
 .env.*.local
+# `publish-package.yml` writes one at runtime to carry the registry auth token.
+# It must never be committed; ignoring it means a stray local copy cannot be.
+.npmrc
 
 # bun
 .bun/

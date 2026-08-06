@@ -19,7 +19,6 @@ import {
   parseArgv,
   parseStatus,
   planChangelog,
-  PUBLISH_ARGV,
   REBUILD_FLAG,
   release,
   rebuildAndStage,
@@ -108,11 +107,17 @@ function silent(): { lines: Array<string>; log: (line: string) => void } {
   return { lines, log: (line) => lines.push(line) }
 }
 
+interface Manifest {
+  scripts: Record<string, string>
+  publishConfig?: Record<string, string>
+}
+
+function readPackageJson(): Manifest {
+  return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as Manifest
+}
+
 function readScripts(): Record<string, string> {
-  const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as {
-    scripts: Record<string, string>
-  }
-  return pkg.scripts
+  return readPackageJson().scripts
 }
 
 const CLEAN = ""
@@ -182,7 +187,7 @@ const ON_PIN = { running: PINNED, pinned: PINNED } as const
 
 describe("parity with the real package.json", () => {
   // The whole point of the wrapper is that the sequence lives in ONE process
-  // that can order the guard, the pin, the bump and the publish. A `&&` chain
+  // that can order the guard, the pin, the bump and the tag. A `&&` chain
   // cannot express "guard the tree that the step after next will modify".
   test("`release:manual` is this script and nothing else", () => {
     expect(readScripts()["release:manual"]).toBe("bun scripts/ops/release.ts")
@@ -195,8 +200,14 @@ describe("parity with the real package.json", () => {
     expect(readScripts()["release:preflight"]).toBe("bun scripts/ops/prepack.ts --check")
   })
 
-  test("the publish argv is the one the old chain ended in", () => {
-    expect(PUBLISH_ARGV).toEqual(["publish", "--access", "public"])
+  // `publish-package.yml` is the only thing that publishes now. This field is
+  // the manifest's declaration of where; Bun actually obeys the `.npmrc` that
+  // workflow writes (measured — see its header), so the two must agree or a
+  // publish lands somewhere nobody declared.
+  test("the manifest declares the GitHub Package Registry", () => {
+    expect(readPackageJson().publishConfig).toEqual({
+      registry: "https://npm.pkg.github.com",
+    })
   })
 })
 
@@ -596,7 +607,7 @@ describe("parseArgv", () => {
   test("claims the tag positionally", () => {
     expect(parseArgv([TAG]).tag).toBe(TAG)
     expect(parseArgv([TAG, "-y"])).toMatchObject({ tag: TAG, bumppArgs: ["-y"] })
-    expect(parseArgv([NO_PUBLISH_FLAG, TAG])).toMatchObject({ tag: TAG, publish: false })
+    expect(parseArgv([NO_PUBLISH_FLAG, TAG])).toMatchObject({ tag: TAG, bumppArgs: [] })
   })
 
   test("no tag is not an invented one", () => {
@@ -657,7 +668,11 @@ describe("release", () => {
     return { code, calls, lines, handedOver }
   }
 
-  test("a clean tree bumps then publishes", () => {
+  // `bumpp` is the LAST child process this script runs. Publishing moved to
+  // `publish-package.yml`, which fires on the tag `bumpp` pushes — so a second
+  // invocation here would mean the registry is being reached from a laptop
+  // again, off whatever Bun is on PATH.
+  test("a clean tree bumps, and that is the last thing it runs", () => {
     const { code, calls } = ok(CLEAN)
     expect(code).toBe(0)
     expect(calls).toEqual([
@@ -666,7 +681,6 @@ describe("release", () => {
         args: bumppArgv(executeCommand("/pin/bun", "/x/release.ts"), ["--release", "0.4.2"]),
         block: expect.stringContaining("## [0.4.2]") as unknown as string,
       },
-      { command: "/pin/bun", args: [...PUBLISH_ARGV], block: undefined },
     ])
   })
 
@@ -679,11 +693,10 @@ describe("release", () => {
   })
 
   // The block is live for exactly the bumpp call — the hook runs inside it —
-  // and gone afterwards, so a later `bun publish` cannot inherit it.
+  // and is cleared afterwards, so nothing this process spawns later inherits it.
   test("the block is handed over for bumpp only", () => {
     const { calls, handedOver } = ok(CLEAN)
     expect(calls[0]?.block).toContain("## [0.4.2]")
-    expect(calls[1]?.block).toBeUndefined()
     expect(handedOver[handedOver.length - 1]).toBeUndefined()
   })
 
@@ -715,7 +728,7 @@ describe("release", () => {
   test("an untracked file is noted, and does not stop the release", () => {
     const { code, calls, lines } = ok("?? scratch.md")
     expect(code).toBe(0)
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(1) // bumpp
     expect(lines.join("\n")).toContain("scratch.md")
   })
 
@@ -748,7 +761,7 @@ describe("release", () => {
     expect(lines.join("\n")).toContain("REFUSING")
   })
 
-  test("a failed bumpp does not publish", () => {
+  test("a failed bumpp is a failed release", () => {
     const { calls, run, handOverBlock } = recorder([1])
     const { git } = gitStub(CLEAN)
     const { gh } = ghStub([merged(1, "feat: x")])
@@ -759,10 +772,13 @@ describe("release", () => {
     expect(calls).toHaveLength(1)
   })
 
-  test("--no-publish stops after the tag", () => {
+  // Accepted and inert. The flag used to skip a `bun publish` this script no
+  // longer runs; erroring on it now would break a muscle-memory invocation for
+  // no gain, so it produces the same release as omitting it.
+  test("--no-publish is accepted and changes nothing", () => {
     const { code, calls } = ok(CLEAN, [TAG, NO_PUBLISH_FLAG])
     expect(code).toBe(0)
-    expect(calls).toHaveLength(1)
+    expect(calls).toEqual(ok(CLEAN, [TAG]).calls)
   })
 
   // `--no-publish` is ours; forwarding it would make `bumpp` set `publish: false`
@@ -848,7 +864,7 @@ describe("release — gate 4, the tag must be ahead of every tag that exists", (
   test("the highest tag being below the release lets it through", () => {
     const { code, calls } = cut({ local: ["v0.4.1"], remote: ["v0.4.0", "v0.4.1"] })
     expect(code).toBe(0)
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(1) // bumpp
   })
 
   // Cheapest refusal first: gate 4 is two local `git` calls, so it must not be
@@ -925,7 +941,7 @@ describe("release — gate 5, nothing that ships here is still open", () => {
   test("an unmilestoned open PR is listed and does NOT block", () => {
     const { code, calls, lines } = cut([open(11, null)])
     expect(code).toBe(0)
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(1) // bumpp
     expect(lines.join("\n")).toContain("open-pr-unmilestoned")
     expect(lines.join("\n")).toContain("#11")
   })

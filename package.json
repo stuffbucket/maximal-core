@@ -142,5 +142,8 @@
   },
   "engines": {
     "node": ">=22.13.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   }
 }

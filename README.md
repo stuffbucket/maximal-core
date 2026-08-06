@@ -58,7 +58,18 @@ the server still listens but upstream routes answer `401 not_authenticated`.
 ## Install
 
 `maximal-core` is published as `@stuffbucket/maximal-core` and installs the
-`maximal` command (`dist/main.js`). Run from source for development:
+`maximal` command (`dist/main.js`). It is on the **GitHub Package Registry**,
+not npmjs, so an install needs the scope pointed at it and an authenticated
+token:
+
+```sh
+echo "@stuffbucket:registry=https://npm.pkg.github.com" >> .npmrc
+bun add @stuffbucket/maximal-core
+```
+
+Tags v0.2.0 … v0.4.3 predate the package and exist only as git refs; a git
+dependency on this repo still resolves and still works. Run from source for
+development:
 
 ```sh
 bun install
@@ -231,9 +242,9 @@ release:notes vX.Y.Z` turns the milestone into changelog-shaped Markdown, and
 `bun run release:manual vX.Y.Z` cuts it — refusing a dirty tree, an off-pin
 Bun, or a milestone `release:notes` would not emit for, then bumping, rebuilding
 `dist/`, writing the changelog entry, staging all of it into the one release
-commit, tagging, pushing, and publishing to npm unless `--no-publish` is passed.
-Cutting a release is a deliberate human step; pushing the tag is what builds and
-publishes the binaries (`release-artifacts.yml`).
+commit, tagging, and pushing. Cutting a release is a deliberate human step;
+pushing the tag is what builds and publishes the binaries
+(`release-artifacts.yml`) and publishes the package (`publish-package.yml`).
 
 `main` requires a pull request, three green checks (`test`, `windows`, `gate`)
 and a branch that is up to date before it will merge. The release commit is the

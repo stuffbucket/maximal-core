@@ -11,8 +11,9 @@ split and was never carried over. Do not go looking for it.
 
 What exists instead is deliberate and manual, in five steps. Nothing cuts a
 release for you; five [gates](#the-gates) check that the one you cut by hand is
-well-formed, and one workflow builds and attaches the binaries once the tag
-exists ([step 5](#5-publish-the-artifacts)).
+well-formed, and two workflows fire once the tag exists ([step
+5](#5-publish-the-artifacts)) — one builds and attaches the binaries, the other
+publishes the npm package.
 
 ---
 
@@ -163,11 +164,11 @@ pasted ones above it.
 ## 4. Bump, tag, push
 
 ```sh
-bun run release:manual vX.Y.Z   # guard, preflight, notes, bumpp; commits, tags, pushes, publishes
+bun run release:manual vX.Y.Z   # guard, preflight, notes, bumpp; commits, tags, pushes
 ```
 
 `release:manual` is [`scripts/ops/release.ts`](../scripts/ops/release.ts), which
-runs seven steps **in that order, in one process**:
+runs six steps **in that order, in one process**:
 
 | # | Step | Refuses on |
 |---|---|---|
@@ -177,11 +178,17 @@ runs seven steps **in that order, in one process**:
 | 4 | [Gate 5](#the-gates) — what is open | a PR still open in the milestone being cut |
 | 5 | Generate the `CHANGELOG.md` entry | anything `release:notes vX.Y.Z` would refuse to emit on |
 | 6 | `bumpp --all --release X.Y.Z --execute "<pinned bun> release.ts --rebuild"` | — |
-| 7 | `bun publish --access public` | — |
 
-Steps 1 to 5 are all **before** `bumpp`, **because everything after them is
-irreversible**: `bumpp` commits, tags and pushes before `bun publish` is ever
-reached, and a registry publish cannot be taken back at all. Exit `1` means it
+**It ends at the pushed tag.** It used to end in a seventh step, `bun publish
+--access public`; [`publish-package.yml`](../.github/workflows/publish-package.yml)
+owns that now and fires on the tag step 6 pushes ([step
+5](#the-package-publish)). Nobody publishes from a laptop, so the tarball cannot
+be built off-pin by accident.
+
+Steps 1 to 5 are all **before** `bumpp`, **because everything after it is
+irreversible**: `bumpp` commits, tags and pushes, a published tag must not be
+moved, and the tag is what triggers the publish — after which a version is
+burned at the registry whether or not it is later unpublished. Exit `1` means it
 refused and nothing happened; exit `2` means a step failed — including a gate
 that could not *read* what it compares against, which here stops the release
 rather than waving it through.
@@ -208,7 +215,7 @@ therefore refused rather than forwarded: one version, one source.
 Useful flags — anything the script does not recognise is forwarded to `bumpp`:
 
 ```sh
-bun run release:manual vX.Y.Z --no-publish     # cut and push the tag, skip the registry
+bun run release:manual vX.Y.Z --no-publish     # accepted, does nothing — the default now
 bun run release:manual vX.Y.Z -y               # non-interactive
 bun scripts/ops/release.ts --rebuild           # just regenerate + stage dist/, no release
 bun run release:preflight                      # step 2 on its own
@@ -306,14 +313,17 @@ bun run release:preflight                      # step 2 on its own
 > ever asks "did the tree match `HEAD` when we started", which is true of every
 > tree a previous release left behind.
 
-> **Why the Bun version decides whether a release is publishable.** `bun publish`
-> fires `prepack`, which rebuilds `dist/` into the tarball — and `bun build`
-> bundles with Bun's own bundler, so `dist/main.js` is a function of the Bun
-> version ([`docs/bun-version-policy.md`](bun-version-policy.md)). Publishing
-> off-pin ships a `bin` bundle that disagrees with the committed one
+> **Why the Bun version decides whether a release is cuttable.** `bun publish`
+> and `bun pm pack` both fire `prepack`, which rebuilds `dist/` into the tarball
+> — and `bun build` bundles with Bun's own bundler, so `dist/main.js` is a
+> function of the Bun version ([`docs/bun-version-policy.md`](bun-version-policy.md)).
+> Building off-pin ships a `bin` bundle that disagrees with the committed one
 > `bindings:check` verifies, and that nobody following these docs can
 > regenerate. Measured on `main` at v0.3.2: committed `85697a48…` (Bun 1.3.11,
-> the pin) vs a tarball's `ffdee378…` (Bun 1.3.14, whatever was on PATH).
+> the pin) vs a tarball's `ffdee378…` (Bun 1.3.14, whatever was on PATH). The
+> published tarball is CI's now, on the pinned Bun — but step 6's rebuild of the
+> *committed* `dist/` is still yours, on whatever you have on PATH, which is
+> what step 2's preflight refuses.
 >
 > **Installing the right Bun is not enough on its own, and this is the part that
 > surprises people.** Bun runs scripts through a shell that does not carry its
@@ -397,12 +407,14 @@ git push && git push origin vX.Y.Z
 
 ## 5. Publish the artifacts
 
-Pushing the tag fires [`release-artifacts.yml`](../.github/workflows/release-artifacts.yml).
-It builds `bun-darwin-arm64` on a macOS arm64 runner and `bun-windows-x64` on a
+Pushing the tag fires two workflows.
+[`release-artifacts.yml`](../.github/workflows/release-artifacts.yml)
+builds `bun-darwin-arm64` on a macOS arm64 runner and `bun-windows-x64` on a
 Windows x64 runner — **natively, because every check it runs executes the
 binary** — verifies each one with `verify:artifact` *and* the full `e2e:binary`
 suite, and attaches both plus `SHA256SUMS` and `ARTIFACTS.md` to the release for
-the tag.
+the tag. [`publish-package.yml`](../.github/workflows/publish-package.yml)
+publishes the npm package, described [below](#the-package-publish).
 
 > **Wait for it to go green before you run `gh release create`.** The workflow
 > creates the release itself, **as a draft**, if none exists — so the order that
@@ -472,6 +484,48 @@ downloading, including the `codesign --force` + `com.apple.security.cs.allow-jit
 entitlement a host needs to re-sign the binary into a notarized bundle. Do not
 soften that text — someone will otherwise download it expecting a double-click
 app.
+
+### The package publish
+
+[`publish-package.yml`](../.github/workflows/publish-package.yml) fires on the
+same tag push and runs `bun publish` against the **GitHub Package Registry**
+(`npm.pkg.github.com`). GHP requires the package scope to match the owning org;
+`@stuffbucket` already does. It authenticates with the per-run `GITHUB_TOKEN`
+and a `.npmrc` written in the runner workspace — there is no npm token, no OIDC
+config and no committed `.npmrc` anywhere in this repo, and there must not be.
+
+> **`publishConfig.registry` in `package.json` does not redirect `bun publish`
+> on its own — the `.npmrc` does.** Measured on Bun 1.3.11 with the field
+> already set: a bare `bun publish --dry-run` reports
+> `Registry: https://registry.npmjs.org/`, and the same command with the
+> workflow's `.npmrc` present reports `Registry: https://npm.pkg.github.com`.
+> Bun reads the publish registry from `.npmrc`/bunfig, not from the manifest.
+> Both are set and must stay in agreement; deleting the `@stuffbucket:registry=`
+> line publishes to npmjs.
+
+Before it publishes it re-runs [gate 3](#the-gates) — `release:check version` —
+against the pushed tag, and refuses a real publish from anything that is not a
+tag ref.
+
+> **It is `bun publish` and never `npm publish`, and that is not a preference.**
+> `prepack` is [`scripts/ops/prepack.ts`](../scripts/ops/prepack.ts), which
+> asserts `process.versions.bun` equals `.bun-version` and refuses when it is
+> `undefined` — which is what node gives it. A node-driven publish therefore
+> fails by construction, and the workflow says so in a comment so nobody
+> "simplifies" it back.
+
+**Rehearse it without publishing.** `dry_run` defaults to **true**, the same way
+`release-artifacts.yml` defaults `publish` to false, so a dispatch is a
+rehearsal unless you say otherwise:
+
+```sh
+gh workflow run publish-package.yml           # dry run: resolves, packs, uploads nothing
+```
+
+Locally, `bun pm pack` produces the same tarball and fires the same `prepack`.
+Inspect it before a first publish of any new export or `bin` path — the `files`
+list is `dist`, `src` and `tsconfig.json`, and `stuffbucket/maximal` compiles
+the sidecar from the shipped `src`.
 
 ---
 
@@ -663,23 +717,28 @@ because it changes how you land a PR:
 
 Listed so nobody re-derives it from a stale doc:
 
-- **No published npm package, and no automated publish.**
-  `@stuffbucket/maximal-core` has never reached the registry —
-  `https://registry.npmjs.org/@stuffbucket/maximal-core` 404s, and every release
-  in `gh release list` (v0.2.0 … v0.3.2) shipped as a git tag plus the binaries
-  from [step 5](#5-publish-the-artifacts). `bun run release:manual` exists and
-  ends in `bun publish`, but nothing has ever come out the other side of it. So
-  the consumers that exist today install from git (which is why `dist/` is
-  committed at all — see [`scripts/ops/check-bindings.ts`](../scripts/ops/check-bindings.ts)).
-  Treat the first `release:manual` as a first publish: unreleasable name,
-  unverified auth, `--access public` on a fresh scope. Rehearse it with
-  `bun pm pack` and inspect the tarball before you point it at the registry.
-- **No CI-driven publish.** There is no npm token and no OIDC trusted-publishing
-  config in this repo, so the tarball is always built on someone's laptop.
-  Publishing from CI would pin the Bun version by construction and is the better
-  end state; until then
-  [`scripts/ops/prepack.ts`](../scripts/ops/prepack.ts) is what makes the manual
-  path safe, and it stays correct inside a CI publish later.
+- **No package on npmjs, and no npm credential.** The package publishes to the
+  **GitHub Package Registry**, not to npmjs:
+  `https://registry.npmjs.org/@stuffbucket/maximal-core` still 404s and nothing
+  here will change that. There is no npm token and no OIDC trusted-publishing
+  config in this repo, and GHP needs neither — the per-run `GITHUB_TOKEN` and
+  `packages: write` are the whole grant. A consumer therefore needs
+  `@stuffbucket:registry=https://npm.pkg.github.com` and an authenticated
+  install; GHP has no anonymous read.
+- **No publish from a laptop.** [`publish-package.yml`](../.github/workflows/publish-package.yml)
+  is the only thing that publishes ([step 5](#the-package-publish)), and it
+  pins the Bun version by construction — which is exactly why it exists.
+  `release:manual` no longer runs `bun publish`; `--no-publish` is accepted and
+  does nothing. [`scripts/ops/prepack.ts`](../scripts/ops/prepack.ts) still
+  guards the pin, both inside that workflow and for a by-hand `bun pm pack`.
+- **Releases v0.2.0 … v0.4.3 shipped without a package at all** — a git tag plus
+  the binaries from [step 5](#5-publish-the-artifacts), because every one of them
+  ran `--no-publish`. That is why `dist/` is committed (see
+  [`scripts/ops/check-bindings.ts`](../scripts/ops/check-bindings.ts)) and why
+  the git-dependency install path must keep working: consumers pinned to those
+  tags resolve a SHA, not a version. Treat the first publish as a first publish
+  — rehearse with `bun pm pack` and the workflow's `dry_run` dispatch, and read
+  the tarball's file list, before a tag pushes it for real.
 - No `release-please.yml`, no `release.yml`, no auto-opened release PR, no
   `autorelease:` labels, and no release-please config. `release-please-config.json`
   and `.release-please-manifest.json` were inert leftovers of the split and are
