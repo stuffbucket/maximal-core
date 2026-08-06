@@ -6,6 +6,7 @@ import {
   type Migration,
   openSqliteDatabase,
   runMigrations,
+  SqliteDbStore,
   type SqliteDatabase,
   UnsupportedNodeSqliteRuntimeError,
 } from "~/lib/platform/sqlite"
@@ -120,5 +121,100 @@ describe("runMigrations", () => {
     expect(() => runMigrations(db, migrations)).toThrow(/step 2 \(broken\)/)
     // First migration committed (version 1); the broken one didn't advance it.
     expect(userVersion(db)).toBe(1)
+  })
+})
+
+/**
+ * A store whose `initialize` throws must not strand the handle it just opened.
+ *
+ * `open()` acquires the handle first and only then runs `initialize`, so a file
+ * SQLite can open but not read — one truncated by a SIGKILL mid-write or by a
+ * full disk, which fails on the first `PRAGMA` with SQLITE_NOTADB — used to
+ * reject with the database still open. `dbPromise` caches that rejection, so
+ * nothing ever reached the handle again to close it and it was held for the
+ * life of the process.
+ *
+ * On POSIX that is an invisible fd leak, which is why it shipped. On Windows an
+ * open handle also locks the file: the user cannot delete or replace the
+ * corrupt store to recover while the proxy runs, and CI caught it as an EBUSY
+ * on a fixture the test could no longer remove.
+ *
+ * Driven through the `open` seam rather than a real corrupt file so the
+ * assertion reads the same on every platform — POSIX cannot observe a leaked
+ * handle, and this is exactly the case it would otherwise never cover.
+ */
+const stubStatement = () => ({
+  all: () => [],
+  get: () => undefined,
+  run: () => undefined,
+})
+
+/** A database that records its closes instead of touching a file. */
+const fakeDb = (closes: Array<true>): SqliteDatabase => ({
+  close: () => {
+    closes.push(true)
+  },
+  exec: () => undefined,
+  prepare: stubStatement,
+})
+
+/** The rejection `store.getDb()` produced, or undefined if it resolved. */
+async function rejectionOf(store: SqliteDbStore): Promise<unknown> {
+  try {
+    await store.getDb()
+  } catch (error) {
+    return error
+  }
+  return undefined
+}
+
+describe("SqliteDbStore closes what it opened", () => {
+  test("a failing initialize closes the database before rejecting", async () => {
+    const closes: Array<true> = []
+    const store = new SqliteDbStore({
+      getPath: () => ":memory:",
+      open: () => Promise.resolve(fakeDb(closes)),
+      initialize: () => {
+        throw new Error("file is not a database")
+      },
+    })
+
+    expect(await rejectionOf(store)).toMatchObject({
+      message: "file is not a database",
+    })
+    expect(closes).toHaveLength(1)
+  })
+
+  test("a close failure does not mask the initialize failure", async () => {
+    const store = new SqliteDbStore({
+      getPath: () => ":memory:",
+      open: () =>
+        Promise.resolve({
+          close: () => {
+            throw new Error("close blew up")
+          },
+          exec: () => undefined,
+          prepare: stubStatement,
+        }),
+      initialize: () => {
+        throw new Error("file is not a database")
+      },
+    })
+
+    expect(await rejectionOf(store)).toMatchObject({
+      message: "file is not a database",
+    })
+  })
+
+  test("a successful initialize leaves the database open", async () => {
+    const closes: Array<true> = []
+    const store = new SqliteDbStore({
+      getPath: () => ":memory:",
+      open: () => Promise.resolve(fakeDb(closes)),
+      initialize: () => undefined,
+    })
+
+    expect(await rejectionOf(store)).toBeUndefined()
+    expect(closes).toHaveLength(0)
   })
 })

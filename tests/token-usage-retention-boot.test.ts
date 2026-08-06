@@ -45,6 +45,11 @@ afterEach(async () => {
   // That is cleanup of the fixture, not the behaviour under test.
   await closeUsageStore().catch(() => {})
   Reflect.deleteProperty(process.env, DB_PATH_ENV)
+  // Deliberately strict, and a second assertion in disguise: Windows refuses to
+  // delete a file that anyone still holds open. An `EBUSY` here means the store
+  // stranded the handle it opened rather than closing it — which is exactly how
+  // the leak fixed in `SqliteDbStore.open` first surfaced, and the failure mode
+  // POSIX cannot see. Leave it unguarded so a regression is loud.
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
 
