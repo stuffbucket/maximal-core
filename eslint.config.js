@@ -194,7 +194,7 @@ const MOCK_MODULE_DENY = [
   {
     id: "srvx",
     reason:
-      "srvx's `serve` binds real ports; the stub leaks into the real-port WS handshake test (tests/ws/srvx-upgrade-handshake.test.ts) and the restore leaves the live binding half-rewired. Inject the binder via `__setServeForTests` from ~/start instead.",
+      "srvx's `serve` binds real ports, so a stub leaks into anything that binds for real and the restore leaves the live binding half-rewired. Inject the binder via `__setServeForTests` from ~/start instead.",
   },
   {
     id: "~/lib/auth/secrets",

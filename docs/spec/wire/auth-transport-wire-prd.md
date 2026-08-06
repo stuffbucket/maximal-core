@@ -155,8 +155,7 @@ connected clients.
 
 1. `allowOptionsBypass` (default `true`) and method is `OPTIONS`.
 2. Exact match in `allowUnauthenticatedPaths`.
-3. Prefix match in `allowUnauthenticatedPrefixes`, unless also matched by
-   `requireAuthPrefixes`.
+3. Prefix match in `allowUnauthenticatedPrefixes`.
 4. Exact match in `loopbackOnlyPaths` **and** the peer IP is loopback.
 
 Only if none matches is `extractRequestApiKey` called and `decideAuth` consulted.
@@ -184,11 +183,13 @@ adapters (`defaultGetRequestIp`).
 `404` to anyone else. A remote caller holding a *valid* API key therefore cannot
 evict the running instance — verified live.
 
-Two further options exist on `createAuthMiddleware` — `requireAuthPrefixes` and
-`alwaysEnforcePrefixes` (ADR-0021 §6.2, alongside the exported
-`MANDATORY_AUTH_PREFIX = "/settings/api"`). `src/server.ts` passes **neither**.
-They were the `/settings/api` hardening levers and are inert since that surface
-was removed.
+There is deliberately **no** "…except these sub-prefixes" escape hatch on
+`allowUnauthenticatedPrefixes`. The `requireAuthPrefixes` and
+`alwaysEnforcePrefixes` options (ADR-0021 §6.2, alongside an exported
+`MANDATORY_AUTH_PREFIX = "/settings/api"`) were the `/settings/api` hardening
+levers; that surface was removed at the core split, `server.ts` passed neither,
+and all three were deleted with it — see the note on
+`allowUnauthenticatedPrefixes` in `src/lib/auth/request-auth.ts`.
 
 ### Client failure responses
 

@@ -9,13 +9,24 @@ supersedes: []
 related_adrs:
   - docs/decisions/0006-auth-status-discriminated-union.md
   - docs/decisions/0011-mock-module-leakage-discipline.md
-  - docs/decisions/0013-split-tauri-lib-rs.md
+  # ADR-0013 was not carried over at the core split; it lives in the parent repo.
+  - https://github.com/stuffbucket/maximal/blob/main/docs/decisions/0013-split-tauri-lib-rs.md
 links:
   architecture: docs/architecture.md
   bun_policy: docs/bun-version-policy.md
 ---
 
 # Don't rewrite in Go — criteria for when to revisit
+
+> **ADRs cited here that are not in this repo.** This ADR was written before
+> the `maximal-core` split, when the Tauri shell and the settings UI were in
+> the same tree. ADR-0002, ADR-0004, ADR-0012 and ADR-0013 describe those
+> surfaces and stayed behind in
+> [`stuffbucket/maximal`](https://github.com/stuffbucket/maximal/tree/main/docs/decisions);
+> they were deleted from core in `546d6a7` ("docs: retire Tauri/shell docs and
+> scrub duplicated knowledge"), not dropped outright. The citations below are
+> load-bearing for this decision's argument, so they are kept and pointed at
+> the parent repo rather than removed.
 
 ## Context
 

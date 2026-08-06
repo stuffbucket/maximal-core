@@ -105,3 +105,30 @@ directly touched (`boot.state`).
 - ~~The srvx-upgrade-wrapper gate (above)~~ — settled: PROVEN and running in the default suite.
 - Safari background-teardown convergence: eager eviction on `ping` timeout vs
   lazy heal on refocus.
+
+# Amendment (2026-08-05): the cited test is in the parent repo, not in core
+
+Everything above is a faithful record of the decision as it stood in
+`stuffbucket/maximal`. Read from `maximal-core`, three of its citations point at
+files that are not here, which is worth stating so nobody goes looking:
+
+- `tests/ws/srvx-upgrade-handshake.test.ts` — the real-port test that proves the
+  srvx→Bun upgrade — lives in
+  [`stuffbucket/maximal`](https://github.com/stuffbucket/maximal/blob/main/tests/ws/srvx-upgrade-handshake.test.ts),
+  along with the rest of `tests/ws/`. None of it was carried over. The gate is
+  genuinely proven **there**; it is not exercised by core's `bun test`, so a
+  green suite here says nothing about it. The underlying source claim still
+  holds independently: `node_modules/srvx/dist/adapters/bun.mjs:50` is a bare
+  `return fetchHandler(request)` with no `Response` coercion.
+- `links.sse_events` (`src/routes/settings/events.ts`) — deleted at the core
+  split, with the whole SSE settings surface.
+- `links.spec` (`docs/spec/single-window-redesign.md`) — not carried over
+  either, so the "Spec §1.2–1.3, §7" reference in *Migration* cannot be followed
+  from this repo. ADR-0021's frontmatter has the same dead link.
+
+`eslint.config.js`'s `MOCK_MODULE_DENY` entry for `srvx` named the handshake
+test as if it were one of *this* repo's tests. That is a live config, not a
+point-in-time record, so it has been reworded; the rule itself is unchanged and
+still correct on its own terms (`__setServeForTests` is the right seam).
+
+The WebSocket transport this ADR proposes was never built in core.

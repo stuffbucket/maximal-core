@@ -159,6 +159,23 @@ route-enumeration test now enumerates.** Two follow-ups to the amendment above.
 - **User-facing strings.** The boot warning and `requireGithubAuth`'s hint both
   sent users to a Settings UI that core does not have. They now name
   `maximal auth` and the `/control` auth flow.
+- **The §6.6 citation above overstates its test.** The landing paragraph says
+  §6.6 is "asserted by `tests/security/cli-client-regression.test.ts` (no-Origin
+  `Bearer` on `/v1/*` still 200)". That test mounts its **own** `Hono` app,
+  declares its own `/v1/messages` handler, and mounts only
+  `createOriginGuardMiddleware` — it never imports `~/server` and never mounts
+  `createAuthMiddleware`, so the `Bearer` header in its request is inert and no
+  change to `src/server.ts` or `request-auth.ts` can fail it. The test's own
+  docstring says as much ("This checks the middleware in isolation"); the
+  citation did not. What is genuinely asserted against the real app is the
+  route-table half, in `origin-guard.test.ts` (previous bullet). The
+  end-to-end half — a no-Origin `Bearer` request reaching a real `/v1` handler
+  through the real middleware stack — is **still not covered by any test**.
+
+  `links.spec` in this ADR's frontmatter also points at
+  `docs/spec/single-window-redesign.md`, which does not exist in this repo:
+  that spec was not carried over at the core split, so the "Spec §6" and
+  "spec §10" references below cannot be followed from here.
 
 Current behaviour is documented in
 [`docs/spec/wire/auth-transport-wire-prd.md`](../spec/wire/auth-transport-wire-prd.md).

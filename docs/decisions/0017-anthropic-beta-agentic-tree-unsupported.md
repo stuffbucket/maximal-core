@@ -139,5 +139,3 @@ decision, the default 404 stands.
   `api.md` (`## Dreams`) and `src/resources/beta/dreams.ts`.
 - Beta gate header: `anthropic-beta: dreaming-2026-04-21`.
 - Provider coupling this decision rests on: ADR-0016.
-</content>
-</invoke>

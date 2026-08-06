@@ -120,7 +120,7 @@ duplicated across ~13 sites in `src/services/{copilot,github}/*` (plus a
 second, un-suppressed sink in `anthropic-proxy.ts`). CodeQL flagged each
 because each was a distinct file→HTTP sink.
 
-We collapsed them into a single mechanism, `src/lib/send-request.ts`
+We collapsed them into a single mechanism, `src/lib/http/send-request.ts`
 (`sendRequest` / `sendRequestJson` / `sendProviderRequest`), with three
 properties:
 

@@ -102,10 +102,10 @@ The manifest is **channel-keyed and schema-versioned**
 (`{ schema, channels: { stable: { version, notes } } }`) so a future
 `beta`/`nightly` channel is a server-only addition. It deliberately carries
 **no download URL**: the client pins its download destination as a
-compile-time constant (`src/lib/update-check.ts` → `DOWNLOAD_URL`), so a
+compile-time constant (`src/lib/update/update-check.ts` → `DOWNLOAD_URL`), so a
 tampered manifest can at most misreport a version — never redirect a user to
 a malicious download. The notify-only detector
-(`src/lib/update-check.ts`) reads this manifest; the page (and manifest)
+(`src/lib/update/update-check.ts`) reads this manifest; the page (and manifest)
 redeploy after each release via `redeploy-site` → `deploy-pages.yml`, which
 auto-purges the Pages CDN (and can be dispatched out-of-band to bust it).
 

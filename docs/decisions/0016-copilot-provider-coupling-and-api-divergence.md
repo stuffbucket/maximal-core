@@ -226,6 +226,27 @@ unrelated to a version pin.
 
   When that day comes, this ADR is the checklist of what must fork.
 
+# Amendment (2026-08-05): divergences 1 and 2 landed; the "We do" text above is stale
+
+Both were written as present-tense descriptions of the code. Both are now false.
+
+- **§1 (billing).** "`token_prices` is **not present anywhere** in `src/`" no
+  longer holds: `token_prices` is now the **primary** paid/free signal
+  (`src/lib/token-usage/index.ts:157-158`, `pricedModelIsPaid`), typed on the
+  catalog at `src/services/copilot/get-models.ts:138`, with `billing.is_premium`
+  demoted to a legacy fallback consulted only when `token_prices` is absent or
+  unusable. `resolveIsPremium`, named above, no longer exists.
+- **§2 (prompt caching).** `prompt_cache_retention` is not "commented out with
+  the note *not work in gpt-5.4*". It is a config-driven setting
+  (`getPromptCacheRetention`, `src/lib/config/config.ts:415`) applied **after**
+  translation, in the flow handlers (`src/routes/messages/api-flows.ts:221`,
+  `src/routes/responses/handler.ts:147`), so the pure translator stays free of
+  config I/O. The comment at `responses-translation.ts:87` says exactly that.
+
+The ≤4-breakpoint cap in §2 is unchanged: `stripCacheControl` still sanitizes
+without enforcing the cap or reordering. Everything else in *The divergences*
+was re-read and still describes the code.
+
 ## Sources
 
 Primary GitHub / Microsoft sources, all confirmed against the cited code:

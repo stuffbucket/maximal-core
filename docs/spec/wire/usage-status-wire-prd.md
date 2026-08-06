@@ -49,8 +49,9 @@ reshaping the contract.
 ## `/setup-status` — first-run readiness
 
 `src/lib/config/setup-status.ts`. Unauthenticated by design (must work
-before any key exists). See `docs/first-run-setup-prd.md` for the
-consuming UI.
+before any key exists). The consuming first-run UI lives in the parent
+repo `stuffbucket/maximal`; its PRD was not carried over at the core
+split.
 
 ```json
 {
