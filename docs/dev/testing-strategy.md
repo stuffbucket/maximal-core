@@ -151,6 +151,10 @@ restored per-file (§5.1).
 order for test doubles: **injectable function options > `mock.module`** — for a
 hazard reason spelled out in §5.
 
+The preload also carries one **opt-in diagnostic**, `MAXIMAL_TEST_TRACE`, which
+records module evaluation order and every `mock.module` install. It is off by
+default and costs a single `process.env` read when off. See §5.7.
+
 ---
 
 ## 5. Known hazards (hard-won, must-read for contributors)
@@ -166,30 +170,33 @@ that then reads stale state — passing locally but failing in CI (or vice versa
 This bit the project **four times** (culminating in a long #229 debugging loop),
 then a fifth (#27).
 
-**How the leak actually propagates (re-measured on Bun 1.3.11, the pin).**
+**How the leak actually propagates (measured on Bun 1.3.11, the pin).**
 `bun test` **interleaves** evaluation and execution: it evaluates one test file's
-module body, runs that file's tests and hooks, then evaluates the next. A
-six-file probe prints the same shape plain and under `--randomize`:
+module body, runs that file's tests and hooks, then evaluates the next. Four
+independent measurements agree:
 
-```
-EVAL e -> TEST e -> AFTERALL e -> EVAL f -> TEST f -> AFTERALL f -> EVAL a ...
-```
+- A six-file probe prints the same shape plain and under `--randomize`:
+  `EVAL e -> TEST e -> AFTERALL e -> EVAL f -> TEST f -> AFTERALL f -> ...`.
+- An eight-file probe with no instrumentation of any kind prints the same.
+- On the real suite the opt-in tracer (§5.7) reports
+  `first-test-starts (1 modules evaluated so far)` — the first file's tests run
+  before the second file is even evaluated — and the evaluation order of all 128
+  test files comes out identical to their execution order.
+- The tracer does not perturb this: with it on and off, the JUnit reporter's 517
+  suites are emitted in byte-identical order.
 
-Two things follow. The leak is **forward-only** — a file evaluated earlier has
-already finished and cannot be affected. And an `afterAll` restore **does** run
-before the next file is evaluated.
-
-This **corrects** an earlier reading of the same probe, recorded here as "Bun
-evaluates every test file's module body during startup, before the first test
-runs, so an `afterAll` restore is structurally incapable of protecting a
-sibling". That is not what 1.3.11 does and it does not reproduce. It has now been
-got wrong twice, in opposite directions, so: re-measure before you rewrite this
-paragraph.
+This **corrects** an earlier reading recorded here as "Bun evaluates every test
+file's module body during startup, before the first test runs, so an
+`afterAll` restore is structurally incapable of protecting a sibling". That is
+not what 1.3.11 does and it does not reproduce. The leak is **forward-only** — a
+file evaluated earlier has already finished and cannot be affected. Distance is
+what makes it expensive: in the §5.7 demonstration the writer evaluated 5th and
+the victim 105th, 99 files later.
 
 **But "so the restore works" is also wrong. What breaks a restore is its
-*value*.** `mock.module` mutates the live module record **in place**, so the
-namespace object captured before the install is retroactively updated to hold
-the stub. Restoring from it re-installs what the restore meant to undo:
+*value*.** `mock.module` mutates the live module record **in place**, so a
+namespace object captured before the install is retroactively updated to hold the
+stub. Restoring from it re-installs what the restore meant to undo:
 
 ```ts
 const real = await import("./m")
@@ -204,31 +211,32 @@ await mock.module("./m", () => snapshot)        // restore: WORKS
 ```
 
 Measured both directions on the same seed with a two-file writer/reader probe:
-namespace restore → the reader's module body sees `TABLE.length === 0`; snapshot
-restore → it sees the real table. And in-repo, before the fix in this section's
-PR: `tests/poll-access-token.test.ts` stubs `sleep` to a no-op and restored from
+namespace restore -> the reader's module body sees `TABLE.length === 0`; snapshot
+restore -> it sees the real table. Directly instrumented, `real.TABLE.length` is
+`2` before the install and `0` after. In-repo:
+`tests/poll-access-token.test.ts` stubbed `sleep` to a no-op and restored from
 the namespace, so a later sibling got a `sleep` that returned instantly on **5 of
 12** seeds; with the snapshot form, **0 of 12**.
 
 It is *not* that `mock.module` refuses a Module Namespace exotic object —
-installing one works fine (probed directly with an unrelated module's pristine
-namespace). It is that the namespace is **live**. `tests/uninstall.test.ts` had
-this right all along; nine other files did not, and the missing spread in
+installing one works fine (probed with an unrelated module's pristine namespace).
+It is that the namespace is **live**. `tests/uninstall.test.ts` had this right all
+along; nine other files did not, and the capture-time bug in
 `tests/start-run-server.test.ts` was the whole of #27.
 
 The rule that follows: **capture a spread copy before the first install and
 restore from that** — `const real = { ...(await import("…")) }`. The
 `maximal/no-live-namespace-mock-factory` lint rule (`eslint.config.js`) enforces
-it; a selector cannot, because the broken and correct restores are syntactically
-identical (`() => real`) and differ only in what `real` is bound to, so the rule
-resolves the binding.
+it; a plain selector cannot, because the broken and correct restores are
+syntactically identical (`() => real`) and differ only in what `real` is bound
+to, so the rule resolves the binding.
 
 **A correct restore is still not protection.** Bun documents no ordering
-guarantee for the interleave; the phase structure is the kind of thing a minor
-release changes silently, and the previous reading of it was of the same runner.
-Treat a well-formed restore as version-dependent hygiene that happens to hold
-today, never as the reason a shared-module mock is safe. Which file wins is still
-decided by loader scheduling, which is why this class flips between machines.
+guarantee for the interleave, this reading has now been got wrong twice in
+opposite directions, and the phase structure is the kind of thing a minor release
+changes silently. Treat a restore as version-dependent cleanup that happens to
+hold today, never as the reason a shared-module mock is safe. The durable fix is
+unchanged: **do not mock a shared module** — use a DI seam.
 
 **Reproduce it deterministically.** `bun test --randomize --seed N` shuffles both
 file order and within-file test order, and prints the seed it used in the run
@@ -369,6 +377,108 @@ one PR that added this section):
 4. `bun test --randomize --seed N` is the detector. Run a spread of seeds — one
    passing seed proves nothing, and the seed is printed in the run summary so any
    failure replays exactly.
+
+### 5.7 `MAXIMAL_TEST_TRACE` — making the causal phase visible
+
+Both hazards above share a diagnostic problem: the log records the wrong thing.
+Bun's reporter prints one line per **test**, and the failure's stack names the
+**victim**. The causal event — a `mock.module` install, or a module-scope write
+to a singleton — happens while a module body is executing, and no line of a
+normal run covers it. Reconstructing the `(writer, module)` pair by hand is what
+makes one of these failures a multi-hour job.
+
+`MAXIMAL_TEST_TRACE=1 bun test` records that phase. The preload
+(`tests/test-setup.ts`) loads `tests/helpers/module-trace.ts`, which registers a
+`Bun.plugin` loader hook and patches `mock.module`. Every line is prefixed
+`[test-trace]` and goes to stdout, the stream Bun's reporter uses, so in CI the
+lines interleave with the reporter's own `##[group]tests/<file>.test.ts:`
+headers — that interleaving is the correlation mechanism.
+
+```
+[test-trace] enabled mode=tests bun=1.3.11 pid=50909
+[test-trace] 0001 eval  tests/claude-code-reconcile.test.ts
+[test-trace] 0002 first-test-starts (1 modules evaluated so far)
+[test-trace] 0003 eval  tests/helpers/rfc-network-fixtures.ts
+[test-trace] 0005 eval  tests/api-config.test.ts
+[test-trace] 0006 mock.module ~/lib/auth/secrets -> src/lib/auth/secrets.ts \
+                  <- tests/api-config.test.ts:14:12 (module-scope, after 4 evals)
+```
+
+`MAXIMAL_TEST_TRACE=all` widens the eval stream from the test tree to `src/**`
+as well, which is what you want for a plain module-level singleton (§5.6) rather
+than a mock.
+
+**What it gives you.**
+
+- **Evaluation order**, including non-test modules (helpers; with `=all`, every
+  `src/` module). No reporter shows this, and locally the compact reporter shows
+  no file order at all.
+- **The `(writer, module)` pair for every `mock.module`** — call site from the
+  stack, specifier as written, and the resolved target, so `~/lib/auth/secrets`
+  and `../src/lib/auth/secrets` collapse to one path you can group by.
+- **`module-scope` vs `in-test`** on each install. `module-scope` is the leaking
+  shape. The repo's convention pairs a module-scope install with an `in-test`
+  restore of the same target, so **an unpaired `module-scope` install is the
+  leak** — one `grep` over the log finds it.
+- **`first-test-starts`**, which re-verifies the §5.1 scheduling model on
+  whatever Bun the run used.
+
+**What it cannot give you, and will not pretend to.**
+
+- **Which sibling read the leaked binding.** That needs per-binding read
+  instrumentation, not module entry. The trace narrows the suspects to "modules
+  evaluated after the install"; it does not name the victim.
+- **Modules Bun does not route through the plugin loader**: `node:*` / `bun:*`
+  builtins, `node_modules/**` (excluded on purpose — `onLoad` must return an
+  object, so a matched file cannot be passed through untouched, and re-emitting
+  a CJS dependency under an explicit loader breaks it), and the preload chain,
+  already evaluated when the plugin registers.
+- **An end-of-run summary.** `bun test` fires neither `process.on("exit")` nor
+  `"beforeExit"` and exposes no run-level teardown hook, so there is nowhere to
+  print a recap from. Extract one from the log:
+  `grep 'test-trace.*mock.module' ci.log`.
+- **Which test file is executing during the run phase.** Bun 1.3.11 has no
+  `expect.getState().testPath` and no per-file hook. CI's group headers supply
+  it; locally, use the call sites.
+- **The ordering seed.** `bun test` only assigns one under `--randomize`, and
+  prints it itself. The trace records the resulting *order*, which is what a
+  seed would have been used to reconstruct.
+
+**Cost.** Off — the default — the preload does one `process.env` read: the
+tracer module is never imported, no loader hook is installed, and no byte of
+output changes. On, the full suite runs within noise of an untraced run
+(measured 15.8s vs 15.8s over 128 files; `=all` costs ~2s more) and adds ~210
+lines to a ~720-line local log. The loader hook re-reads each matched file and
+prepends a marker **without a trailing newline**, so every line number is
+preserved and failure stack traces stay exact; only one line's columns shift.
+(On the CLI entrypoints the marker goes after the shebang, which must stay at
+offset 0.)
+
+**Proposal (not yet shipped): CI should set it unconditionally.** The trace is
+only wanted when something fails, but that cannot be known in advance, and a
+plain `bun test` run assigns no seed — so a CI-only failure cannot be replayed
+locally, and re-running with more logging produces a different order. That is
+the asymmetry: ~200 extra lines on every green run, against a red run whose
+causal record does not exist and cannot be recovered. Both test jobs should set
+it — `ci.yml`:
+
+```yaml
+      - name: Run tests
+        # Records module evaluation order and every mock.module install with its
+        # call site (docs/dev/testing-strategy.md §5.7). Always on, not
+        # on-failure: `bun test` assigns no seed, so a failing order cannot be
+        # reproduced after the fact, and the run that failed is the only one that
+        # could have recorded it.
+        env:
+          MAXIMAL_TEST_TRACE: "1"
+        run: bun test
+```
+
+and `randomized-test-order.yml`, whose per-seed invocation becomes
+`MAXIMAL_TEST_TRACE=1 bun test --randomize --seed "$SEED"`. That job is the one
+most likely to surface this class, it is non-blocking, and its output is already
+summarized into an issue rather than read line by line — so the log cost lands
+where it matters least and the payoff is highest.
 
 ---
 

@@ -61,7 +61,6 @@ describe("evictRunning", () => {
     }) as unknown as typeof fetch
 
     await evictRunning({
-      apiKey: "k",
       probePort: () => Promise.resolve(false),
       readPidfile: () => Promise.resolve(null),
       sleep: () => Promise.resolve(),
@@ -93,7 +92,6 @@ describe("evictRunning", () => {
     let killCalls = 0
 
     await evictRunning({
-      apiKey: "secret-key",
       probePort: () => {
         probes++
         // Held on first probe, then released.
@@ -141,7 +139,6 @@ describe("evictRunning", () => {
     }
 
     await evictRunning({
-      apiKey: "k",
       probePort,
       readPidfile: () => Promise.resolve(4242),
       sleep: () => Promise.resolve(),
@@ -157,6 +154,60 @@ describe("evictRunning", () => {
     expect(signals.includes(0)).toBe(true)
     // …then SIGKILL.
     expect(signals.includes("SIGKILL")).toBe(true)
+  })
+
+  /**
+   * Security regression guard (ADR-0001). The takeover POST must carry NO
+   * credential. `/_internal/shutdown` is loopback-gated in the handler, not
+   * key-gated, so a key would be inert on the receiving side — but the peer
+   * on that port is unauthenticated from our side (any local process can
+   * answer `probePort`'s "Server running"), so sending one leaks the
+   * operator's inbound API key to whatever is squatting there.
+   *
+   * This asserts on the *whole* header set, not just `x-api-key`: a future
+   * edit that reattaches the key under any header name, or via a spread
+   * record the ESLint `credential-attachment-single-mechanism` guard cannot
+   * see, fails here.
+   */
+  test("shutdown POST carries no credential header, only loopback URLs", async () => {
+    const seen: Array<{ url: string; headers: Array<[string, string]> }> = []
+
+    const fetchImpl = mock(
+      (input: string | URL | Request, init?: RequestInit) => {
+        seen.push({
+          url: urlString(input),
+          headers: [...new Headers(init?.headers)].map(([k, v]) => [
+            k.toLowerCase(),
+            v,
+          ]),
+        })
+        return Promise.resolve(new Response("{}", { status: 202 }))
+      },
+    ) as unknown as typeof fetch
+
+    let probes = 0
+    await evictRunning({
+      port: 4141,
+      probePort: () => {
+        probes++
+        return Promise.resolve(probes < 2)
+      },
+      readPidfile: () => Promise.resolve(null),
+      sleep: () => Promise.resolve(),
+      kill: () => {},
+      fetchImpl,
+    })
+
+    const post = seen.find((r) => r.url.endsWith("/_internal/shutdown"))
+    expect(post).toBeDefined()
+    // Only a content-type. No authorization, no x-api-key, nothing else.
+    expect(post?.headers).toEqual([["content-type", "application/json"]])
+
+    // And every request this flow makes goes to loopback by literal IP.
+    expect(seen.length).toBeGreaterThan(0)
+    for (const req of seen) {
+      expect(new URL(req.url).hostname).toBe("127.0.0.1")
+    }
   })
 
   test("CLI exposes --replace flag", async () => {
@@ -184,7 +235,6 @@ describe("evictRunning", () => {
     const LIVE = 57198
 
     await evictRunning({
-      apiKey: "k",
       // Held until the LIVE pid gets SIGKILL'd.
       probePort: () =>
         Promise.resolve(
@@ -225,7 +275,6 @@ describe("evictRunning", () => {
     const killed: Array<NodeJS.Signals | 0> = []
 
     await evictRunning({
-      apiKey: "k",
       probePort: () => Promise.resolve(!killed.includes("SIGKILL")),
       readPidfile: () => Promise.resolve(4242),
       kill: (_pid, sig) => {

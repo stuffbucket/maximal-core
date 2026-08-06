@@ -14,7 +14,7 @@ import config from "@echristian/eslint-config"
 //
 // SHAPES COVERED. Each was probed against a fixture of positives and negatives
 // and then against the whole of `src/**`, which yields hits in exactly the
-// three files listed in `ignores` and nowhere else:
+// two files listed in `ignores` and nowhere else:
 //
 //   `Bearer ${t}` / `token ${t}`   template interpolation
 //   "Bearer " + t                  string concatenation
@@ -50,7 +50,7 @@ import config from "@echristian/eslint-config"
 // rule that fires on legitimate code gets suppressed and then enforces nothing.
 //
 // `ignores` is exhaustive and minimal: with it emptied, the widened rule hits
-// those three files and nothing else in `src/**`. Two entries that used to sit
+// those two files and nothing else in `src/**`. Two entries that used to sit
 // here were removed because they no longer named a violation — `src/setup.ts`
 // (its smoke test now deliberately sends no x-api-key) and `**/*.test.ts`
 // (`files` is `src/**/*.ts`, and there are no tests under `src/`).
@@ -68,18 +68,6 @@ const tokenAttachmentGuard = {
     // GitHub/Copilot token) to the web-tools service. Different credential
     // domain; not yet folded into sendRequest. Tracked as a follow-up.
     "src/routes/messages/web-tools/executor.ts",
-    // `--replace` takeover probe. POSTs /_internal/shutdown to the maximal
-    // instance already holding the port and attaches the operator's own
-    // configured inbound key (`getConfiguredApiKeys()[0]`, via
-    // `~/lib/start/port.ts`) as `headers["x-api-key"] = apiKey` on a raw
-    // injected fetch. This IS a second hand-rolled attachment site; the
-    // widened rule is what surfaced it, and the old rule could not see the
-    // member-assignment shape. Scoped down by two facts: the destination is
-    // 127.0.0.1 only, and the credential is the proxy's own INBOUND key, not a
-    // GitHub/Copilot token. Not folded into sendRequest() because sendRequest
-    // infers the credential from the destination host and loopback maps to
-    // none. Tracked as a follow-up.
-    "src/lib/platform/replace-running.ts",
   ],
   rules: {
     "no-restricted-syntax": [
