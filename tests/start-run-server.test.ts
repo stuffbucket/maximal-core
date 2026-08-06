@@ -25,7 +25,8 @@ import {
   test,
   type Mock,
 } from "bun:test"
-import { createServer } from "node:net"
+
+import { pickFreePort } from "./helpers/free-port"
 
 // --- Mocks for the chunky boot dependencies ------------------------
 //
@@ -205,21 +206,12 @@ function resetState(): void {
  * CI runner where sibling suites are binding ports concurrently. That is how it
  * failed on the #58 rebase.
  *
- * Binding port 0 makes the OS pick from its ephemeral range and hand back one it
- * knows is unused; closing immediately leaves a window, but a microsecond-wide
- * one against a port nothing else is scanning, rather than a 1-in-1000 guess
- * inside a range anything may hold.
+ * The implementation now lives in `tests/helpers/free-port.ts`, which
+ * `tests/start-port-policy.test.ts` also needs and which documents why this is
+ * the *weakest* of the ways to get a port here. It is nonetheless the right one
+ * for this file: `runServer` takes a port *number* and binds it itself, so the
+ * test cannot hold the socket.
  */
-function pickFreePort(): number {
-  const probe = createServer()
-  probe.listen(0, "127.0.0.1")
-  const address = probe.address()
-  const port = typeof address === "object" && address ? address.port : 0
-  probe.close()
-  if (port === 0) throw new Error("could not obtain an ephemeral port")
-  return port
-}
-
 function baseOptions(
   over: Partial<Parameters<typeof runServer>[0]> = {},
 ): Parameters<typeof runServer>[0] {

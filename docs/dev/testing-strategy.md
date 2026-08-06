@@ -114,6 +114,7 @@ breaks down into these layers:
 | Lint (authoritative) | **ESLint** (`bun run lint:all` = `eslint --cache .`) | Full-tree. This is what CI runs and is the source of truth. Both `lint` and `lint:all` use `--cache`; the difference is **scope** — the pre-commit `lint` only sees *staged* files, and CI runs on a fresh checkout with no cache, so a violation outside your staged set surfaces only under `lint:all`/CI. See §5. |
 | Mutation testing | **StrykerJS** (`bun run mutate`) | Manual, narrow-scope. `testRunner: "command"`. See §6. |
 | Dead-code / unused deps | **knip** (`bun run knip`) | Part of `check:deep`. |
+| Copy-paste detection | **jscpd** (`bun run dupes`, gated by `dupes:check`) | Part of `check:deep`. Tuning in `.jscpd.json`, ratchet in `scripts/check-dupes.ts`. See §9. |
 | Secret scanning | **trufflehog** + `scripts/secret-scan.sh` | Runs pre-commit (lint-staged) and in CI. |
 
 **Runtime pin:** Bun is pinned via `.bun-version`, which every CI workflow
@@ -480,6 +481,51 @@ most likely to surface this class, it is non-blocking, and its output is already
 summarized into an issue rather than read line by line — so the log cost lands
 where it matters least and the payoff is highest.
 
+### 5.8 A test that names a port is asserting about the whole machine
+
+The shared-state hazards above are about state inside the Bun worker. Ports are
+the same failure with a wider blast radius: the shared resource is the *runner*,
+so a sibling suite, a leftover process, or a second checkout can fail a test
+that is itself correct. This project has now paid for it three times — the
+fixed-port flakes in #34, the `4143 + random(100)` / `4243 + random(100)`
+windows that overlapped at their seams, and `41000 + random(1000)` in
+`tests/start-run-server.test.ts`, which went red on a CI runner during #58.
+Every one was green in isolation. **Widening the range does not make a guess
+safe**; it only makes the collision rarer and therefore harder to reproduce.
+
+There are four ways to get a port here. They are **not** interchangeable, and
+they rank by *who owns the socket when the assertion runs*:
+
+| | Mechanism | Ownership at assertion time |
+|---|---|---|
+| 1 | `Bun.serve({ port: 0 })`, then read `server.port` | Never leaves. No window. |
+| 2 | `startEngine` (`tests/helpers/spawn-engine.ts`) — child binds `--port 0`, reports on the ready-line | Never leaves. No window. |
+| 3 | `holdPort()` (`tests/helpers/free-port.ts`) — the test binds and keeps the socket | Held by the test. No window. |
+| 4 | `pickFreePort()` (same file) — bind, read the number back, release | **Passes to the code under test. Window exists.** |
+
+Forms 1 and 2 are two observation channels for two runtimes, not duplication;
+merging them would buy nothing and cost the thing that makes each work. Only 3
+and 4 are the test's own bookkeeping, and only those are shared.
+
+**Form 4 is the weakest and is a last resort.** Use it only when the API under
+test takes a port *number* and binds it later — `runServer({ port })` is the
+one case in this repo. Anything that can hold its own socket should.
+
+**Enforced.** `tests/spawned-engine-ports.test.ts` is the guard, and it now
+covers both doors. The original three checks cover spawned engines (`--port`
+must be `0`; every spawn must route through `startEngine`). A fourth covers
+in-process binds: every real `.listen(...)` / `Bun.serve({ port })` in `tests/**`
+must either request `0` outright or live in a file that sources ports from
+`helpers/free-port.ts`. That inversion is deliberate — the defect that shipped
+was `const port = 45_872` with `listen(port, …)` at the call site, so matching
+numeric *arguments* would have missed it, and tracing the value needs data flow
+a text scan does not have. The guard carries its own fixture asserting it
+recognises that exact shape, so it cannot rot into a no-op.
+
+**It does not forbid port literals generally**, and must not: the `resolvePort`
+policy tests pass `4141` to fake probes and bind nothing, which is correct. Only
+sites that reach the network stack are matched.
+
 ---
 
 ## 6. Mutation testing (the differentiator)
@@ -707,14 +753,79 @@ idempotent `flaky-order`-labelled issue rather than going red. It does not
 auto-close on a clean night: this class is intermittent, and one green run is
 not evidence.
 
+### Duplication: a ratchet on file pairs, not a percentage
+
+`bun run dupes:check` (`scripts/check-dupes.ts`, tuning in `.jscpd.json`) runs
+jscpd and fails when **a pair of files in `src/**` starts sharing copy-pasted
+code that it did not share before**. `bun run dupes` prints the full inventory
+across `src`, `tests` and `scripts` and gates nothing. It is in `check:deep`.
+
+**Measured first.** jscpd over `src`, `tests` and `scripts`, TypeScript only:
+
+| min-tokens | clones | duplicated lines |
+|---|---|---|
+| 30 | 457 | 6.15% |
+| 50 | 119 | 2.48% |
+| 100 | 13 | 0.55% |
+
+and at min-tokens 50, split by tree: `src` **0.33%** (10 clones, 9 of them
+inside a single file), `scripts` **0.95%** (11), `tests` **5.16%** (96). Across
+the whole repo, 92 of the 119 clones are a file against itself, and there are
+just 15 distinct cross-file pairs. In `src` there is exactly one:
+`poll-access-token.ts` ↔ `refresh-access-token.ts`.
+
+Three decisions follow, and the numbers picked all of them.
+
+- **min-tokens 50 is the floor.** At 30, cross-file matches in `src` go from 1
+  to 17, and the extra 16 are import blocks and the parallel route-handler
+  idiom (`chat-completions/handler.ts` ↔ `responses/handler.ts`, three times).
+  The e2e scripts' shared check/reporter idiom starts matching there too. Those
+  are the shape of the codebase, not defects in it, and a detector that reports
+  them gets switched off — after which it enforces nothing. `--skip-comments`
+  is on; it happened to change nothing today, and is kept as cheap insurance
+  against two files sharing a long doc comment.
+- **A percentage threshold cannot work here, and the arithmetic says so.**
+  `src` is ~31k lines at 0.33%. A 40-line function copy-pasted into a second
+  file moves that to 0.46%; fifty of them still sit under 1%. Any threshold
+  loose enough to be green today is loose enough to swallow every copy-paste
+  anyone will actually commit. This is the same argument `scripts/check-deps.ts`
+  makes against counting cycles rather than recording them, and it lands harder
+  because the denominator is bigger.
+- **The identity is the unordered pair of files.** A clone is reported as two
+  line ranges, so keying on those makes every entry churn when a line is
+  inserted above one of them — and a baseline that churns gets `--update`d
+  reflexively, which is the same as not having one. The file pair is invariant
+  under that, is what a reviewer actually wants to know, and is what changes
+  when someone copies code.
+
+**Scope.** Only `src/**` is gated. `tests/**` is out because 96 of the 119
+clones live there and they are near-identical *test bodies* — the thing §10
+calls correct. Folding those into a table costs the property tests exist for:
+reading a failure and knowing what broke. `scripts/**` is out because it is
+tooling rather than the product. Both stay in `bun run dupes`.
+
+**Two limits, stated rather than buried.** It finds copy-paste, **not
+reimplementation** — the question that prompted building it ("was this fix
+implemented twice, two different ways?") is one jscpd cannot answer, because two
+different implementations share no tokens. And it is pair-granular: a *second*
+copy-paste between two files that already share one adds no pair and passes.
+That is the same limitation `check-deps.ts` accepts for its edges, for the same
+reason.
+
+**Not yet in CI.** `check:deep` runs it, so it gates the local loop and anyone
+following `AGENTS.md`. Adding the step to `ci.yml`'s `test` job is a one-line
+change this workstream did not own; until it lands, `check:deep` is a strict
+superset of CI rather than an exact match.
+
 **Local pre-merge equivalents:**
 
 - `bun run check:fast` = `lint:fast → typecheck → lint:all`.
 - `bun run check:deep` = `check:fast → casts:check → bun test → knip →
-  deps:check → build → typecheck:downstream → bindings:check`. This is a
-  superset of the `test` job's step list above, so green here means green
-  there. It says nothing about the `windows` job, which builds and exercises a
-  compiled artifact on a Windows runner — nothing local reproduces that.
+  deps:check → dupes:check → build → typecheck:downstream → bindings:check`.
+  This is a superset of the `test` job's step list above, so green here means
+  green there. It says nothing about the `windows` job, which builds and
+  exercises a compiled artifact on a Windows runner — nothing local reproduces
+  that.
 - `bun run check:ops` = `typecheck:ops → test:ops`, for `scripts/ops/` (its own
   tsconfig and test run; `tooling-ci.yml` is the CI counterpart).
 - **Pre-commit hook** (simple-git-hooks → lint-staged): `bun run lint --fix` +
