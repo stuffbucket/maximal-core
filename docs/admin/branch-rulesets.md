@@ -28,6 +28,17 @@ every PR forever with nothing red to point at. `check-rulesets.test.ts` holds a
 parity test over that mapping, and it runs on every PR (`test:ops`), so a rename
 fails there first.
 
+**Two workflows must not share a job name, and two do.** The match is by name,
+so `tooling-ci.yml`'s `test` job reports into the same required `test` context
+as `ci.yml`'s, and the last run to complete is the one the merge button reads —
+a green run of the wrong workflow can stand in for a red run of the right one.
+`tooling-ci.yml` is path-filtered to `scripts/ops/**` and `package.json`, so it
+only materialises on a PR touching those. It is left as-is rather than renamed
+because that job is the only thing making `typecheck:ops` blocking, and adding a
+new context to the ruleset is a settings change no PR can make: **if you rename
+it, add the new name to `main-require-pr` in the same change.** The collision is
+recorded in `KNOWN_CONTEXT_COLLISIONS` and a *second* one fails the parity test.
+
 **Why strict-update rather than a Merge Queue.** GitHub's Merge Queue is
 unavailable on a user-owned repository. Requiring the branch to be up to date is
 the substitute: only one PR can be simultaneously up-to-date and green, so PRs

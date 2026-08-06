@@ -139,6 +139,29 @@ export const CHECK_JOBS: ReadonlyArray<{ context: string; workflow: string }> = 
   { context: "gate", workflow: ".github/workflows/release-gates.yml" },
 ]
 
+/**
+ * Workflows OTHER than the one above that define a job with a required
+ * context's name, recorded so a new one fails the parity test instead of
+ * appearing silently.
+ *
+ * A required status check is matched by name, not by workflow. Two workflows
+ * with a job of the same name therefore report into one required context, and
+ * which result the merge button reads is decided by whichever completed last —
+ * so a green run of the wrong workflow can stand in for a red run of the right
+ * one. `tooling-ci.yml`'s `test` is path-filtered to `scripts/ops/**` and
+ * `package.json`, so the collision only materialises on a PR that touches those
+ * (this one does: both reported).
+ *
+ * NOT FIXED HERE, deliberately. Renaming that job removes the ambiguity but
+ * also removes the only thing that makes `typecheck:ops` blocking, and adding
+ * the new name to the ruleset is a repository-settings change this repo cannot
+ * make from a PR. It is recorded as a known hazard, and the ratchet below stops
+ * a second one arriving unannounced — see docs/admin/branch-rulesets.md.
+ */
+export const KNOWN_CONTEXT_COLLISIONS: ReadonlyArray<string> = [
+  ".github/workflows/tooling-ci.yml:test",
+]
+
 /** Absolute path to a repo-relative file, so this runs from any cwd. */
 export const repoPath = (rel: string): string => path.join(REPO_ROOT, rel)
 

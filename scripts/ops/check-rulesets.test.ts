@@ -7,6 +7,7 @@ import {
   EXPECTED,
   exitCodeFor,
   jobIds,
+  KNOWN_CONTEXT_COLLISIONS,
   renderIssue,
   renderSummary,
   renderUnreadable,
@@ -293,6 +294,27 @@ describe("required-check parity with the workflows", () => {
     const fromExpectation = new Set(EXPECTED.flatMap((e) => e.requiredContexts ?? []))
     const fromTable = new Set(CHECK_JOBS.map((j) => j.context))
     expect([...fromExpectation].sort()).toEqual([...fromTable].sort())
+  })
+
+  // A required check is matched by NAME. A second workflow with a job of the
+  // same name reports into the same required context, and the last one to
+  // finish decides what the merge button reads — so a green run of the wrong
+  // workflow can stand in for a red run of the right one. The standing
+  // collision is recorded; a new one fails here.
+  test("no unrecorded workflow reuses a required context's job name", async () => {
+    const dir = repoPath(".github/workflows")
+    const contexts = new Set(CHECK_JOBS.map((j) => j.context))
+    const owner = new Map(CHECK_JOBS.map((j) => [j.context, j.workflow]))
+    const found: Array<string> = []
+    for (const file of (await fs.readdir(dir)).sort()) {
+      if (!file.endsWith(".yml") && !file.endsWith(".yaml")) continue
+      const rel = `.github/workflows/${file}`
+      const yaml = await fs.readFile(repoPath(rel), "utf8")
+      for (const id of jobIds(yaml)) {
+        if (contexts.has(id) && owner.get(id) !== rel) found.push(`${rel}:${id}`)
+      }
+    }
+    expect(found).toEqual([...KNOWN_CONTEXT_COLLISIONS])
   })
 })
 
