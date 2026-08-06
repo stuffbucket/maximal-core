@@ -41,6 +41,8 @@ import {
  */
 type SidecarChild = ChildProcessByStdio<null, Readable, Readable>
 
+export type { SidecarChild }
+
 export interface Sidecar {
   child: SidecarChild
   /** Control plane — JSON-RPC, subscriptions. Ephemeral (maximal-core#10). */
@@ -168,12 +170,16 @@ function lineSplitter(onLine: (line: string) => void): {
 } {
   const decoder = new TextDecoder()
   let buffer = ""
+  // Windows writers end lines with CRLF. Splitting on "\n" alone leaves the CR
+  // on the end of every line, where it corrupts a transcript and any harness
+  // check anchored to a line's tail.
+  const emit = (line: string): void => onLine(line.replace(/\r$/u, ""))
   return {
     push: (chunk) => {
       buffer += decoder.decode(chunk, { stream: true })
       let newline = buffer.indexOf("\n")
       while (newline >= 0) {
-        onLine(buffer.slice(0, newline))
+        emit(buffer.slice(0, newline))
         buffer = buffer.slice(newline + 1)
         newline = buffer.indexOf("\n")
       }
@@ -181,7 +187,7 @@ function lineSplitter(onLine: (line: string) => void): {
     flush: () => {
       const rest = buffer
       buffer = ""
-      if (rest.trim()) onLine(rest)
+      if (rest.trim()) emit(rest)
     },
   }
 }
@@ -271,9 +277,26 @@ interface Pipes {
   stdout: AsyncIterable<Buffer>
   /** Everything seen so far, stream-tagged, for a boot-failure message. */
   transcript: () => string
-  /** Resolves when the child has exited *and* both pipes have closed — the
-   *  point at which the transcript is actually complete. */
+  /** Resolves once the child has exited *and* both pipes have run dry — the
+   *  point at which the transcript is actually complete. Both conditions, not
+   *  just the child's `close`: the ordering between a process exiting and its
+   *  last stderr chunk being delivered is a platform detail, and sampling the
+   *  transcript before stderr drained is exactly the bug being fixed. */
   closed: Promise<void>
+}
+
+/** A promise that resolves when the child has exited and neither pipe has
+ *  anything left to deliver. */
+function allOutputDelivered(child: SidecarChild): Promise<void> {
+  const settled = (emitter: SidecarChild | Readable, ...events: Array<string>) =>
+    new Promise<void>((resolve) => {
+      for (const event of events) emitter.once(event, () => resolve())
+    })
+  return Promise.all([
+    settled(child, "close", "exit"),
+    settled(child.stdout, "close", "end"),
+    settled(child.stderr, "close", "end"),
+  ]).then(() => undefined)
 }
 
 /**
@@ -316,7 +339,7 @@ function drainPipes(child: SidecarChild): Pipes {
       tagged.length === 0 ?
         "The sidecar wrote nothing to stdout or stderr."
       : `Sidecar output (${tagged.length} lines):\n${tagged.join("\n")}`,
-    closed: new Promise((resolve) => child.once("close", () => resolve())),
+    closed: allOutputDelivered(child),
   }
 }
 
@@ -354,15 +377,23 @@ async function bootFailure(
   return error
 }
 
+const DEFAULT_READY_TIMEOUT_MS = 30_000
+
 /**
- * Spawn the real binary and wait until it announces its bound port.
+ * Take ownership of an already-spawned child: drain both pipes, wait for the
+ * ready-line, and report a boot that fails with the child's own output.
+ *
+ * The complement to `spawnEngine`, and split out from `startSidecar` for the
+ * same reason — so how a child is launched and how it is supervised are
+ * separable. A caller that has a child from somewhere other than
+ * `launchCommand` (a test standing in for the engine, say) supervises it
+ * through exactly the path the harnesses use, rather than a second copy of it.
  */
-export async function startSidecar(
-  options: StartOptions = {},
+export async function superviseSidecar(
+  child: SidecarChild,
+  timeoutMs: number = DEFAULT_READY_TIMEOUT_MS,
 ): Promise<Sidecar> {
-  const child = spawnEngine(options)
   const pipes = drainPipes(child)
-  const timeoutMs = options.readyTimeoutMs ?? 30_000
 
   let ready: ParsedReadyLine
   try {
@@ -381,6 +412,15 @@ export async function startSidecar(
     baseUrl: `http://127.0.0.1:${ready.controlPort}`,
     proxyUrl: `http://127.0.0.1:${ready.proxyPort}`,
   }
+}
+
+/**
+ * Spawn the real binary and wait until it announces its bound port.
+ */
+export async function startSidecar(
+  options: StartOptions = {},
+): Promise<Sidecar> {
+  return superviseSidecar(spawnEngine(options), options.readyTimeoutMs)
 }
 
 export interface Reporter {
