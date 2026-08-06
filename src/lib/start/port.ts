@@ -12,18 +12,18 @@ import net from "node:net"
 
 import type { PortPolicy } from "~/lib/config/config"
 
-import { getConfiguredApiKeys } from "~/lib/auth/request-auth"
 import { evictRunning } from "~/lib/platform/replace-running"
 import { emitBootStatus } from "~/lib/start/boot-status"
 
 /** Wrap evictRunning() with the CLI's error-handling. On failure to
  *  free the port we exit 1 with a readable message rather than dumping
- *  a stack trace. */
+ *  a stack trace.
+ *
+ *  No credential is read or forwarded: `/_internal/shutdown` is
+ *  loopback-gated in the handler, not key-gated. See `requestShutdown`. */
 export async function maybeEvictRunning(port: number): Promise<void> {
-  const keys = getConfiguredApiKeys()
-  const apiKey = keys[0] ?? null
   try {
-    await evictRunning({ apiKey, port })
+    await evictRunning({ port })
   } catch (error) {
     consola.error(error instanceof Error ? error.message : String(error))
     process.exit(1)
