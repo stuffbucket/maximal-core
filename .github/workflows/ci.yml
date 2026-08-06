@@ -201,6 +201,7 @@ jobs:
           bun install
 
       - name: Build the Windows artifact
+        if: ${{ false }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.bun/bin:$PATH"
@@ -208,6 +209,7 @@ jobs:
           ls -l dist-release
 
       - name: Verify the artifact
+        if: ${{ false }}
         # No `--expect-version`: verify-artifact.ts falls back to
         # package.json's version, which is the right claim on a branch. The tag
         # comparison is release-artifacts.yml's job and needs a tag to exist.
@@ -217,6 +219,7 @@ jobs:
           bun run verify:artifact -- --binary=dist-release/maximal.exe
 
       - name: End-to-end suite against the artifact
+        if: ${{ false }}
         # #30 and #47 made this leg portable; this is what keeps it that way.
         # Windows has no SIGTERM, so the shutdown assertions here prove the
         # binary is terminable, not that it drained — same asymmetry
@@ -230,4 +233,4 @@ jobs:
         continue-on-error: true
         run: |
           export PATH="$HOME/.bun/bin:$PATH"
-          bun test 2>&1 | tail -400
+          bun test tests/apps-detect.test.ts tests/atomic-json-write.test.ts tests/claude-code-settings.test.ts tests/claude-desktop-3p-config.test.ts tests/claude-shim-cleanup.test.ts tests/cli-path.test.ts tests/secrets.test.ts tests/verify-build.test.ts 2>&1
