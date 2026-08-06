@@ -33938,7 +33938,7 @@ function resolveDeps(opts) {
     fetchImpl: opts.fetchImpl ?? fetch
   };
 }
-async function requestShutdown(apiKey, deps) {
+async function requestShutdown(deps) {
   const base2 = `http://127.0.0.1:${deps.port}`;
   try {
     await deps.fetchImpl(`${base2}/setup-status`, {
@@ -33947,15 +33947,10 @@ async function requestShutdown(apiKey, deps) {
   } catch {
     return false;
   }
-  const headers = {
-    "content-type": "application/json"
-  };
-  if (apiKey)
-    headers["x-api-key"] = apiKey;
   try {
     await deps.fetchImpl(`${base2}/_internal/shutdown`, {
       method: "POST",
-      headers,
+      headers: { "content-type": "application/json" },
       signal: AbortSignal.timeout(1000)
     });
   } catch {}
@@ -33973,7 +33968,7 @@ async function waitForPortRelease(deps) {
 }
 async function evictRunning(opts) {
   const deps = resolveDeps(opts);
-  const reachable = await requestShutdown(opts.apiKey, deps);
+  const reachable = await requestShutdown(deps);
   if (reachable && await waitForPortRelease(deps))
     return;
   if (!reachable && !await deps.probePort(deps.port))
@@ -35530,10 +35525,8 @@ var init_claude_code_flow = __esm(() => {
 // src/lib/start/port.ts
 import net3 from "net";
 async function maybeEvictRunning(port2) {
-  const keys = getConfiguredApiKeys();
-  const apiKey = keys[0] ?? null;
   try {
-    await evictRunning({ apiKey, port: port2 });
+    await evictRunning({ port: port2 });
   } catch (error51) {
     consola.error(error51 instanceof Error ? error51.message : String(error51));
     process.exit(1);
@@ -35689,7 +35682,6 @@ function portOrExit(resolution) {
 var BIND_TEST_HOSTS, IN_USE_CODES, PORT_SCAN_LIMIT = 20, MAX_PORT = 65535;
 var init_port = __esm(() => {
   init_dist();
-  init_request_auth();
   init_replace_running();
   init_boot_status();
   BIND_TEST_HOSTS = ["127.0.0.1", "::1", "0.0.0.0"];

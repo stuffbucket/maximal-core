@@ -3,7 +3,7 @@ id: ADR-0001
 title: CodeQL by-design dismissals
 status: accepted
 date: 2026-05-11
-amended: 2026-07-03
+amended: 2026-08-05
 authors:
   - stuffbucket
 links:
@@ -165,23 +165,20 @@ properties:
    uses — was invisible to it. Widening it surfaced one real second
    attachment site (below).
 
-   Allowlisted, each for a stated reason:
+   Allowlisted, for a stated reason:
    `routes/messages/web-tools/executor.ts` (a separate sandbox key, not
-   a GitHub/Copilot token) and `lib/platform/replace-running.ts` (the
-   `--replace` takeover POSTs `/_internal/shutdown` to 127.0.0.1 with
-   the operator's own *inbound* API key as `x-api-key`; `sendRequest`
-   infers the credential from the destination host and loopback maps to
-   none). `setup.ts` was allowlisted for a dummy loopback key it no
-   longer sends; the entry was removed.
+   a GitHub/Copilot token). `setup.ts` was allowlisted for a dummy
+   loopback key it no longer sends, and
+   `lib/platform/replace-running.ts` for the `--replace` takeover's
+   hand-attached inbound key; both entries were removed once the
+   attachment they named was deleted (see the 2026-08-05 amendment).
 
 Least-privilege routing (each credential reaches exactly one host; no
 host receives two credentials) was already true and is preserved — the
 mechanism centralizes it rather than changing it.
 
 Out of scope / follow-ups: the web-tools executor's sandbox credential
-is not yet a `Credential` domain, and `lib/platform/replace-running.ts`
-still attaches the inbound API key by hand for the loopback `--replace`
-takeover.
+is not yet a `Credential` domain.
 
 Update (defect #230): the `GET /token` endpoint (`routes/token/route.ts`)
 that returned the raw Copilot token has been DELETED. The claim that it
@@ -191,3 +188,141 @@ and authenticates with its own key), and it was inherited verbatim from
 the vendored upstream fork. Serving the raw upstream secret was
 inconsistent with every other token-adjacent read in the repo
 (presence-only booleans), so the route was removed rather than gated.
+
+# Amendment (2026-08-05): the `--replace` attachment site is deleted, not folded in
+
+The second attachment site that widening the guard surfaced —
+`lib/platform/replace-running.ts`, which set `headers["x-api-key"] =
+getConfiguredApiKeys()[0]` on the `--replace` takeover POST to
+`http://127.0.0.1:<port>/_internal/shutdown` — has been **removed**. The
+request now carries only `content-type`. The `eslint.config.js` allowlist
+entry for that file is gone with it; the guard is back to one exception
+(`web-tools/executor.ts`).
+
+## Why deletion, and not `sendRequest()`
+
+The header was **inert**. `/_internal/shutdown` has never been key-gated:
+
+1. It is listed in `loopbackOnlyPaths` in `server.ts`, and
+   `createAuthMiddleware`'s `shouldBypass` returns `next()` for a loopback
+   caller on that path *before* any key is extracted. `alwaysEnforcePrefixes`
+   is evaluated only after `shouldBypass`, so it cannot re-arm the check.
+2. `routes/internal/route.ts` then re-checks the peer IP itself and returns
+   `404` to a non-loopback caller **regardless of a valid key** — the property
+   the endpoint exists to have.
+3. Both halves key off the same `isLoopbackAddress` predicate, so there is no
+   state in which the key flips a rejection into an acceptance, including the
+   degraded case where the peer cannot resolve our IP (no bypass — but then
+   the handler 404s too).
+4. This has been true since the endpoint was introduced (`c712994`, which
+   added the route and its `loopbackOnlyPaths` entry in one commit), so no
+   shipped version ever required it. Against a peer older than that commit
+   the POST simply 404s, and `evictRunning` already ignores the status and
+   falls through to the SIGTERM/SIGKILL path.
+
+Its wire contract (`docs/spec/wire/usage-status-wire-prd.md` → _graceful
+eviction_) lists an optional JSON body and no credential at all.
+
+Sending it was also a small net liability, in the direction the ADR cares
+about. The caller has **not** authenticated the peer: `resolvePort` only
+evicts when `probePort` saw the response body `"Server running"`, which any
+local process can serve. `probePort` additionally asks
+`http://localhost:<port>` while the POST goes to `http://127.0.0.1:<port>`,
+so on a dual-stack host the identity check and the credentialed POST can
+reach *different* listeners. So the one concrete effect of the header was to
+hand the operator's inbound API key to an unauthenticated local peer.
+
+Folding it into `sendRequest()` was considered and rejected on three counts,
+recorded here so it is not relitigated:
+
+- **Wrong credential domain.** Every credential `sendRequest` attaches is an
+  *outbound* one the proxy holds to authenticate itself to an upstream
+  (`state.copilotToken`, `state.githubToken`, `getAnthropicApiKey()`, a
+  resolved provider key). The `--replace` key is an *inbound* one — the same
+  secret an API client presents to us. Routing it through the single
+  file→HTTP sink would put an unrelated credential class through the one
+  CodeQL-suppressed line whose stated rationale is "forwards its own token
+  upstream", weakening that suppression's meaning.
+- **Host inference cannot express it, and the workaround inverts the safe
+  default.** `attachHostAuth`'s guarantee is "an unrecognized host gets no
+  credential." A `127.0.0.1:*` branch would make the entire loopback space
+  credential-bearing, so any future `sendRequest("http://127.0.0.1:<n>/…")`
+  would silently leak the inbound key. Loopback is not a trust boundary here.
+- **Passing the key as an argument would satisfy the lint rule without
+  satisfying the invariant.** A `sendLoopbackRequest(apiKey, url)` moves the
+  `.set()` call into `send-request.ts` but leaves *credential selection* with
+  the caller — precisely the "credential crossing a boundary as an opaque
+  value" shape `eslint.config.js` documents as undetectable. It would also
+  require adding a `fetch` injection seam to the auth sink (the eviction path
+  is tested through `deps.fetchImpl`), and an injectable `fetch` inside the
+  single token-attaching function is itself an exfiltration seam.
+
+Nothing needed a new credential kind, because nothing needed a credential.
+
+## What a reviewer should check if this is ever edited
+
+`requestShutdown` carries the reasoning inline. If someone proposes putting a
+credential back on that POST, it is only warranted if **both** of these have
+changed:
+
+- `/_internal/shutdown` became reachable off-loopback (removed from
+  `loopbackOnlyPaths`, or the handler's `isLoopbackAddress` gate dropped), and
+- it grew a real key check that a caller must satisfy.
+
+If that happens, the credential must be selected by the mechanism, not by
+`replace-running.ts` — and the peer must be authenticated *before* the key is
+sent, which the `"Server running"` probe does not do.
+
+`tests/replace-running.test.ts` pins both properties: the shutdown POST's
+header set is asserted whole (not just "no `x-api-key`"), and every URL the
+flow touches is asserted to have hostname `127.0.0.1`. That assertion catches
+a reattachment under any header name, including via a spread record the
+ESLint guard cannot see.
+
+## Manual sweep for sites the guard structurally cannot see
+
+`eslint.config.js` documents which shapes are undetectable. Doing the sweep
+those shapes imply — by hand, over all of `src/**` — turned up three places
+where a credential reaches the wire outside `send-request.ts`'s attachment
+logic. None is a hand-rolled auth header; all three are invisible to any
+selector. Recording them so the next sweep starts from a baseline rather than
+from zero.
+
+1. **A credential in a request BODY, not a header** —
+   `services/github/refresh-access-token.ts`. The OAuth `refresh_token` grant
+   puts the `ghr_` refresh token in the JSON body. It *is* routed through
+   `sendRequest`, so it shares the one fetch sink and the destination is the
+   fixed first-party `${githubBaseUrl}/login/oauth/access_token` — but
+   `attachHostAuth` maps `github.com/login/*` to **no** credential, so the
+   secret on that wire was supplied by the caller and the mechanism never saw
+   it. `send-request.ts`'s comment on that host ("authenticates via a public
+   client_id in the body") is true of the device-code flow and understates
+   the refresh flow. Not a defect — the grant type requires the token in the
+   body — but it means "the mechanism owns every credential that leaves" is
+   true of *headers* only.
+2. **`Proxy-Authorization`, minted inside a dependency** — `lib/http/proxy.ts`
+   passes `getProxyForUrl()`'s raw value to undici's `ProxyAgent`. Corporate
+   `HTTPS_PROXY` values routinely carry userinfo (a `user:password@` part
+   before the host), and undici turns that into a `Proxy-Authorization:
+   Basic …` header on every
+   outbound request in the process — including every request through
+   `sendRequest`. The file already strips userinfo before logging, so the
+   possibility is known. It is the operator's own proxy password rather than
+   an app-held token, and it is Node-path only (`initProxyFromEnv` returns
+   early under Bun), but it is the single most rule-invisible credential
+   header in the repo.
+3. **A latent second mechanism on a PUBLISHED surface** — `lib/live/client.ts`
+   (`ControlClient`, exported as `@stuffbucket/maximal-core/client`). Its
+   `headers` option is documented as *"Auth headers sent on every request
+   (e.g. `{ "x-api-key": "…" }`)"* and is spread into four `fetch` calls —
+   and at one of them passed as a bare identifier in the `headers` position,
+   with no object literal at all. No caller in `src/**`, `tests/**`, or
+   `scripts/**` passes credentials to it today, so nothing leaks now. But it
+   is the exact "record built elsewhere and spread" shape, on an exported
+   SDK, where a downstream consumer attaches a credential with zero lint
+   coverage. This is the one to watch.
+
+Also noted while sweeping, adjacent but out of scope for the attachment
+invariant: `routes/control/settings-endpoints.ts`'s `GET /control/api-keys`
+returns `apiKeyEntries` verbatim, raw `key` values included. That is a
+disclosure surface behind the auth middleware, not an attachment site.

@@ -8,10 +8,6 @@ import { PATHS } from "~/lib/platform/paths"
 export const PIDFILE_PATH = path.join(PATHS.APP_DIR, "maximal.pid")
 
 export interface EvictOptions {
-  /** API key to send with the shutdown POST. Pass `null` when unknown
-   *  — the request will still go out (loopback) without auth and the
-   *  endpoint may choose to honor it or not. */
-  apiKey: string | null
   /** Port to evict. Defaults to 4141 (the desktop sidecar's port). */
   port?: number
   /** Polling deadline after sending shutdown, in ms. Default 3000. */
@@ -134,7 +130,8 @@ function defaultListenerPid(port: number): number | null {
  * Cleanly take over the proxy port from a running instance.
  *
  * 1. Probe `/setup-status`. If unreachable → no-op.
- * 2. POST `/_internal/shutdown` with the API key. Ignore non-2xx.
+ * 2. POST `/_internal/shutdown`. No credential — see `requestShutdown`.
+ *    Ignore non-2xx.
  * 3. Poll TCP connect every 50ms until refused, capped at `drainTimeoutMs`.
  * 4. If still held, read pidfile → SIGTERM → wait → SIGKILL.
  * 5. Throw if the port is *still* held after kill.
@@ -167,14 +164,39 @@ function resolveDeps(opts: EvictOptions): ResolvedEvictDeps {
   }
 }
 
-/** HTTP probe + POST /_internal/shutdown. Returns false if the peer
- *  was unreachable (nothing to evict), true if the shutdown request
- *  was at least dispatched. The shutdown response status is ignored
- *  — we re-probe the port to decide success. */
-async function requestShutdown(
-  apiKey: string | null,
-  deps: ResolvedEvictDeps,
-): Promise<boolean> {
+/**
+ * HTTP probe + POST /_internal/shutdown. Returns false if the peer
+ * was unreachable (nothing to evict), true if the shutdown request
+ * was at least dispatched. The shutdown response status is ignored
+ * — we re-probe the port to decide success.
+ *
+ * **This request carries no credential, deliberately.** `/_internal/shutdown`
+ * has never been key-gated: it is listed in `loopbackOnlyPaths` in
+ * `server.ts`, so a loopback caller skips the API-key check outright, and
+ * `routes/internal/route.ts` then re-checks the peer IP itself and returns
+ * `404` to anyone non-loopback *regardless of a valid key*. Both halves key
+ * off the same `isLoopbackAddress` predicate, so there is no state in which a
+ * key would turn a rejection into an acceptance — including the degraded case
+ * where the peer cannot resolve our IP at all (no bypass, but then the handler
+ * 404s too). The endpoint's wire contract
+ * (`docs/spec/wire/usage-status-wire-prd.md` → _graceful eviction_) lists an
+ * optional JSON body and nothing else.
+ *
+ * We used to attach `getConfiguredApiKeys()[0]` here as `x-api-key`. That was
+ * inert on the receiving side and a small liability on the sending side: the
+ * caller has *not* authenticated the peer. `resolvePort` only evicts when
+ * `probePort` saw the body `"Server running"`, which any local process can
+ * serve — and `probePort` asks `http://localhost:<port>` while this function
+ * posts to `http://127.0.0.1:<port>`, so on a dual-stack box the identity
+ * check and the POST can even reach different listeners. Sending nothing
+ * removes the question.
+ *
+ * **If you are about to add a credential back, stop.** It would only be
+ * warranted if `/_internal/shutdown` became reachable off-loopback or grew a
+ * real key gate — and in that case the credential must be selected by the
+ * mechanism, not by this caller. See ADR-0001.
+ */
+async function requestShutdown(deps: ResolvedEvictDeps): Promise<boolean> {
   const base = `http://127.0.0.1:${deps.port}`
   try {
     await deps.fetchImpl(`${base}/setup-status`, {
@@ -183,14 +205,10 @@ async function requestShutdown(
   } catch {
     return false
   }
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-  }
-  if (apiKey) headers["x-api-key"] = apiKey
   try {
     await deps.fetchImpl(`${base}/_internal/shutdown`, {
       method: "POST",
-      headers,
+      headers: { "content-type": "application/json" },
       signal: AbortSignal.timeout(1000),
     })
   } catch {
@@ -214,7 +232,7 @@ async function waitForPortRelease(deps: ResolvedEvictDeps): Promise<boolean> {
 export async function evictRunning(opts: EvictOptions): Promise<void> {
   const deps = resolveDeps(opts)
 
-  const reachable = await requestShutdown(opts.apiKey, deps)
+  const reachable = await requestShutdown(deps)
 
   // Even if the HTTP shutdown was unreachable (e.g. an older instance whose
   // /setup-status 404s, or one wedged before it can serve), the port may
