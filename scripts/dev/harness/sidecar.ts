@@ -22,7 +22,15 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { awaitReadyLine, sidecarSpawnEnv } from "~/lib/live/supervisor"
+import type { ParsedReadyLine } from "~/lib/live/supervisor"
+
+import {
+  awaitReadyLine,
+  parseReadyLine,
+  SidecarExitedError,
+  SidecarReadyTimeoutError,
+  sidecarSpawnEnv,
+} from "~/lib/live/supervisor"
 
 /**
  * What `spawn` actually returns here. The sidecar is spawned with
@@ -40,7 +48,7 @@ export interface Sidecar {
   /** Public data plane — `/v1`. A separate listener on a separate port. */
   proxyPort: number
   pid: number
-  /** Everything stdout emitted before the ready-line, in order. */
+  /** Everything both pipes emitted before the ready-line, in arrival order. */
   bootLines: Array<string>
   /** Everything stdout+stderr emits *after* the ready-line, appended live.
    *  A harness that only kept boot lines could not tell an intentional exit
@@ -114,7 +122,7 @@ export function launchLabel(): string {
  * ready-line, so `startSidecar` can only report that as a timeout.
  *
  * The caller owns both pipes from the moment this returns and must consume
- * them: either `startSidecar` (which awaits the ready-line, then collects) or
+ * *both* immediately: either `startSidecar` (which drains from spawn) or
  * `collectLines`. Leave a pipe undrained and its buffer fills, blocking the
  * child on its next write.
  *
@@ -136,6 +144,65 @@ export function spawnEngine(options: StartOptions = {}): SidecarChild {
   })
 }
 
+/** Which pipe a line arrived on. Only a failure report distinguishes them: the
+ *  reason a sidecar died is on stderr, and a transcript that does not say so
+ *  reads as if the engine printed its own crash to stdout. */
+type Pipe = "stdout" | "stderr"
+
+/** How long to wait for a dead child's pipes to close before giving up on the
+ *  rest of its output. stdout EOF and the final stderr chunk are independent
+ *  events, so the transcript is incomplete at the instant a boot fails — and
+ *  the last stderr line is the one worth having. */
+const STREAM_FLUSH_MS = 2000
+
+/**
+ * Reassemble a byte stream into whole lines.
+ *
+ * `TextDecoder` rather than `String(chunk)` because a chunk boundary can fall
+ * inside a multi-byte character, and `flush` emits the unterminated remainder
+ * at EOF — where a crash message written without a trailing newline lives.
+ */
+function lineSplitter(onLine: (line: string) => void): {
+  push: (chunk: Buffer) => void
+  flush: () => void
+} {
+  const decoder = new TextDecoder()
+  let buffer = ""
+  return {
+    push: (chunk) => {
+      buffer += decoder.decode(chunk, { stream: true })
+      let newline = buffer.indexOf("\n")
+      while (newline >= 0) {
+        onLine(buffer.slice(0, newline))
+        buffer = buffer.slice(newline + 1)
+        newline = buffer.indexOf("\n")
+      }
+    },
+    flush: () => {
+      const rest = buffer
+      buffer = ""
+      if (rest.trim()) onLine(rest)
+    },
+  }
+}
+
+/** Attach a line drain to both pipes, now. Every caller must do this the moment
+ *  it has a child: an undrained pipe fills and blocks the child on its next
+ *  write, and output nobody read cannot explain anything afterwards. */
+function drainBothPipes(
+  child: SidecarChild,
+  onLine: (pipe: Pipe, line: string) => void,
+): void {
+  for (const pipe of ["stdout", "stderr"] as const) {
+    const stream = child[pipe]
+    const splitter = lineSplitter((line) => {
+      if (line.trim()) onLine(pipe, line)
+    })
+    stream.on("data", splitter.push)
+    stream.on("end", splitter.flush)
+  }
+}
+
 /**
  * Drain stdout+stderr into a live-appended buffer and return it.
  *
@@ -144,14 +211,147 @@ export function spawnEngine(options: StartOptions = {}): SidecarChild {
  */
 export function collectLines(child: SidecarChild): Array<string> {
   const lines: Array<string> = []
-  const collect = (chunk: Buffer | string): void => {
-    for (const line of String(chunk).split("\n")) {
-      if (line.trim()) lines.push(line)
-    }
-  }
-  child.stdout.on("data", collect)
-  child.stderr.on("data", collect)
+  drainBothPipes(child, (_pipe, line) => lines.push(line))
   return lines
+}
+
+/**
+ * An async iterable fed by pushes.
+ *
+ * `awaitReadyLine` consumes stdout as an async iterable, and that is the only
+ * way to reach the parser that owns the ready-line protocol. But it must not be
+ * handed `child.stdout` directly: an iterator and a `data` listener on the same
+ * Readable are the documented way to lose chunks, and the harness needs the
+ * `data` listener from the moment of spawn. So the harness owns the stream and
+ * replays stdout through this.
+ */
+function chunkQueue(): {
+  push: (chunk: Buffer) => void
+  end: () => void
+  iterable: AsyncIterable<Buffer>
+} {
+  const pending: Array<Buffer> = []
+  let ended = false
+  let wake: (() => void) | undefined
+  const notify = (): void => {
+    const resume = wake
+    wake = undefined
+    resume?.()
+  }
+  return {
+    push: (chunk) => {
+      pending.push(chunk)
+      notify()
+    },
+    end: () => {
+      ended = true
+      notify()
+    },
+    iterable: {
+      [Symbol.asyncIterator]: () => ({
+        next: async (): Promise<IteratorResult<Buffer, undefined>> => {
+          for (;;) {
+            const chunk = pending.shift()
+            if (chunk !== undefined) return { done: false, value: chunk }
+            if (ended) return { done: true, value: undefined }
+            await new Promise<void>((resolve) => {
+              wake = resolve
+            })
+          }
+        },
+      }),
+    },
+  }
+}
+
+interface Pipes {
+  bootLines: Array<string>
+  logLines: Array<string>
+  /** stdout, replayed for `awaitReadyLine`. */
+  stdout: AsyncIterable<Buffer>
+  /** Everything seen so far, stream-tagged, for a boot-failure message. */
+  transcript: () => string
+  /** Resolves when the child has exited *and* both pipes have closed — the
+   *  point at which the transcript is actually complete. */
+  closed: Promise<void>
+}
+
+/**
+ * Drain both pipes from the moment of spawn, splitting what arrives at the
+ * ready-line.
+ *
+ * Both drains are attached before anything is awaited, so no window exists in
+ * which stderr goes unread. The sink flips synchronously, inside the data event
+ * carrying the ready-line, so pre- and post-ready output cannot be misfiled by
+ * a scheduling accident — which a switch driven off the resolved promise would
+ * be exposed to.
+ */
+function drainPipes(child: SidecarChild): Pipes {
+  const bootLines: Array<string> = []
+  const logLines: Array<string> = []
+  const tagged: Array<string> = []
+  let sink = bootLines
+
+  const queue = chunkQueue()
+  child.stdout.on("data", queue.push)
+  child.stdout.on("end", queue.end)
+  child.stdout.on("error", queue.end)
+  // A spawn that never started (ENOENT) destroys the stdio streams without an
+  // `end`, so without this the reader would sit out the whole ready timeout to
+  // report a child that was never there.
+  child.once("close", queue.end)
+
+  drainBothPipes(child, (pipe, line) => {
+    tagged.push(`  ${pipe}  ${line}`)
+    // The ready-line is the boundary, not part of either side of it.
+    if (pipe === "stdout" && parseReadyLine(line)) sink = logLines
+    else sink.push(line)
+  })
+
+  return {
+    bootLines,
+    logLines,
+    stdout: queue.iterable,
+    transcript: () =>
+      tagged.length === 0 ?
+        "The sidecar wrote nothing to stdout or stderr."
+      : `Sidecar output (${tagged.length} lines):\n${tagged.join("\n")}`,
+    closed: new Promise((resolve) => child.once("close", () => resolve())),
+  }
+}
+
+/**
+ * Turn a failed boot into something a CI log can be diagnosed from.
+ *
+ * Rethrows the same error class — hosts and harnesses narrow on it — with the
+ * child's own output appended to the message. Waits for the pipes to close
+ * first so the transcript includes the dying words, and reaps the child either
+ * way: a boot that failed must not leave an engine holding a port, and nothing
+ * can track a process whose `startSidecar` threw.
+ */
+async function bootFailure(
+  child: SidecarChild,
+  pipes: Pipes,
+  timeoutMs: number,
+  error: unknown,
+): Promise<unknown> {
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    pipes.closed,
+    new Promise((resolve) => {
+      timer = setTimeout(resolve, STREAM_FLUSH_MS)
+    }),
+  ])
+  clearTimeout(timer)
+  const transcript = pipes.transcript()
+  if (error instanceof SidecarReadyTimeoutError) {
+    return new SidecarReadyTimeoutError(timeoutMs, transcript)
+  }
+  if (error instanceof SidecarExitedError) {
+    return new SidecarExitedError(transcript)
+  }
+  return error
 }
 
 /**
@@ -161,22 +361,23 @@ export async function startSidecar(
   options: StartOptions = {},
 ): Promise<Sidecar> {
   const child = spawnEngine(options)
+  const pipes = drainPipes(child)
+  const timeoutMs = options.readyTimeoutMs ?? 30_000
 
-  const bootLines: Array<string> = []
-  const ready = await awaitReadyLine(child.stdout, {
-    timeoutMs: options.readyTimeoutMs ?? 30_000,
-    onLine: (line) => bootLines.push(line),
-  })
-  // The harness owns both pipes from here.
-  const logLines = collectLines(child)
+  let ready: ParsedReadyLine
+  try {
+    ready = await awaitReadyLine(pipes.stdout, { timeoutMs })
+  } catch (error) {
+    throw await bootFailure(child, pipes, timeoutMs, error)
+  }
 
   return {
     child,
     port: ready.controlPort,
     proxyPort: ready.proxyPort,
     pid: ready.pid,
-    bootLines,
-    logLines,
+    bootLines: pipes.bootLines,
+    logLines: pipes.logLines,
     baseUrl: `http://127.0.0.1:${ready.controlPort}`,
     proxyUrl: `http://127.0.0.1:${ready.proxyPort}`,
   }
