@@ -5,6 +5,8 @@ import type { PortPolicy } from "~/lib/config/config"
 import { DEFAULT_PORT_POLICY } from "~/lib/config/config"
 import { PORT_SCAN_LIMIT, isPortBindable, resolvePort } from "~/lib/start/port"
 
+import { holdPort, pickFreePort } from "./helpers/free-port"
+
 type Occupant = "free" | "maximal" | "other"
 
 /** Fails the test if called: proves a code path never evicts. */
@@ -231,10 +233,22 @@ describe("resolvePort — replace", () => {
 })
 
 describe("isPortBindable — against real sockets", () => {
+  // These two bind real sockets, so the port has to come from the OS. They used
+  // to name 45_871 and 45_872 outright, which asserts something about the whole
+  // machine rather than about `isPortBindable`: anything else holding one — a
+  // sibling suite, a leftover process, another checkout on the same runner —
+  // fails the test with no hint that the port was the problem. See
+  // `tests/helpers/free-port.ts` for why each picks the form it does.
+
   test("a port nothing holds is bindable, and stays bindable after checking", async () => {
     // The check must not leave its own probe socket behind, or the first call
     // would poison every call after it.
-    const port = 45_871
+    //
+    // `pickFreePort`, not `holdPort`: the assertion is that the port IS
+    // bindable, so the test cannot be holding it. That forces the weak form —
+    // the one case in this file where it is the shape of the assertion, not a
+    // shortcut.
+    const port = pickFreePort()
     expect(await isPortBindable(port)).toBe(true)
     expect(await isPortBindable(port)).toBe(true)
   })
@@ -242,18 +256,19 @@ describe("isPortBindable — against real sockets", () => {
   test("a port held on IPv4 loopback only is reported unbindable", async () => {
     // The exact shape of the bug this exists for: another app on 127.0.0.1:P
     // answers no HTTP and is invisible to a probe that resolved ::1.
-    const net = await import("node:net")
-    const port = 45_872
-    const squatter = net.createServer()
-    await new Promise<void>((resolve) =>
-      squatter.listen(port, "127.0.0.1", resolve),
-    )
+    //
+    // The squatter asks the OS for the port and never lets go of it before the
+    // assertion, so this is the strong form: the port is unbindable *because of
+    // this socket*, and nothing about the runner can make that untrue.
+    const squatter = await holdPort("127.0.0.1")
     try {
-      expect(await isPortBindable(port)).toBe(false)
+      expect(await isPortBindable(squatter.port)).toBe(false)
     } finally {
-      await new Promise<void>((resolve) => squatter.close(() => resolve()))
+      await squatter.release()
     }
-    // Released again once the squatter is gone.
-    expect(await isPortBindable(port)).toBe(true)
+    // Released again once the squatter is gone. This half does have a window —
+    // ownership has passed back to the OS — but it is a port the OS handed us
+    // microseconds earlier rather than one hard-coded into the file.
+    expect(await isPortBindable(squatter.port)).toBe(true)
   })
 })

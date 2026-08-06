@@ -1,0 +1,6 @@
+{
+  "minTokens": 50,
+  "format": "typescript",
+  "mode": "weak",
+  "ignore": ["**/node_modules/**", "**/dist/**", "**/docs/**"]
+}
