@@ -681,26 +681,41 @@ concurrent jobs**.
 1. Verify Node `node:sqlite` support (the app uses it).
 2. Pinned Bun setup (`.github/actions/setup-bun`, version read from `.bun-version`).
 3. `bun install`.
-4. **`bun run lint:all`** (full-tree ESLint, `eslint --cache .`).
-5. **`bun run typecheck`** (`tsc`).
-6. **`bun run typecheck:downstream`** — compiles the simulated consumer in
+4. **`bun run lint:fast`** (oxlint) — the cheap filter. Absent from every
+   workflow until `ci:check` (step 13) named it.
+5. **`bun run lint:all`** (full-tree ESLint, `eslint --cache .`).
+6. **`bun run typecheck`** (`tsc`).
+7. **`bun run typecheck:downstream`** — compiles the simulated consumer in
    `downstream/` against the published exports map. Nothing else proves a
    downstream package can resolve and compile against `./supervisor` and
    `./control-contract`.
-7. **`bun run bindings:check`** ("Committed dist is fresh") — rebuilds
+8. **`bun run bindings:check`** ("Committed dist is fresh") — rebuilds
    `dist/lib` and `dist/main.js` into temp dirs outside the repo and compares
    against git's *index*, so no earlier or later rebuild in this job can launder
    the result.
-8. **`bun run casts:check`** (`scripts/find-casts.ts --check`) — fails on a new
+9. **`bun run casts:check`** (`scripts/find-casts.ts --check`) — fails on a new
    unannotated boundary cast.
-9. **`bun test`** (full suite).
-10. **`bun run knip`** (unused files / exports / deps).
-11. **`bun run deps:check`** (dependency-cruiser via `scripts/check-deps.ts`).
+10. **`bun test`** (full suite).
+11. **`bun run knip`** (unused files / exports / deps).
+12. **`bun run deps:check`** (dependency-cruiser via `scripts/check-deps.ts`).
     All three `error` rules affect the exit code: `no-circular` is no longer a
     `warn`, and the standing backlog is ratcheted against a recorded set of
     cycle-closing imports in that script. A new cycle fails by name; fixing one
     fails too, until the set is re-recorded (`--update`).
-12. **`bun run build`**.
+13. **`bun run dupes:check`** (`scripts/check-dupes.ts`) — a down-only ratchet on
+    the set of `src/**` file pairs sharing a jscpd clone. A pair set, not a
+    percentage: `src` is ~31k lines, so a 40-line copy moves 0.33% to 0.46% and
+    any threshold green today would swallow it.
+14. **`bun run ci:check`** (`scripts/ops/check-ci-coverage.ts`) — asserts every
+    `check:deep` step is named by a job that is a required status check. It is
+    the gate against this repo's most-repeated failure: a check that exists, is
+    correct, and runs nowhere. It found `lint:fast` running in no workflow at
+    all on its first run.
+15. **`bun run build`**.
+16. **`bun run e2e`** — the seam / feed / lifecycle / replace harnesses, against
+    `src/` rather than a compiled artifact. Until this step they ran only in the
+    `windows` job via `e2e:binary`, so the from-source path (what `bun run dev`
+    and `bun start` use) ran in no workflow, and neither did Linux.
 
 **Job `windows`** (`windows-latest`) — the `bun-windows-x64` release leg, run
 before a tag exists: a runner-arch assertion, `bun install`, then

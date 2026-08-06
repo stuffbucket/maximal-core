@@ -142,6 +142,24 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: End-to-end suite, from source
+        # seam / feed / lifecycle / replace, run against `src/` rather than a
+        # compiled artifact. Until now these four ran in exactly one place: the
+        # `windows` job below, via `e2e:binary`. So the from-source path — the
+        # one `bun run dev` and `bun start` use — was exercised by no workflow,
+        # and neither was Linux: a regression in the control seam, the SSE feed,
+        # shutdown, or port takeover reached a tag before anything on ubuntu
+        # noticed.
+        #
+        # MEASURED at 9.3s locally, against this job's ~79s and the concurrent
+        # `windows` job's ~112s. It costs the merge nothing it was not already
+        # waiting on — the same argument that put `bun test` on the Windows leg.
+        #
+        # After Build, because `e2e:replace` and `e2e:lifecycle` spawn real
+        # servers on ephemeral ports, and a failure here should not mask a
+        # build failure by short-circuiting ahead of it.
+        run: bun run e2e
+
   windows:
     # The `bun-windows-x64` release leg, run before a tag exists.
     #
