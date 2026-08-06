@@ -89,6 +89,7 @@
  *
  * When the list reaches zero, delete it and this ratchet with it.
  */
+import os from "node:os"
 import path from "node:path"
 
 const ROOT = path.resolve(import.meta.dir, "..")
@@ -147,10 +148,9 @@ interface JscpdReport {
  * relativized against ROOT here instead, which is well-defined.
  */
 async function detect(paths: string[]): Promise<JscpdReport> {
-  const out = path.join(
-    process.env.TMPDIR ?? "/tmp",
-    `jscpd-${process.pid}-${Date.now()}`,
-  )
+  // `os.tmpdir()`, not `$TMPDIR ?? "/tmp"`: Windows sets neither, and this
+  // runs there through `check:deep`.
+  const out = path.join(os.tmpdir(), `jscpd-${process.pid}-${Date.now()}`)
   const entry = path.join(ROOT, "node_modules/jscpd/run-jscpd.js")
   const proc = Bun.spawn(
     [
