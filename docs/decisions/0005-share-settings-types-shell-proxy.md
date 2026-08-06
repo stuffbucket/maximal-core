@@ -128,3 +128,56 @@ One PR. Order:
   also move into `settings-types.ts`? Yes — symmetry is worth it, and
   the existing `Endpoint` discriminated union in `shell/src/api.ts`
   already carries `body` inline. Pull those out at the same time.
+
+# Amendment (2026-08-06): superseded by the headless-core split; `tests/settings-contract.test.ts` is retired unwritten
+
+Migration step 5 ("Add the contract test") and decision item 4 named
+`tests/settings-contract.test.ts`. It was never written — in this repo or in
+`stuffbucket/maximal` — and it is not being written now, because both ends of
+the boundary it was meant to guard have left this tree.
+
+- The consumer half is gone. `shell/src/api.ts` and `shell/src/main.ts` were
+  dropped at the core extraction (`ced18dd`, "chore: extract headless proxy
+  core, drop all UI surfaces"); `AGENTS.md` now opens by stating there is no
+  UI, no `shell/`, and no frontend build here. Decision item 2 ("import them in
+  `shell/src/api.ts`") therefore has no subject, and the consequence this ADR
+  was written for — "a backend field rename now fails `bun run typecheck` at
+  the shell" — cannot be produced from inside core.
+- The producer half moved. Every path in the front-matter's `related_files`
+  (`src/routes/settings/*.ts`) was deleted in the same commit. The handlers
+  were re-homed to `/control/*`; see `src/routes/control/settings-endpoints.ts`,
+  whose header records the `/settings/api/* → /control/*` move, plus
+  `src/routes/control/route.ts` and the JSON-RPC surface at `/control/rpc`. The
+  test the ADR describes ("for each settings endpoint calls the route handler")
+  would have to be written against different endpoints on a different surface.
+- The shared module moved and changed kind. `src/lib/settings-types.ts` is now
+  `src/lib/config/settings-types.ts`, and its exports are zod schemas with
+  `z.infer` type aliases rather than bare interfaces.
+
+What the decision achieved, in its re-homed form:
+
+- Item 1 (one canonical module) holds for the wire types that survived:
+  `AuthStatus`, `UpstreamRejection`, `AccountsListResponse`, `AppEntry`,
+  `AppsListResponse`, `AppInstall`, `AppInstallHint`, `ApiKeyEntry`,
+  `ApiKeysListResponse`, `DiagnosticsResponse`, `ModelsListResponse`. Two
+  entries on item 1's list did not follow: `GhCliStatus` is still declared at
+  its producer (`src/lib/system/gh-cli.ts`), and `AppConflict`,
+  `ActiveApiClient`/`ActiveApiClientsResponse`, `AccountSwitchResponse` and
+  `AccountRemoveResponse` no longer exist under those names (the roster type is
+  `ActiveClient` in `src/lib/http/active-clients.ts`; the accounts mutations
+  return inline `{ ok, key }` shapes).
+- Item 3 (producers annotate with the shared type) holds on the `/control`
+  surface: `getAuthStatus(): AuthStatus`, `buildAccountsList()`,
+  `buildAppsList()`, `buildModelsList()` (`src/lib/live/resources.ts`),
+  `apiKeysList()` and `buildDiagnostics()`
+  (`src/routes/control/settings-endpoints.ts`). That is the
+  `satisfies`-style structural check item 4 offered as its own alternative,
+  and it is what now fails the build when a producer drifts.
+
+Runtime exercise of those endpoints lives in `tests/live/control-route.test.ts`
+(api-keys create→list→delete, `GET /diagnostics`), which asserts specific
+fields rather than round-tripping the response through its schema. Only the
+`AuthStatus` projection gets a full schema round-trip, in
+`tests/auth-status-contract.test.ts` — see the ADR-0006 amendment. A general
+"every `/control` read parses as its declared schema" test would be a new
+decision about a surface this ADR predates, not the delivery of this one.

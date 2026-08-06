@@ -199,3 +199,57 @@ matters.
   vs "post-error needs-user-action"? Today `error` + `remediation_url`
   half-encodes this. Defer until the shell needs different chrome
   for the two cases.
+
+# Amendment (2026-08-06): the promised test shipped under another name
+
+Consequence 4 says "One backend test per state asserts the controller produces
+the matching variant. Add `tests/auth-controller-shape.test.ts`." No file by
+that name has ever existed, here or in `stuffbucket/maximal`. The invariant is
+covered by **`tests/auth-status-contract.test.ts`**, and this amendment names
+it so the credit points at a file that can fail.
+
+What that file actually asserts, verified by reading it and by breaking the
+invariant:
+
+- It imports the real `AuthStatus` schema from `~/lib/config/settings-types`
+  (the module moved from `src/lib/settings-types.ts` in the lib reorg; migration
+  step 1's path is stale) and the real
+  `getAuthStatus`/`startDeviceFlow`/`markSignedIn`/`markAuthDegraded` from
+  `~/lib/auth/auth-controller`. No throwaway re-implementation.
+- Its first invariant drives seven controller states in turn and runs each
+  projection through `AuthStatus.safeParse`. Because the schema is a
+  `z.discriminatedUnion("state", …)`, that is exactly co-requirement 1: for the
+  reported `state`, the variant's required fields must be present and correctly
+  typed.
+- Coverage by variant: `unauthenticated`, `authenticated` (both the poller and
+  the `markSignedIn` cold-boot path) and `error` (poll rejection, unverifiable
+  sign-in, Copilot fatal). The pending pair is exercised as `polling` —
+  `runPoller` flips `device-issued` → `polling` synchronously, so
+  `getAuthStatus()` after an awaited `startDeviceFlow()` reports `polling`; the
+  two variants declare identical required fields, so the schema gate is the same
+  for both. `device_code_issued` is produced only by `startDeviceFlow`'s own
+  return value, which is compile-checked against `AuthStatus`.
+- Its second and third invariants carry item 4 (the retired sentinel): no
+  persistence path records `login === "unknown"` or `""`, and after `signOut()`
+  the status carries no `account_login` and is not `authenticated`.
+
+Proof it is load-bearing: deleting the single line `account_login:
+authState.login,` from the `signed-in` branch of `getAuthStatus`
+(`src/lib/auth/auth-controller.ts`) turns the suite red —
+
+```
+error: [authenticated via markSignedIn (cold boot path)] getAuthStatus produced an
+invalid AuthStatus: {"state":"authenticated","account_type":"individual",…} — [
+  { "expected": "string", "code": "invalid_type", "path": ["account_login"],
+    "message": "Invalid input: expected string, received undefined" } ]
+(fail) AuthStatus wire-format invariant > every observable controller state parses
+ 3 pass, 1 fail
+```
+
+Reverted immediately; the file is green on the pinned Bun 1.3.11.
+
+Where it stops short: zod object schemas strip unknown keys rather than
+rejecting them, so a producer that adds a field belonging to a *different*
+variant is not caught by the round-trip alone — the explicit
+`not.toHaveProperty("account_login")` assertion in the third invariant is what
+covers that case, and only for that field after sign-out.
