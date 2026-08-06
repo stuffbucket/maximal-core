@@ -66,12 +66,14 @@ export interface AuthRecoveryTestDeps {
   cacheModels?: typeof cacheModels
 }
 
+/** @internal test seam */
 export function __setAuthRecoveryDepsForTests(o: AuthRecoveryTestDeps): void {
   if (o.setupCopilotToken !== undefined) setupCopilot = o.setupCopilotToken
   if (o.preflightCopilotError !== undefined) preflight = o.preflightCopilotError
   if (o.cacheModels !== undefined) refreshModels = o.cacheModels
 }
 
+/** @internal test seam */
 export function __resetAuthRecoveryDepsForTests(): void {
   setupCopilot = setupCopilotToken
   preflight = preflightCopilotError

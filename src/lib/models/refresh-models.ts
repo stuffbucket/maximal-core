@@ -197,12 +197,13 @@ export function refreshIfStale(
 }
 
 /** Reset the single-flight guard. Tests only — production never
- *  needs this. */
+ *  needs this.
+ *  @internal */
 export function _resetRefreshInFlightForTests(): void {
   refreshInFlight = false
 }
 
-/** Reset the on-demand prime single-flight guard + cooldown. Tests only. */
+/** Reset the on-demand prime single-flight guard + cooldown. Tests only. @internal */
 export function _resetPrimeStateForTests(): void {
   primeInFlight = false
   lastPrimeAttemptMs = null
