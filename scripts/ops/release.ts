@@ -567,8 +567,14 @@ function isUntracked(record: StatusRecord): boolean {
  * Only tracked modifications block — see the header for why untracked files do
  * not, and why `dist/` is deliberately NOT exempted even though the rebuild
  * step is about to write to it.
+ *
+ * `consequence` is the paragraph that says WHAT the modifications would do,
+ * because the two phases have different answers and a guard that explains
+ * itself with the wrong mechanism is a guard nobody trusts. Phase A's is
+ * `git commit --all` sweeping them into the release commit; phase B's is that
+ * the tree being read is not the tree the tag will name.
  */
-export function cleanTreeObjection(porcelain: string): string | undefined {
+export function cleanTreeObjection(porcelain: string, consequence: string = SWEPT_INTO_THE_COMMIT): string | undefined {
   const dirty = parseStatus(porcelain).filter((record) => !isUntracked(record))
   if (dirty.length === 0) return undefined
   return (
@@ -579,16 +585,32 @@ export function cleanTreeObjection(porcelain: string): string | undefined {
     + dirty.map((record) => `    ${record.code} ${record.path}`).join("\n")
     + `\n`
     + `\n`
-    + `The release commit is made with \`git commit --all\` so that the regenerated\n`
-    + `dist/ lands inside it, which means every tracked modification above would be\n`
-    + `swept in and shipped under the tag — reviewed by nobody, and unpickable\n`
-    + `afterwards, because a published tag must not be moved.\n`
+    + consequence
     + `\n`
     + `Commit them, or park them, and start again:\n`
     + `    git status\n`
     + `    git stash --include-untracked      # NOT in a shared worktree — see AGENTS.md\n`
   )
 }
+
+/** Phase A's consequence: `--all` ships them under the tag, reviewed by nobody. */
+export const SWEPT_INTO_THE_COMMIT =
+  `The release commit is made with \`git commit --all\` so that the regenerated\n`
+  + `dist/ lands inside it, which means every tracked modification above would be\n`
+  + `swept in and shipped under the tag — reviewed by nobody, and unpickable\n`
+  + `afterwards, because a published tag must not be moved.\n`
+
+/**
+ * Phase B's consequence. Nothing sweeps these into anything — the tag names a
+ * commit, not a working tree — which is precisely why they matter: they mean
+ * the tree the releaser is reading is NOT the tree the tag publishes, and the
+ * point of standing on the merged commit was that those two agree.
+ */
+export const NOT_THE_TREE_BEING_TAGGED =
+  `The tag names the merged commit, so these changes will not be in it — which is\n`
+  + `the problem: the tree you are looking at is not the tree the tag publishes,\n`
+  + `and a published tag must not be moved once anyone has resolved it. Whatever\n`
+  + `is in flight here belongs in its own PR, after the tag.\n`
 
 /** Untracked files are reported, not refused, so a missing file is noticed early. */
 export function untrackedNote(porcelain: string): string | undefined {
@@ -1107,7 +1129,7 @@ export function tagRelease(options: TagOptions = {}): number {
     log(`release: could not read the working tree — ${status.stderr.trim() || `git exited ${status.status}`}`)
     return 2
   }
-  const dirty = cleanTreeObjection(status.stdout)
+  const dirty = cleanTreeObjection(status.stdout, NOT_THE_TREE_BEING_TAGGED)
   if (dirty !== undefined) {
     log(dirty)
     return 1

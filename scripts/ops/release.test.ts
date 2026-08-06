@@ -20,6 +20,7 @@ import {
   manifestVersion,
   mergedManifestObjection,
   NO_PUBLISH_FLAG,
+  NOT_THE_TREE_BEING_TAGGED,
   notOnMergedHeadObjection,
   parseArgv,
   parseStatus,
@@ -305,6 +306,14 @@ describe("cleanTreeObjection", () => {
     expect(objection).toContain("REFUSING")
     expect(objection).toContain("src/lib/config.ts")
     expect(objection).toContain("--all")
+  })
+
+  // The consequence paragraph is the caller's, because the two phases have
+  // different answers — and a clean tree is still clean whichever is passed.
+  test("the consequence is the caller's, and a clean tree is clean either way", () => {
+    expect(cleanTreeObjection(" M a.ts", NOT_THE_TREE_BEING_TAGGED)).toContain("the tag publishes")
+    expect(cleanTreeObjection(" M a.ts", NOT_THE_TREE_BEING_TAGGED)).not.toContain("--all")
+    expect(cleanTreeObjection(CLEAN, NOT_THE_TREE_BEING_TAGGED)).toBeUndefined()
   })
 
   test("a STAGED modification is refused too — `--all` commits the index", () => {
@@ -1247,11 +1256,16 @@ describe("tagRelease", () => {
     expect(lines.join("\n")).toContain(`git switch ${DEFAULT_BASE}`)
   })
 
-  test("a dirty tree at the merged head refuses", () => {
+  // Phase B has no `git commit --all` to sweep anything anywhere, so it must
+  // not borrow phase A's explanation. What it means here is that the tree being
+  // read is not the tree the tag publishes.
+  test("a dirty tree at the merged head refuses, for phase B's reason", () => {
     const { code, gitCalls, lines } = cut({ porcelain: " M src/main.ts" })
     expect(code).toBe(1)
     expect(gitCalls.some((call) => call[0] === "tag")).toBe(false)
     expect(lines.join("\n")).toContain("REFUSING")
+    expect(lines.join("\n")).toContain("not the tree the tag publishes")
+    expect(lines.join("\n")).not.toContain("git commit --all")
   })
 
   // Gate 4 runs again HERE because the release PR may have sat open for hours,

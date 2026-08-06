@@ -37,7 +37,7 @@ Two notes on provenance:
   package, but every link in it points at the parent repo and none of its
   entries describes a `maximal-core` release.
 
-<!-- releases below — newest first; `release:manual vX.Y.Z` inserts the generated block here -->
+<!-- releases below — newest first; `release:prepare vX.Y.Z` inserts the generated block here -->
 
 ## [0.4.3](https://github.com/stuffbucket/maximal-core/compare/v0.4.2...v0.4.3) (2026-08-06)
 
