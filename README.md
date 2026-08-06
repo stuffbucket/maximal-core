@@ -67,6 +67,13 @@ echo "@stuffbucket:registry=https://npm.pkg.github.com" >> .npmrc
 bun add @stuffbucket/maximal-core
 ```
 
+**The `maximal` command needs Bun on PATH.** `dist/main.js` is a
+`bun build --target=bun` bundle — it uses Bun-runtime internals, so its shebang
+asks for `bun` and Node cannot execute it. `engines.node` covers the library
+half (`dist/lib`, an esbuild bundle a Node consumer can import); it does not
+cover the CLI. v0.4.4 shipped with a `node` shebang and a `maximal start` that
+died on `__require is not a function` — see #94.
+
 Tags v0.2.0 … v0.4.3 predate the package and exist only as git refs; a git
 dependency on this repo still resolves and still works. Run from source for
 development:
