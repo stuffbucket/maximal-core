@@ -39,6 +39,24 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:manual vX.Y.Z` inserts the generated block here -->
 
+## [0.4.3](https://github.com/stuffbucket/maximal-core/compare/v0.4.2...v0.4.3) (2026-08-06)
+
+
+### Bug Fixes
+
+* **ci:** make the prepare script run on Windows ([#46](https://github.com/stuffbucket/maximal-core/issues/46)) ([d4870dc](https://github.com/stuffbucket/maximal-core/commit/d4870dc8fc8164c178ed77bd4555fe288a190e5c))
+* **ops:** stop fixture-driven tests emitting real CI annotations ([#50](https://github.com/stuffbucket/maximal-core/issues/50)) ([83c990a](https://github.com/stuffbucket/maximal-core/commit/83c990a7bff8ad88c38a10cecd627a78ca879598))
+
+
+### Continuous Integration
+
+* run the Windows release leg on every PR ([#49](https://github.com/stuffbucket/maximal-core/issues/49)) ([44d9093](https://github.com/stuffbucket/maximal-core/commit/44d9093960e695e3fb9ce33caf48f6f6edf46392))
+
+
+### Tests
+
+* **e2e:** cover --replace takeover, refusal, and the credential-free shutdown POST ([#47](https://github.com/stuffbucket/maximal-core/issues/47)) ([1c5b626](https://github.com/stuffbucket/maximal-core/commit/1c5b626dfa1d8da46bd853b338d8e676d0b493b4))
+
 ## [0.4.2](https://github.com/stuffbucket/maximal-core/compare/v0.4.1...v0.4.2) (2026-08-06)
 
 
