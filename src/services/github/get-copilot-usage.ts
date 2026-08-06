@@ -25,16 +25,22 @@ export const getCopilotUsage = async (
   )
 }
 
+// Every field optional, for the same reason the response schema below declares
+// its own that way: this payload varies by plan/account type, and an
+// `unlimited` snapshot has no numeric entitlement to report. Requiring the full
+// set here made a lean-but-valid snapshot throw — not only breaking the usage
+// view, but making `copilot-preflight` reject an entitled account with a
+// "check your connection" that had nothing to do with the network.
 const QuotaDetailSchema = z
   .object({
-    entitlement: z.number(),
-    overage_count: z.number(),
-    overage_permitted: z.boolean(),
-    percent_remaining: z.number(),
-    quota_id: z.string(),
-    quota_remaining: z.number(),
-    remaining: z.number(),
-    unlimited: z.boolean(),
+    entitlement: z.number().optional(),
+    overage_count: z.number().optional(),
+    overage_permitted: z.boolean().optional(),
+    percent_remaining: z.number().optional(),
+    quota_id: z.string().optional(),
+    quota_remaining: z.number().optional(),
+    remaining: z.number().optional(),
+    unlimited: z.boolean().optional(),
   })
   .loose()
 

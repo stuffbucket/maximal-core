@@ -17028,9 +17028,14 @@ function ensureConfigFile() {
   try {
     fs2.accessSync(PATHS.CONFIG_PATH, fs2.constants.R_OK | fs2.constants.W_OK);
   } catch {
-    fs2.mkdirSync(PATHS.APP_DIR, { recursive: true });
-    fs2.writeFileSync(PATHS.CONFIG_PATH, `${JSON.stringify(defaultConfig, null, 2)}
+    try {
+      fs2.mkdirSync(PATHS.APP_DIR, { recursive: true });
+      fs2.writeFileSync(PATHS.CONFIG_PATH, `${JSON.stringify(defaultConfig, null, 2)}
 `, "utf8");
+    } catch (error51) {
+      consola.warn(`Couldn't create ${PATHS.CONFIG_PATH}; continuing with whatever is on disk`, error51);
+      return;
+    }
     try {
       fs2.chmodSync(PATHS.CONFIG_PATH, 384);
     } catch {
@@ -32538,11 +32543,24 @@ async function setupGitHubToken(options) {
     log3.info(`Logged in as ${login ?? "(unknown)"}`);
   } catch (error51) {
     if (error51 instanceof HTTPError) {
-      log3.error("Failed to get GitHub token:", await error51.response.json());
+      log3.error("Failed to get GitHub token:", await readErrorBody(error51));
       throw error51;
     }
     log3.error("Failed to get GitHub token:", error51);
     throw error51;
+  }
+}
+async function readErrorBody(error51) {
+  let text;
+  try {
+    text = await error51.response.text();
+  } catch {
+    return `<unreadable ${error51.response.status} body>`;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
   }
 }
 async function logUser() {
@@ -34902,14 +34920,14 @@ var init_get_copilot_usage = __esm(() => {
   init_send_request();
   init_state();
   QuotaDetailSchema = exports_external.object({
-    entitlement: exports_external.number(),
-    overage_count: exports_external.number(),
-    overage_permitted: exports_external.boolean(),
-    percent_remaining: exports_external.number(),
-    quota_id: exports_external.string(),
-    quota_remaining: exports_external.number(),
-    remaining: exports_external.number(),
-    unlimited: exports_external.boolean()
+    entitlement: exports_external.number().optional(),
+    overage_count: exports_external.number().optional(),
+    overage_permitted: exports_external.boolean().optional(),
+    percent_remaining: exports_external.number().optional(),
+    quota_id: exports_external.string().optional(),
+    quota_remaining: exports_external.number().optional(),
+    remaining: exports_external.number().optional(),
+    unlimited: exports_external.boolean().optional()
   }).loose();
   QuotaSnapshotsSchema = exports_external.object({
     chat: QuotaDetailSchema.optional(),
@@ -38500,6 +38518,14 @@ function getClaude3pDir(home = os7.homedir(), platform3 = process.platform) {
   }
   return path22.join(home, "Library", "Application Support", `Claude${USERDATA_3P_SUFFIX}`);
 }
+function readMetaFile(file2) {
+  const raw2 = readJsonObject(file2);
+  const entries = raw2?.entries;
+  return {
+    appliedId: typeof raw2?.appliedId === "string" ? raw2.appliedId : "",
+    entries: Array.isArray(entries) ? entries.filter((e2) => typeof e2 === "object" && e2 !== null && typeof e2.id === "string" && typeof e2.name === "string") : []
+  };
+}
 function profileMatches(existing, values) {
   if (!existing)
     return false;
@@ -38529,10 +38555,7 @@ function applyConfigLibraryProfile(home = os7.homedir(), values = gatewayProfile
   const dir = getClaude3pDir(home);
   const libDir = path22.join(dir, "configLibrary");
   const metaPath = path22.join(libDir, "_meta.json");
-  const meta3 = readJsonObject(metaPath) ?? {
-    appliedId: "",
-    entries: []
-  };
+  const meta3 = readMetaFile(metaPath);
   const profileId = meta3.appliedId || randomUUID6();
   const profilePath = path22.join(libDir, `${profileId}.json`);
   const ensuredWorkspaceFolders = ensureWorkspaceFolders(values.allowedWorkspaceFolders);
@@ -66229,7 +66252,7 @@ var TOOL_REFERENCE_TURN_BOUNDARY = "Tool loaded.", IDE_EXECUTE_CODE_TOOL = "mcp_
     return COMPACT_REQUEST;
   }
   return 0;
-}, mergeContentWithText = (tr, textBlock) => {
+}, resultBlocks = (tr) => Array.isArray(tr.content) ? tr.content : [], mergeContentWithText = (tr, textBlock) => {
   if (typeof tr.content === "string") {
     return { ...tr, content: `${tr.content}
 
@@ -66240,7 +66263,7 @@ ${textBlock.text}` };
   }
   return {
     ...tr,
-    content: [...tr.content, textBlock]
+    content: [...resultBlocks(tr), textBlock]
   };
 }, mergeContentWithTexts = (tr, textBlocks) => {
   if (typeof tr.content === "string") {
@@ -66254,7 +66277,7 @@ ${appendedTexts}` };
   if (hasToolRef(tr)) {
     return tr;
   }
-  return { ...tr, content: [...tr.content, ...textBlocks] };
+  return { ...tr, content: [...resultBlocks(tr), ...textBlocks] };
 }, mergeContentWithAttachments = (tr, attachments) => {
   if (typeof tr.content === "string") {
     return {
@@ -66264,7 +66287,7 @@ ${appendedTexts}` };
   }
   return {
     ...tr,
-    content: [...tr.content, ...attachments]
+    content: [...resultBlocks(tr), ...attachments]
   };
 }, isAttachmentBlock = (block) => {
   return block.type === "image" || block.type === "document";
@@ -66313,13 +66336,14 @@ ${appendedTexts}` };
   if (typeof toolResult.content === "string") {
     return toolResult.content.startsWith(PDF_FILE_READ_PREFIX);
   }
-  if (toolResult.content.some((block) => block.type === "document")) {
+  const blocks = resultBlocks(toolResult);
+  if (blocks.some((block) => block.type === "document")) {
     return false;
   }
-  if (toolResult.content.length === 0) {
+  if (blocks.length === 0) {
     return false;
   }
-  const firstBlock = toolResult.content[0];
+  const firstBlock = blocks[0];
   if (firstBlock.type !== "text") {
     return false;
   }
@@ -68083,7 +68107,11 @@ var handleWithChatCompletions = async (c5, anthropicPayload, options) => {
         if (!rawEvent.data) {
           continue;
         }
-        const chunk = JSON.parse(rawEvent.data);
+        const chunk = readChatCompletionFrame(rawEvent.data);
+        if (chunk === null) {
+          logger3.debug("Skipping unparseable chat-completions frame");
+          continue;
+        }
         if (asRecord3(chunk)?.usage) {
           usage = normalizeOpenAIUsage(readUsage(chunk));
         }
@@ -68259,11 +68287,22 @@ var handleWithChatCompletions = async (c5, anthropicPayload, options) => {
   fallbackSessionId: options.fallbackSessionId,
   model: options.model,
   sessionId: getMetadataSessionId(options.payload)
-}), getMetadataSessionId = (payload) => parseUserIdMetadata(payload.metadata?.user_id).sessionId, readResponsesFrame = (data) => {
+}), getMetadataSessionId = (payload) => parseUserIdMetadata(payload.metadata?.user_id).sessionId, readChatCompletionFrame = (data) => {
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}, readResponsesFrame = (data) => {
   if (data === "[DONE]") {
     return null;
   }
-  const event = JSON.parse(data);
+  let event;
+  try {
+    event = JSON.parse(data);
+  } catch {
+    return null;
+  }
   if (!asRecord3(event)) {
     return null;
   }
@@ -69341,9 +69380,28 @@ function resolveCopilotModel(c5, payload) {
   const longContext = c5.req.header("anthropic-beta")?.includes("context-1m-2025-08-07") ?? false;
   return pickCopilotVariantId(reversed, { effort: payload.output_config?.effort, longContext }, state.models?.data.map((m2) => m2.id) ?? []);
 }
+function respondIfWarmup(c5, payload, ctx) {
+  const noTools = !payload.tools || payload.tools.length === 0;
+  if (!ctx.anthropicBeta || !noTools || ctx.compactType !== 0)
+    return null;
+  if (isWarmupRequest(payload)) {
+    logger3.debug("warmup short-circuit", {
+      model: payload.model,
+      stream: payload.stream ?? false
+    });
+    return respondToWarmup(c5, payload);
+  }
+  debugLazy(logger3, () => [
+    "no-tool beta request, not warmup-shaped",
+    { msgCount: payload.messages.length }
+  ]);
+  return null;
+}
 async function handleCompletion2(c5, deps = defaultDeps) {
   await checkRateLimit(state);
-  const anthropicPayload = await c5.req.json();
+  const anthropicPayload = await readMessagesPayload(c5);
+  if (!anthropicPayload)
+    return invalidRequest(c5);
   stripUnsupportedTopLevelAnthropicFields(anthropicPayload);
   debugJson(logger3, "Anthropic request payload:", anthropicPayload);
   anthropicPayload.model = resolveCopilotModel(c5, anthropicPayload);
@@ -69358,20 +69416,12 @@ async function handleCompletion2(c5, deps = defaultDeps) {
   const compactType = getCompactType(anthropicPayload);
   const anthropicBeta = c5.req.header("anthropic-beta");
   logger3.debug("Anthropic Beta header:", anthropicBeta);
-  const noTools = !anthropicPayload.tools || anthropicPayload.tools.length === 0;
-  if (anthropicBeta && noTools && compactType === 0) {
-    if (isWarmupRequest(anthropicPayload)) {
-      logger3.debug("warmup short-circuit", {
-        model: anthropicPayload.model,
-        stream: anthropicPayload.stream ?? false
-      });
-      return respondToWarmup(c5, anthropicPayload);
-    }
-    debugLazy(logger3, () => [
-      "no-tool beta request, not warmup-shaped",
-      { msgCount: anthropicPayload.messages.length }
-    ]);
-  }
+  const warmup = respondIfWarmup(c5, anthropicPayload, {
+    anthropicBeta,
+    compactType
+  });
+  if (warmup)
+    return warmup;
   if (compactType) {
     logger3.debug("Compact request type:", compactType);
   }
@@ -69423,7 +69473,17 @@ async function handleCompletion2(c5, deps = defaultDeps) {
     logger: logger3
   });
 }
-var logger3, defaultDeps, RESPONSES_ENDPOINT = "/responses", MESSAGES_ENDPOINT = "/v1/messages", shouldUseResponsesApi = (selectedModel) => {
+var logger3, MessagesRequestShape, readMessagesPayload = async (c5) => {
+  const body = await c5.req.json().catch(() => null);
+  if (!MessagesRequestShape.safeParse(body).success)
+    return null;
+  return body;
+}, invalidRequest = (c5) => c5.json({
+  error: {
+    message: "Invalid request body: expected a JSON object with a `messages` array.",
+    type: "invalid_request_error"
+  }
+}, 400), defaultDeps, RESPONSES_ENDPOINT = "/responses", MESSAGES_ENDPOINT = "/v1/messages", shouldUseResponsesApi = (selectedModel) => {
   return selectedModel?.supported_endpoints?.includes(RESPONSES_ENDPOINT) ?? false;
 }, shouldUseMessagesApi = (selectedModel) => {
   const useMessagesApi = isMessagesApiEnabled();
@@ -69433,6 +69493,7 @@ var logger3, defaultDeps, RESPONSES_ENDPOINT = "/responses", MESSAGES_ENDPOINT =
   return selectedModel?.supported_endpoints?.includes(MESSAGES_ENDPOINT) ?? false;
 };
 var init_handler2 = __esm(() => {
+  init_zod();
   init_config();
   init_approval();
   init_rate_limit();
@@ -69448,6 +69509,7 @@ var init_handler2 = __esm(() => {
   init_warmup();
   init_web_tools();
   logger3 = createHandlerLogger("messages-handler");
+  MessagesRequestShape = exports_external.object({ messages: exports_external.array(exports_external.unknown()) }).loose();
   defaultDeps = {
     findEndpointModel,
     handleWithMessagesApi,
@@ -73301,9 +73363,13 @@ var init_check_usage = __esm(() => {
           if (!snap)
             return `${name}: N/A`;
           const total = snap.entitlement;
-          const used = total - snap.remaining;
+          const remaining = snap.remaining;
+          if (total === undefined || remaining === undefined) {
+            return `${name}: ${snap.unlimited ? "unlimited" : "N/A"}`;
+          }
+          const used = total - remaining;
           const percentUsed = total > 0 ? used / total * 100 : 0;
-          const percentRemaining = snap.percent_remaining;
+          const percentRemaining = snap.percent_remaining ?? (total > 0 ? remaining / total * 100 : 0);
           return `${name}: ${used}/${total} used (${percentUsed.toFixed(1)}% used, ${percentRemaining.toFixed(1)}% remaining)`;
         };
         const usage = await getCopilotUsage();
