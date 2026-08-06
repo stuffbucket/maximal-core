@@ -225,3 +225,9 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.bun/bin:$PATH"
           bun run e2e:binary -- --binary=dist-release/maximal.exe
+
+      - name: PROBE bun test
+        continue-on-error: true
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun test 2>&1 | tail -400
