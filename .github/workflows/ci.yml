@@ -50,6 +50,13 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Run fast linter
+        # oxlint — the first step of `check:fast`, and it ran in no workflow at
+        # all until `ci:check` below was written and named it. `lint:all` is
+        # not a superset: nothing disables the ESLint rules oxlint covers, and
+        # nothing enables oxlint's in ESLint.
+        run: bun run lint:fast
+
       - name: Run linter
         run: bun run lint:all
 
@@ -121,6 +128,16 @@ jobs:
         # 0.33% -> 0.46%, and any threshold loose enough to be green today
         # swallows the entire class of event this exists to catch.
         run: bun run dupes:check
+
+      - name: Every check:deep step runs in a required CI job
+        # The gate against this repo's most-repeated failure shape: a check
+        # that exists, is correct, and runs nowhere — `dupes:check` above
+        # shipped into check:deep and no workflow, `.dependency-cruiser.cjs`
+        # sat uninvoked for months. It expands check:deep and asserts each step
+        # is named by a job that is a REQUIRED status check; a step that runs
+        # only in a non-required or path-filtered job does not count.
+        # scripts/ops/check-ci-coverage.ts holds the exclusions and the reasons.
+        run: bun run ci:check
 
       - name: Build
         run: bun run build

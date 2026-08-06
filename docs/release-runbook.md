@@ -82,12 +82,13 @@ bun run release:check pr <n>
 ## 2. Pre-flight
 
 CI (`ci.yml`) gates every PR, so a green milestone is already most of this.
-`check:deep` is a strict superset of what CI runs:
+Every step of `check:deep` also runs in a required CI job — `bun run ci:check`
+is the gate that keeps that true — and CI adds the Windows artifact leg on top:
 
 ```sh
 bun install
 bun run check:deep        # lint, typecheck, typecheck:downstream, casts:check,
-                          # tests, knip, build
+                          # tests, knip, deps:check, dupes:check, ci:check, build
 bun run e2e               # seam + feed + lifecycle + replace harnesses
 bun run release:check milestone vX.Y.Z   # every PR in the milestone vs the bump,
                                          # plus everything still open

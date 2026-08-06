@@ -24,8 +24,9 @@ bun test tests/foo.test.ts  # Run a single test file
 # Aggregates
 bun run check:fast   # lint:fast + typecheck + lint:all (the per-edit inner loop)
 bun run check:deep   # check:fast + casts:check + bun test + knip + deps:check +
-                     # build + typecheck:downstream + bindings:check
-                     # (end-of-task gate; superset of CI)
+                     # dupes:check + ci:check + build + typecheck:downstream +
+                     # bindings:check (end-of-task gate; every step of it also
+                     # runs in a required CI job — that is what ci:check asserts)
 bun run deps:check   # dependency-cruiser (scripts/check-deps.ts). All three
                      # `error` rules fail the build. `not-to-test` and
                      # `no-route-imports-from-lib-or-services` are absolute;
@@ -73,6 +74,13 @@ bun run release:preflight     # assert the pinned Bun without cutting anything
 
 # Ops tooling under scripts/ops/ (own tsconfig + test run)
 bun run check:ops    # typecheck:ops + test:ops
+bun run ci:check     # every step of check:deep also runs in a job that is a
+                     # REQUIRED status check (scripts/ops/check-ci-coverage.ts).
+                     # A check wired into check:deep and into no workflow — the
+                     # shape dupes:check and .dependency-cruiser.cjs both had —
+                     # fails here by name. Offline; it is in check:deep and in
+                     # ci.yml. Deliberate exclusions live in that file, each
+                     # with its reason.
 bun run rules:check  # the live branch rulesets on `main` vs the floor recorded
                      # in scripts/ops/check-rulesets.ts. Needs the network, so it
                      # is NOT in check:deep; the daily watch-branch-rules.yml
