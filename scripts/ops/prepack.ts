@@ -27,7 +27,7 @@
  *     tarball   dist/main.js   ffdee378…  (= Bun 1.3.14, whatever was on PATH)
  *
  * WHY THE INTERPRETER IS NOT ENOUGH, AND WHY THIS FILE EXISTS AT ALL. The
- * obvious fix — "run `release:manual` with the pinned Bun" — does not work, and
+ * obvious fix — "run the release with the pinned Bun" — does not work, and
  * this is the trap `check-bindings.ts` already hit. Bun runs lifecycle scripts
  * through a shell whose PATH contains NEITHER `node_modules/.bin` NOR Bun's own
  * bindir, so the bare `bun` in `bun run build` re-resolves from the developer's
@@ -46,7 +46,7 @@
  * output and one command to run.
  *
  * WHY THE PREFLIGHT (`--check`) EXISTS, AND WHY IT IS THE PRIMARY GATE.
- * `release:manual` ends at a pushed tag, and `publish-package.yml` publishes
+ * `release:tag` ends at a pushed tag, and `publish-package.yml` publishes
  * from that tag — so by the time `prepack` runs in CI, the tag is public and
  * `docs/release-runbook.md` is explicit that a published tag must not be moved.
  * A refusal there is already too late to be cheap. `--check` runs the identical

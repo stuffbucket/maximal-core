@@ -239,17 +239,19 @@ THIRD-PARTY-LICENSE        Bundled-dependency license pointer (npm SBOM).
 milestone whose title is the tag**: assigning a PR to `vX.Y.Z` pre-selects its
 release, so what ships is reviewable before the tag exists. `bun run
 release:notes vX.Y.Z` turns the milestone into changelog-shaped Markdown, and
-`bun run release:manual vX.Y.Z` cuts it — refusing a dirty tree, an off-pin
-Bun, or a milestone `release:notes` would not emit for, then bumping, rebuilding
-`dist/`, writing the changelog entry, staging all of it into the one release
-commit, tagging, and pushing. Cutting a release is a deliberate human step;
-pushing the tag is what builds and publishes the binaries
-(`release-artifacts.yml`) and publishes the package (`publish-package.yml`).
+and cutting it takes two commands with a merged pull request between them.
+`bun run release:prepare vX.Y.Z` refuses a dirty tree, an off-pin Bun, or a
+milestone `release:notes` would not emit for, then bumps, rebuilds `dist/`,
+writes the changelog entry, commits all of it on `release/vX.Y.Z`, pushes the
+branch and opens the PR — it cuts no tag. Once that PR is merged,
+`bun run release:tag vX.Y.Z` cuts the annotated tag on `main`'s merged HEAD,
+which is what builds and publishes the binaries (`release-artifacts.yml`) and
+publishes the package (`publish-package.yml`).
 
 `main` requires a pull request, three green checks (`test`, `windows`, `gate`)
-and a branch that is up to date before it will merge. The release commit is the
-one exception, and it lands only because `main-require-pr` carries an admin
-bypass — see [`docs/admin/branch-rulesets.md`](docs/admin/branch-rulesets.md).
+and a branch that is up to date before it will merge. There is no exemption and
+no bypass actor — the release commit included, which is why it takes a PR at all
+— see [`docs/admin/branch-rulesets.md`](docs/admin/branch-rulesets.md).
 
 ## Status
 

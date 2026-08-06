@@ -1,16 +1,45 @@
 #!/usr/bin/env bun
 /**
- * The whole manual release sequence, in one process, so the tree it leaves
- * behind is correct without a human remembering a step.
+ * The whole manual release sequence, so the tree it leaves behind is correct
+ * without a human remembering a step.
  *
- * IT ENDS AT THE PUSHED TAG. Publishing is `publish-package.yml`, which fires on
- * the tag this script pushes and runs `bun publish` against the GitHub Package
- * Registry. That was the intended end state all along — CI pins the Bun version
- * by construction, so the tarball cannot be built by whatever the releaser
- * happens to have on PATH — and it is why `--no-publish` is now a no-op rather
- * than a switch (see `NO_PUBLISH_FLAG`). `prepack.ts` still guards the pin, both
- * for that workflow and for anyone running `bun publish` or `bun pm pack` by
- * hand.
+ * IT IS TWO PHASES, AND THE SPLIT IS FORCED BY A RULESET. `main-require-pr` now
+ * carries `bypass_actors: []` — nothing reaches `main` outside a pull request,
+ * permanently. The single `release:manual` this replaces ended in `bumpp`, which
+ * commits, tags AND pushes STRAIGHT TO `main`; that push is now rejected, and
+ * rejected AFTER the bump, the changelog write and the local tag, i.e. on the
+ * irreversible side of the flow. So:
+ *
+ *   release:prepare vX.Y.Z   guard, pin, gate 4, gate 5, changelog, bump,
+ *                            rebuild, commit on `release/vX.Y.Z`, push the
+ *                            BRANCH, open the PR. CUTS NO TAG.
+ *   release:tag vX.Y.Z       once that PR has merged: fetch, assert the merged
+ *                            manifest reads X.Y.Z on the tree you are standing
+ *                            on, re-run gate 4, cut the ANNOTATED tag on the
+ *                            merged HEAD, push it.
+ *
+ * THE TAG CANNOT BE CUT IN PHASE A, and that is what makes this two commands
+ * rather than one flag. A squash merge rewrites the SHA, so a tag created on the
+ * branch would point at a commit that never reaches `main`. It has to be created
+ * after the merge, against `main`'s actual merged HEAD — which is what every one
+ * of phase B's assertions is about. Only the release COMMIT ever needed the
+ * bypass: both rulesets are `target: branch` and there is no tag ruleset, so
+ * `git push origin vX.Y.Z` is unrestricted.
+ *
+ * THIS IS A STRENGTHENING, NOT A WORKAROUND. Under the direct-push flow the
+ * release commit was the ONE commit that reached `main` completely unverified —
+ * the bump, the regenerated `dist/` and the generated changelog all landed with
+ * no check run against them. It now passes `test`, `windows` and `gate` like
+ * every other commit, and `bindings:check` inside `test` is precisely the gate
+ * that catches the stale `dist/` this file was written for.
+ *
+ * PUBLISHING IS `publish-package.yml`, which fires on the tag phase B pushes and
+ * runs `bun publish` against the GitHub Package Registry. CI pins the Bun
+ * version by construction, so the tarball cannot be built by whatever the
+ * releaser happens to have on PATH — and that is why `--no-publish` is a no-op
+ * rather than a switch (see `NO_PUBLISH_FLAG`). `prepack.ts` still guards the
+ * pin, both for that workflow and for anyone running `bun publish` or
+ * `bun pm pack` by hand.
  *
  * `release:manual` was `release:preflight && bumpp && bun publish --access
  * public`. Two things were missing from it, and they turn out to be the same
@@ -101,7 +130,7 @@
  *     than after. (Ignored files are not listed by `git status --porcelain` at
  *     all, so nothing under an untouched `dist/` shows up here.)
  *
- * WHY THE TAG IS AN ARGUMENT NOW (`release:manual vX.Y.Z`). The changelog block
+ * WHY THE TAG IS AN ARGUMENT (`release:prepare vX.Y.Z`). The changelog block
  * is generated from the GitHub milestone whose title IS the tag, so the notes
  * cannot be fetched — and a bad milestone cannot be refused — until the version
  * is known. Letting `bumpp` prompt for it would push both after the bump. The
@@ -180,10 +209,11 @@
  *
  * THE PIN ASSERTION STILL MEASURES THE RIGHT PROCESS. `release:preflight`'s
  * guarantee was that it is launched by the same bare `bun` that `prepack` will
- * later get; this file is launched the same way (`bun run release:manual`), so
+ * later get; this file is launched the same way (`bun run release:prepare`), so
  * asserting on its own `process.versions.bun` is the identical measurement. It
  * delegates to `prepack({ checkOnly: true })` so the refusal text stays in one
- * place.
+ * place. Phase B does not re-assert it: it builds nothing, and the bytes it
+ * tags were built by phase A and re-verified by `bindings:check` on the PR.
  *
  * WHAT IS STAGED comes from `check-bindings.ts`'s `ARTIFACTS`, not a literal
  * list, so the set this stages cannot drift from the set `bindings:check`
@@ -191,24 +221,30 @@
  * silently skips a NEW file (a renamed content-hash chunk).
  *
  * Usage:
- *   bun run release:manual vX.Y.Z                  # guard, pin, notes, bump+rebuild, tag, push
- *   bun run release:manual vX.Y.Z --no-publish     # accepted, does nothing — the default now
- *   bun run release:manual vX.Y.Z -y               # anything else goes to bumpp
- *   bun scripts/ops/release.ts --rebuild           # just rebuild + stage dist/
+ *   bun run release:prepare vX.Y.Z    # guard, pin, gates, notes, bump+rebuild,
+ *                                     #   branch, push, PR — no tag
+ *   bun run release:prepare vX.Y.Z -y # anything else goes to bumpp
+ *   bun run release:tag vX.Y.Z        # after that PR merges: tag main, push it
+ *   bun scripts/ops/release.ts --rebuild   # just rebuild + stage dist/
  *
- * Exit codes: 0 ok · 1 refused (no tag, dirty tree, the running Bun is not the
- * pin, a tag that already exists or is not ahead of every tag that does, a PR
- * still open in the milestone being cut, or a milestone the notes cannot be
- * generated from) · 2 a step failed, including a gate that could not READ what
- * it compares against. Nothing irreversible happens on 1 or 2: every refusal is
- * ahead of `bumpp`, which is where the commit, the tag and the push are.
+ * Exit codes: 0 ok · 1 refused · 2 a step failed, including a gate that could
+ * not READ what it compares against. Phase A refuses on no tag, a dirty tree, an
+ * off-pin Bun, a tag that already exists or is not ahead of every tag that does,
+ * a PR still open in the milestone being cut, a milestone the notes cannot be
+ * generated from, or a `release/vX.Y.Z` branch that is already there. Phase B
+ * refuses on a merged manifest that is not X.Y.Z, a checkout that is not
+ * standing on that merged commit with a clean tree, or gate 4. Every phase-A
+ * refusal is ahead of the branch and `bumpp`; every phase-B refusal is ahead of
+ * `git tag`.
  *
  * TWO OF THOSE REFUSALS ARE `release-gates.ts`, CALLED FROM HERE. Gate 4 (the
  * tag is ahead of every tag that exists, local AND remote) and gate 5 (nothing
  * that claims to ship in this release is still open) are both checks about the
  * instant the tag is cut, so a preflight a human runs and a workflow that fires
- * on tag push are respectively skippable and too late. `release()` is the last
- * place either can still be free. See `evaluateTagOrder` and `evaluateOpenPrs`.
+ * on tag push are respectively skippable and too late. Gate 4 therefore runs in
+ * BOTH phases: cheap early refusal in `prepare()`, and again in `tagRelease()`
+ * because the PR may have sat open long enough for another agent to push the tag
+ * this one is about. See `evaluateTagOrder` and `evaluateOpenPrs`.
  *
  * `git` and every child process go through the two injectable runners this repo
  * already uses (`check-bindings.ts`'s `GitRunner`, `prepack.ts`'s
@@ -225,6 +261,7 @@ import { type CommandRunner, prepack, type PrepackOptions, realRunner } from "./
 import {
   collectOpenPrGate,
   collectTagOrderGate,
+  DEFAULT_REMOTE,
   exitCodeFor as gateExitCodeFor,
   type GateReport,
   renderFindings,
@@ -233,15 +270,16 @@ import {
   collectReleaseNotes,
   exitCodeFor,
   type GhRunner,
+  realGh,
   type ReleaseNotes,
   renderChangelog,
   renderProblems,
   stripV,
 } from "./release-notes"
 
-// Every child process — `git`, `bumpp` — runs through the two runners imported
-// above, both of which already resolve the repo root from their own file, so
-// this script works from any cwd without repeating it.
+// Every child process — `git`, `gh`, `bumpp` — runs through the three runners
+// imported above, all of which already resolve the repo root from their own
+// file, so this script works from any cwd without repeating it.
 // `CHANGELOG.md` is the one path this file resolves itself.
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..")
 
@@ -261,8 +299,67 @@ export const NO_PUBLISH_FLAG = "--no-publish"
 /** This script's own flags, which must never be forwarded to `bumpp`. */
 export const OWN_FLAGS: ReadonlyArray<string> = [REBUILD_FLAG, NO_PUBLISH_FLAG]
 
+/** The two phases. Named, because doing the wrong one silently is the hazard. */
+export const SUBCOMMANDS = ["prepare", "tag"] as const
+
+export type Subcommand = (typeof SUBCOMMANDS)[number]
+
 /** The tag this release cuts. Prereleases are not modelled anywhere in this tooling. */
 export const TAG_RE = /^v\d+\.\d+\.\d+$/u
+
+/** The branch the PR merges into, and the ref phase B tags. */
+export const DEFAULT_BASE = "main"
+
+/**
+ * Where phase A lands the release commit. Phase B never looks at it: by then the
+ * squash merge has rewritten the SHA and the branch is a dead end, which is the
+ * entire reason the tag is not cut in phase A.
+ */
+export function releaseBranch(tag: string): string {
+  return `release/${tag}`
+}
+
+/**
+ * The release commit's subject, the release PR's title, and the tag's annotation
+ * — one string, used three times, because gate 5 keys off it.
+ *
+ * `release-gates.ts` exempts a PR whose TITLE matches `RELEASE_COMMIT_RE` from
+ * every gate, gate 5 included. Without that, the release PR is a PR open in the
+ * milestone being cut, and a re-run of phase A — the case where `CHANGELOG.md`
+ * already documents the version, so the changelog step is skipped and gate 5 is
+ * the only thing still reading GitHub — would refuse the release on its own
+ * pull request. The signal is the title rather than the branch name because the
+ * title is what squash-merge turns into the commit subject and what every other
+ * gate already reads; a branch name is a convention nothing verifies.
+ *
+ * `bumpp`'s default commit message is `chore: release v` + the new version, so
+ * the commit this returns a subject for is the commit `bumpp` makes, byte for
+ * byte, without configuring anything. `release.test.ts` pins the string against
+ * `RELEASE_COMMIT_RE` itself, so the two cannot drift apart in prose.
+ */
+export function releaseCommitSubject(tag: string): string {
+  return `chore: release ${tag}`
+}
+
+/**
+ * The release PR's body. Short on purpose: everything it could explain is in the
+ * runbook, and the one thing a reviewer cannot derive from the diff is that a
+ * second command is still owed after the merge.
+ */
+export function releasePrBody(tag: string): string {
+  return (
+    `Prepared by \`bun run release:prepare ${tag}\`.\n`
+    + `\n`
+    + `- \`package.json\` bumped to ${stripV(tag)}\n`
+    + `- \`CHANGELOG.md\` entry generated from milestone \`${tag}\`\n`
+    + `- \`${stagePathspecs().join("`, `")}\` rebuilt on the pinned Bun and committed\n`
+    + `\n`
+    + `**The tag is not cut yet.** Merge this, then run \`bun run release:tag ${tag}\`:\n`
+    + `the squash rewrites this branch's SHA, so the tag can only be created on\n`
+    + `\`${DEFAULT_BASE}\`'s merged HEAD. That push is what fires \`release-tag-check.yml\`\n`
+    + `and \`publish-package.yml\`.\n`
+  )
+}
 
 // --- the changelog ---
 
@@ -464,14 +561,39 @@ function isUntracked(record: StatusRecord): boolean {
   return record.code === "??"
 }
 
+/** Phase A's consequence: `--all` ships them under the tag, reviewed by nobody. */
+export const SWEPT_INTO_THE_COMMIT =
+  `The release commit is made with \`git commit --all\` so that the regenerated\n`
+  + `dist/ lands inside it, which means every tracked modification above would be\n`
+  + `swept in and shipped under the tag — reviewed by nobody, and unpickable\n`
+  + `afterwards, because a published tag must not be moved.\n`
+
+/**
+ * Phase B's consequence. Nothing sweeps these into anything — the tag names a
+ * commit, not a working tree — which is precisely why they matter: they mean
+ * the tree the releaser is reading is NOT the tree the tag publishes, and the
+ * point of standing on the merged commit was that those two agree.
+ */
+export const NOT_THE_TREE_BEING_TAGGED =
+  `The tag names the merged commit, so these changes will not be in it — which is\n`
+  + `the problem: the tree you are looking at is not the tree the tag publishes,\n`
+  + `and a published tag must not be moved once anyone has resolved it. Whatever\n`
+  + `is in flight here belongs in its own PR, after the tag.\n`
+
 /**
  * Why this working tree must not be released from, or `undefined` if it may.
  *
  * Only tracked modifications block — see the header for why untracked files do
  * not, and why `dist/` is deliberately NOT exempted even though the rebuild
  * step is about to write to it.
+ *
+ * `consequence` is the paragraph that says WHAT the modifications would do,
+ * because the two phases have different answers and a guard that explains
+ * itself with the wrong mechanism is a guard nobody trusts. Phase A's is
+ * `git commit --all` sweeping them into the release commit; phase B's is that
+ * the tree being read is not the tree the tag will name.
  */
-export function cleanTreeObjection(porcelain: string): string | undefined {
+export function cleanTreeObjection(porcelain: string, consequence: string = SWEPT_INTO_THE_COMMIT): string | undefined {
   const dirty = parseStatus(porcelain).filter((record) => !isUntracked(record))
   if (dirty.length === 0) return undefined
   return (
@@ -482,10 +604,7 @@ export function cleanTreeObjection(porcelain: string): string | undefined {
     + dirty.map((record) => `    ${record.code} ${record.path}`).join("\n")
     + `\n`
     + `\n`
-    + `The release commit is made with \`git commit --all\` so that the regenerated\n`
-    + `dist/ lands inside it, which means every tracked modification above would be\n`
-    + `swept in and shipped under the tag — reviewed by nobody, and unpickable\n`
-    + `afterwards, because a published tag must not be moved.\n`
+    + consequence
     + `\n`
     + `Commit them, or park them, and start again:\n`
     + `    git status\n`
@@ -552,12 +671,24 @@ export function executeCommand(bun: string, script: string): string {
  * it is what disables `bumpp`'s own clean-tree check, which is why this file
  * runs its own first.
  *
+ * `--no-tag --no-push` IS WHAT MAKES THIS PHASE A. `bumpConfigDefaults` is
+ * `{ commit: true, tag: true, push: true }`, so an unflagged `bumpp` tags the
+ * branch commit and pushes it — and the tag is the half that cannot be undone,
+ * because the squash merge rewrites that SHA and leaves the tag naming a commit
+ * `main` never receives. `--no-push` goes with it rather than being left on: the
+ * branch is pushed a step later WITH an upstream, and `bumpp`'s `gitPush` also
+ * runs `git push --tags` whenever a tag exists, so the two flags belong
+ * together. `commit` survives both — `normalizeOptions` builds it from
+ * `raw.commit`, which still defaults to true — so the release commit is still
+ * made, still with `--all`, still with the subject `releaseCommitSubject`
+ * returns.
+ *
  * `bumpp` moved out of `package.json`'s scripts and into this string, which is
  * why it is in knip's `ignoreDependencies`: knip reads binaries out of script
  * strings and cannot follow one into an array literal in TypeScript.
  */
 export function bumppArgv(execute: string, extra: ReadonlyArray<string> = []): Array<string> {
-  return ["x", "bumpp", "--all", "--execute", execute, ...extra]
+  return ["x", "bumpp", "--all", "--no-tag", "--no-push", "--execute", execute, ...extra]
 }
 
 // --- steps ---
@@ -637,7 +768,9 @@ export function rebuildAndStage(options: RebuildOptions = {}): number {
   return 0
 }
 
-export interface ReleaseOptions extends PinOptions, ChangelogIo {
+// --- phase A: the branch and the PR ---
+
+export interface PrepareOptions extends PinOptions, ChangelogIo {
   git?: GitRunner
   run?: CommandRunner
   gh?: GhRunner
@@ -651,41 +784,71 @@ export interface ReleaseOptions extends PinOptions, ChangelogIo {
   script?: string
   /** Extra argv forwarded to `bumpp`. */
   bumppArgs?: ReadonlyArray<string>
-  /** The remote gate 4 reads the existing tags from. Defaults to `origin`. */
+  /** Where the branch is pushed, and where gate 4 reads the existing tags. */
   remote?: string
   /** How the rendered block reaches the hook. Defaults to `process.env`. */
   handOverBlock?: (block: string | undefined) => void
 }
 
 /**
- * Guard, assert, generate, bump. The order is the point: everything that can
- * refuse runs before `bumpp`, because `bumpp` commits, tags AND pushes, and the
- * runbook is explicit that a published tag must not be moved. The pushed tag is
- * where this ends — `publish-package.yml` takes it from there.
+ * One `git` read whose output IS the answer, so a non-zero exit has to become a
+ * message rather than an empty string. `trim: false` for a file's contents,
+ * where trailing bytes are part of what was read.
+ */
+function gitLine(
+  git: GitRunner,
+  args: ReadonlyArray<string>,
+  options: { trim?: boolean } = {},
+): { value?: string; error?: string } {
+  const res = git(args)
+  if (res.status !== 0) {
+    return {
+      error: `git ${args.join(" ")} → exit ${res.status}: ${res.stderr.trim() || "(no stderr)"}`,
+    }
+  }
+  return { value: options.trim === false ? res.stdout : res.stdout.trim() }
+}
+
+/**
+ * PHASE A. Guard, assert, generate, bump — then branch, push, and open the PR.
+ * The order is the point: everything that can refuse runs before anything is
+ * written, and the first thing written is a local branch, which is the cheapest
+ * thing in this file to throw away.
  *
  * The tree comes first because it is the failure nothing else in the repo
- * catches; the pin is re-asserted at `prepack` time on the publish path anyway;
+ * catches; then the pin, because the rebuild inside `bumpp` is what it guards;
  * then the two gates that read the world, cheapest first — gate 4 is two `git`
  * calls, gate 5 and the changelog are `gh` pipelines — and the changelog last of
  * all, because there is no point paying for it behind a refusal.
  *
- * GATE 4 IS HERE RATHER THAN IN A PREFLIGHT OR A WORKFLOW because this is the
- * last line before the tag exists. `release:check order` runs the same code for
- * the by-hand path and `--pushed` runs it as a tripwire, but both of those are
- * either skippable or too late, and a tag that has been pushed can only be
- * deleted, never corrected.
+ * THE BRANCH IS CREATED LAST OF THE PREPARATORY STEPS, immediately before
+ * `bumpp`, so every refusal above it leaves the checkout on the branch it
+ * started on. Below that line the failure modes are recoverable but not silent:
+ * a failed `bumpp` leaves an empty release branch, a failed push leaves a
+ * committed one, and a failed `gh pr create` leaves a pushed one. None of them
+ * has cut a tag, which is the property that matters — see `tagRelease`.
+ *
+ * GATE 4 IS HERE EVEN THOUGH `tagRelease` RUNS IT AGAIN, because a tag collision
+ * discovered now costs a re-run and one discovered after the PR has been
+ * reviewed and merged costs a version. It is the same argument as the clean-tree
+ * guard: refuse while refusing is free.
  *
  * GATE 5 IS HERE RATHER THAN LEFT TO `release:notes` because the changelog step
  * below is SKIPPED WHOLESALE — `gh` reads included — when `CHANGELOG.md` already
  * documents the version. An open PR in the milestone blocks a first attempt and
- * silently stops blocking the re-run, which is exactly when it matters.
+ * silently stops blocking the re-run, which is exactly when it matters. That
+ * re-run is also the case that needs the release PR to be EXEMPT from gate 5:
+ * by then this phase's own pull request is open in the milestone being cut. See
+ * `releaseCommitSubject`.
  */
-export function release(options: ReleaseOptions = {}): number {
+export function prepare(options: PrepareOptions = {}): number {
   const log = options.log ?? ((line: string) => { console.error(line) })
   const git = options.git ?? realGit
+  const gh = options.gh ?? realGh
   const run = options.run ?? realRunner
   const bun = options.bun ?? process.execPath
   const script = options.script ?? import.meta.path
+  const remote = options.remote ?? DEFAULT_REMOTE
   const tag = options.tag
 
   if (tag === undefined || !TAG_RE.test(tag)) {
@@ -710,25 +873,35 @@ export function release(options: ReleaseOptions = {}): number {
   if (pinned !== 0) return pinned
 
   const ordered = runGate(
-    () => collectTagOrderGate(tag, { git, remote: options.remote }),
+    () => collectTagOrderGate(tag, { git, remote }),
     log,
     "could not read the tags this release must be ahead of",
   )
   if (ordered !== 0) return ordered
 
   const open = runGate(
-    () => collectOpenPrGate(tag, { gh: options.gh }),
+    () => collectOpenPrGate(tag, { gh }),
     log,
     "could not read the open pull requests",
   )
   if (open !== 0) return open
 
-  const plan = planChangelog({ tag, gh: options.gh, read: options.read, now: options.now })
+  const plan = planChangelog({ tag, gh, read: options.read, now: options.now })
   if (plan.objection !== undefined) {
     log(plan.objection)
     return 1
   }
   if (plan.note !== undefined) log(plan.note)
+
+  // --- everything below this line writes ---
+
+  const branch = releaseBranch(tag)
+  const switched = git(["switch", "-c", branch])
+  if (switched.status !== 0) {
+    log(branchObjection(branch, switched.stderr))
+    return 1
+  }
+  log(`release: on ${branch}`)
 
   const handOver = options.handOverBlock ?? ((block: string | undefined) => {
     if (block === undefined) delete process.env[CHANGELOG_ENV]
@@ -744,21 +917,279 @@ export function release(options: ReleaseOptions = {}): number {
     return 2
   }
 
-  log(`release: ${tag} is cut and pushed. publish-package.yml publishes it from the tag.`)
+  const pushed = git(["push", "--set-upstream", remote, branch])
+  if (pushed.status !== 0) {
+    log(`release: could not push ${branch} to ${remote} — ${pushed.stderr.trim() || `git exited ${pushed.status}`}`)
+    return 2
+  }
+
+  // No milestone. A release commit belongs to none by convention (see
+  // `RELEASE_COMMIT_RE`), and assigning one would put this PR into the notes of
+  // the very release it is cutting the moment anyone re-read the milestone.
+  const created = gh([
+    "pr", "create",
+    "--head", branch,
+    "--title", releaseCommitSubject(tag),
+    "--body", releasePrBody(tag),
+  ])
+  if (created.status !== 0) {
+    log(
+      `release: ${branch} is pushed, but \`gh pr create\` exited ${created.status} — ${created.stderr.trim() || "(no stderr)"}\n`
+      + `\n`
+      + `Nothing is tagged. Open the PR by hand with the SAME title, which is what\n`
+      + `exempts it from gate 5, then continue with \`bun run release:tag ${tag}\`:\n`
+      + `    gh pr create --head ${branch} --title ${JSON.stringify(releaseCommitSubject(tag))} --body …\n`,
+    )
+    return 2
+  }
+
+  log(
+    `release: ${branch} is pushed and the PR is open.\n`
+    + `${created.stdout.trim()}\n`
+    + `\n`
+    + `NO TAG HAS BEEN CUT. Once the PR is merged:\n`
+    + `    bun run release:tag ${tag}\n`,
+  )
+  return 0
+}
+
+/** Why phase A must not start on this branch name. */
+export function branchObjection(branch: string, stderr: string): string {
+  return (
+    `release: REFUSING — could not start \`${branch}\`.\n`
+    + `\n`
+    + `  ${stderr.trim() || "(git said nothing)"}\n`
+    + `\n`
+    + `Most likely it already exists, from an attempt that got further than this one.\n`
+    + `Nothing has been written. Check what is on it before deleting it — a branch\n`
+    + `carrying a finished release commit only needs pushing and a PR:\n`
+    + `    git log --oneline ${DEFAULT_BASE}..${branch}\n`
+  )
+}
+
+// --- phase B: the tag ---
+
+/** `version` out of a `package.json`, or undefined if there is not one to read. */
+export function manifestVersion(source: string): string | undefined {
+  try {
+    const parsed = JSON.parse(source) as { version?: unknown }
+    return typeof parsed.version === "string" ? parsed.version : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Why the merged manifest is not the one this tag may be cut against.
+ *
+ * This is gate 3 asked at the only moment it can be answered for certain: the
+ * tag is about to be created on THIS tree, so comparing the tag against THIS
+ * tree's `package.json` is the whole of the assertion. `release:check version`
+ * and `release-tag-check.yml` ask the same question earlier and later
+ * respectively; this is the one that can still prevent.
+ */
+export function mergedManifestObjection(
+  tag: string,
+  source: string,
+  where: string,
+): string | undefined {
+  const version = manifestVersion(source)
+  if (version === undefined) {
+    return (
+      `release: REFUSING — could not read a version out of ${where}'s package.json.\n`
+      + `\n`
+      + `The tag is cut against that tree, so a manifest that cannot be parsed is a\n`
+      + `tag that cannot be justified.\n`
+    )
+  }
+  if (version.trim() === stripV(tag)) return undefined
+  return (
+    `release: REFUSING — ${where} reads version \`${version}\`, not \`${stripV(tag)}\`.\n`
+    + `\n`
+    + `The release PR for \`${tag}\` has not merged, or it merged something else. A tag\n`
+    + `whose commit disagrees with it has already shipped here once —\n`
+    + `\`git show v0.1.1:package.json\` reads \`0.1.0\` — and a published tag must never\n`
+    + `be moved, so this is refused rather than reported afterwards.\n`
+    + `\n`
+    + `    bun run release:prepare ${tag}     # if the PR was never opened\n`
+    + `    gh pr list --head release/${tag}   # if it is open and unmerged\n`
+  )
+}
+
+/**
+ * Why this checkout is not standing where the tag has to be cut.
+ *
+ * Phase B could tag a SHA it never checked out, and refusing instead is
+ * deliberate: the tree the releaser is looking at is then the tree the tag names,
+ * so `git show`, a local test run and the tag cannot disagree. It also makes the
+ * clean-tree check below mean something — on a detached SHA it would be checking
+ * a tree nobody is about to tag.
+ */
+export function notOnMergedHeadObjection(
+  head: string,
+  merged: string,
+  remote: string,
+  base: string,
+): string | undefined {
+  if (head === merged) return undefined
+  return (
+    `release: REFUSING — this checkout is at \`${head.slice(0, 12)}\`, but ${remote}/${base} is at\n`
+    + `\`${merged.slice(0, 12)}\`.\n`
+    + `\n`
+    + `The tag has to name the commit the squash merge actually produced, and it is\n`
+    + `cut on the tree you are looking at so the two cannot disagree:\n`
+    + `    git switch ${base} && git merge --ff-only ${remote}/${base}\n`
+  )
+}
+
+export interface TagOptions {
+  git?: GitRunner
+  log?: (line: string) => void
+  /** The tag being cut. Must already be the merged manifest's version. */
+  tag?: string
+  /** Where the merged commit is fetched from, and where the tag is pushed. */
+  remote?: string
+  /** The branch the release PR merged into. */
+  base?: string
+}
+
+/**
+ * PHASE B. Fetch, assert, gate, tag, push — the four lines a squash merge makes
+ * necessary.
+ *
+ * WHY THIS IS NOT PART OF PHASE A. A squash merge creates a NEW commit with a
+ * new SHA. A tag created in phase A would point at the branch commit, which
+ * `main` never receives, so the tag would name content nobody can reach from the
+ * default branch and `bindings:check` on `main` would be describing a different
+ * tree from the one the tag publishes. There is no ordering inside one process
+ * that fixes that; the merge has to have happened first.
+ *
+ * WHAT IT ASSERTS, AND WHY EACH ONE. The fetch is the only write it makes, and
+ * it writes nothing this repo tracks. Then: the merged manifest must read
+ * exactly this version (gate 3, asked against the tree being tagged); the
+ * checkout must BE that commit with a clean tree, so the tree the releaser is
+ * looking at is the tree the tag names; and gate 4 runs last, because after the
+ * PR has sat open for review, another agent's tag is likelier than it was in
+ * phase A — this is now the last line before the tag exists.
+ *
+ * `git push origin vX.Y.Z` is unrestricted: both of this repo's rulesets are
+ * `target: branch` and there is no tag ruleset, so the bypass that used to carry
+ * the release commit was never needed for the tag. That push is what fires
+ * `release-tag-check.yml` and `publish-package.yml`.
+ */
+export function tagRelease(options: TagOptions = {}): number {
+  const log = options.log ?? ((line: string) => { console.error(line) })
+  const git = options.git ?? realGit
+  const remote = options.remote ?? DEFAULT_REMOTE
+  const base = options.base ?? DEFAULT_BASE
+  const tag = options.tag
+
+  if (tag === undefined || !TAG_RE.test(tag)) {
+    log(usage(tag))
+    return 1
+  }
+
+  const fetched = git(["fetch", remote, base])
+  if (fetched.status !== 0) {
+    log(`release: could not fetch ${remote}/${base} — ${fetched.stderr.trim() || `git exited ${fetched.status}`}`)
+    return 2
+  }
+
+  // FETCH_HEAD rather than `refs/remotes/${remote}/${base}`: it is what the
+  // fetch above just wrote, whatever refspec this clone happens to be
+  // configured with, so the SHA compared below cannot be a stale tracking ref.
+  const merged = gitLine(git, ["rev-parse", "FETCH_HEAD"])
+  if (merged.error !== undefined) {
+    log(`release: ${merged.error}`)
+    return 2
+  }
+  const head = gitLine(git, ["rev-parse", "HEAD"])
+  if (head.error !== undefined) {
+    log(`release: ${head.error}`)
+    return 2
+  }
+
+  const manifest = gitLine(git, ["show", `${merged.value}:package.json`], { trim: false })
+  if (manifest.error !== undefined) {
+    log(`release: ${manifest.error}`)
+    return 2
+  }
+  const mismatch = mergedManifestObjection(tag, manifest.value ?? "", `${remote}/${base}`)
+  if (mismatch !== undefined) {
+    log(mismatch)
+    return 1
+  }
+
+  const misplaced = notOnMergedHeadObjection(head.value ?? "", merged.value ?? "", remote, base)
+  if (misplaced !== undefined) {
+    log(misplaced)
+    return 1
+  }
+
+  const status = git(["status", "--porcelain"])
+  if (status.status !== 0) {
+    log(`release: could not read the working tree — ${status.stderr.trim() || `git exited ${status.status}`}`)
+    return 2
+  }
+  const dirty = cleanTreeObjection(status.stdout, NOT_THE_TREE_BEING_TAGGED)
+  if (dirty !== undefined) {
+    log(dirty)
+    return 1
+  }
+
+  const ordered = runGate(
+    () => collectTagOrderGate(tag, { git, remote }),
+    log,
+    "could not read the tags this release must be ahead of",
+  )
+  if (ordered !== 0) return ordered
+
+  // `-a`, never a lightweight tag: the runbook has always required an annotated
+  // one and nothing else in the repo checks it. The message is the release
+  // commit's subject, which is what every tag from v0.4.1 onwards carries.
+  const tagged = git(["tag", "-a", tag, "-m", releaseCommitSubject(tag), merged.value ?? ""])
+  if (tagged.status !== 0) {
+    log(`release: could not create ${tag} — ${tagged.stderr.trim() || `git exited ${tagged.status}`}`)
+    return 2
+  }
+
+  const pushed = git(["push", remote, tag])
+  if (pushed.status !== 0) {
+    log(
+      `release: ${tag} exists LOCALLY but could not be pushed to ${remote} — ${pushed.stderr.trim() || `git exited ${pushed.status}`}\n`
+      + `\n`
+      + `Nothing downstream has fired. Either push it, or delete it and start again:\n`
+      + `    git push ${remote} ${tag}\n`
+      + `    git tag -d ${tag}\n`,
+    )
+    return 2
+  }
+
+  log(
+    `release: ${tag} is cut on ${merged.value?.slice(0, 12)} and pushed to ${remote}.\n`
+    + `release-tag-check.yml and publish-package.yml fire on it.`,
+  )
   return 0
 }
 
 // --- entry point ---
 
-/** Refusal text for a missing or malformed tag. Never a guess at what was meant. */
+/**
+ * Refusal text for a missing or malformed tag, or a missing phase. Never a guess
+ * at what was meant — and never a default phase either: doing the wrong one of
+ * these silently is the whole hazard the split introduced.
+ */
 export function usage(given?: string): string {
   return (
     `release: REFUSING — ${given === undefined ? "no release tag was given." : `\`${given}\` is not a release tag.`}\n`
     + `\n`
-    + `  usage: bun run release:manual vX.Y.Z [--no-publish] [bumpp flags]\n`
+    + `  usage: bun run release:prepare vX.Y.Z [bumpp flags]   # branch, commit, PR\n`
+    + `         bun run release:tag vX.Y.Z                     # once that PR merges\n`
     + `\n`
-    + `\`--no-publish\` is accepted and does nothing. This script stops at the pushed\n`
-    + `tag; publish-package.yml publishes from it.\n`
+    + `Nothing pushes to \`${DEFAULT_BASE}\` outside a pull request, so the release lands in two\n`
+    + `phases. \`prepare\` bumps and commits on \`release/vX.Y.Z\` and opens the PR, and\n`
+    + `cuts NO tag; \`tag\` cuts the annotated tag on the MERGED head, which is the only\n`
+    + `commit that exists — a squash merge rewrites the branch's SHA.\n`
     + `\n`
     + `The tag names the GitHub milestone the CHANGELOG entry is generated from, and\n`
     + `it is what \`bumpp\` bumps package.json to, so the tag and the manifest cannot\n`
@@ -766,7 +1197,20 @@ export function usage(given?: string): string {
   )
 }
 
+/** Refusal text for an argv that names no phase. */
+export function subcommandObjection(given?: string): string {
+  return (
+    `release: REFUSING — ${given === undefined ? "no phase was named." : `\`${given}\` is not a phase.`}\n`
+    + `\n`
+    + `  expected \`${SUBCOMMANDS.join("` or `")}\` as the first argument.\n`
+    + `\n`
+    + `${usage(undefined).split("\n").slice(2).join("\n")}`
+  )
+}
+
 export interface ParsedArgv {
+  /** Which phase, when the argv names one. */
+  subcommand?: Subcommand
   tag?: string
   rebuild: boolean
   /** Everything left over, forwarded verbatim to `bumpp`. */
@@ -778,8 +1222,14 @@ export interface ParsedArgv {
 /**
  * Split this script's own argv from `bumpp`'s.
  *
- * The tag is claimed positionally, but only from an item that LOOKS like a tag
- * and does not sit where a forwarded flag's value would — `-t v9.9.9` names
+ * THE PHASE IS THE FIRST ARGUMENT and is only ever read from position 0, so
+ * `bumpp`'s `-t <template>` cannot be mistaken for the `tag` phase. There is no
+ * default: the two phases do very different things, and inferring one from an
+ * argv that named neither is how somebody ends up opening a second release PR
+ * when they meant to tag the first.
+ *
+ * The tag is then claimed positionally, but only from an item that LOOKS like a
+ * tag and does not sit where a forwarded flag's value would — `-t v9.9.9` names
  * `bumpp`'s tag template, not this release. `--release` is refused outright
  * rather than forwarded: the version comes from the tag, and two sources for it
  * is exactly how `v0.1.1` was tagged off a `0.1.0` manifest.
@@ -794,17 +1244,21 @@ export function parseArgv(argv: ReadonlyArray<string>): ParsedArgv {
     rebuild: argv.includes(REBUILD_FLAG),
     bumppArgs: [],
   }
-  for (const [index, arg] of argv.entries()) {
+  const first = argv[0]
+  const named = first !== undefined && (SUBCOMMANDS as ReadonlyArray<string>).includes(first)
+  if (named) parsed.subcommand = first as Subcommand
+  const rest = named ? argv.slice(1) : argv
+  for (const [index, arg] of rest.entries()) {
     if (OWN_FLAGS.includes(arg)) continue
     if (arg === "--release") {
       parsed.objection =
         `release: REFUSING — \`--release\` is not forwarded.\n`
         + `\n`
-        + `  The version comes from the tag: \`bun run release:manual vX.Y.Z\` bumps\n`
+        + `  The version comes from the tag: \`bun run release:prepare vX.Y.Z\` bumps\n`
         + `  package.json to X.Y.Z, so the tag and the manifest cannot disagree.\n`
       return parsed
     }
-    const previous = argv[index - 1]
+    const previous = rest[index - 1]
     const couldBeAValue = previous !== undefined && previous.startsWith("-") && !OWN_FLAGS.includes(previous)
     if (parsed.tag === undefined && !couldBeAValue && TAG_RE.test(arg)) {
       parsed.tag = arg
@@ -817,8 +1271,9 @@ export function parseArgv(argv: ReadonlyArray<string>): ParsedArgv {
 
 export function main(
   argv: ReadonlyArray<string> = process.argv.slice(2),
-  options: ReleaseOptions & RebuildOptions = {},
+  options: PrepareOptions & TagOptions & RebuildOptions = {},
 ): number {
+  const log = options.log ?? ((line: string) => { console.error(line) })
   const parsed = parseArgv(argv)
   if (parsed.rebuild) {
     return rebuildAndStage({
@@ -827,12 +1282,18 @@ export function main(
     })
   }
   if (parsed.objection !== undefined) {
-    (options.log ?? ((line: string) => { console.error(line) }))(parsed.objection)
+    log(parsed.objection)
     return 1
   }
-  return release({
+  if (parsed.subcommand === undefined) {
+    log(subcommandObjection(argv[0]))
+    return 1
+  }
+  const tag = options.tag ?? parsed.tag
+  if (parsed.subcommand === "tag") return tagRelease({ ...options, tag })
+  return prepare({
     ...options,
-    tag: options.tag ?? parsed.tag,
+    tag,
     bumppArgs: options.bumppArgs ?? parsed.bumppArgs,
   })
 }

@@ -99,9 +99,10 @@ than `bun run build && bun run build:lib`: it version-checks
 `process.versions.bun` and then bundles with `process.execPath`, so the binary
 that was checked is the binary that bundles. Off-pin it refuses — before writing
 anything into `dist/` — instead of shipping a tarball nobody can regenerate.
-`bun run release:preflight` runs the same assertion with no build, ahead of
-`bumpp`, because everything after `bumpp` is a pushed tag or an irreversible
-publish. See [`docs/release-runbook.md`](release-runbook.md) § 4.
+`bun run release:preflight` runs the same assertion with no build, and
+`release:prepare` runs it ahead of `bumpp`, because the bundle `bumpp` commits is
+the bundle a git-dependency consumer executes. See
+[`docs/release-runbook.md`](release-runbook.md) § 4.
 
 Don't float `latest`. Bun ships fast; a release in a single afternoon
 can ship a regression that breaks our test loader, and the difference

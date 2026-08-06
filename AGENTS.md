@@ -73,9 +73,10 @@ Each rule states the prohibition; the linked doc is its only elaboration.
   status checks — a red one blocks the merge button, and so does a branch that
   has fallen behind `main` (`gh pr update-branch`; nothing rebases for you
   here). Direct pushes to `main` are rejected, and `main` cannot be deleted or
-  force-pushed by anyone. The one exemption — the admin bypass that lets
-  `release:manual` push the release commit — is load-bearing: removing it blocks
-  every release. [`docs/admin/branch-rulesets.md`](docs/admin/branch-rulesets.md).
+  force-pushed by anyone. There is **no exemption and no bypass actor**, the
+  release included: `release:prepare` lands the release commit through a PR and
+  `release:tag` cuts the tag on the merged head afterwards.
+  [`docs/admin/branch-rulesets.md`](docs/admin/branch-rulesets.md).
 
 ## Read before you touch
 

@@ -260,8 +260,16 @@ export const OVERRIDE_LABEL = "release-gate-override"
  * A release commit ships the version bump itself and belongs to no milestone,
  * so gating it on one would deadlock the release it is cutting. Matches the
  * subject `docs/release-runbook.md` §4 prescribes.
+ *
+ * EXPORTED BECAUSE `release.ts` HAS TO PRODUCE A TITLE THAT MATCHES IT.
+ * `release:prepare` opens a real pull request for the release commit — that is
+ * the whole of the two-phase flow — and gate 5 blocks a PR that is open in the
+ * milestone being cut. `exemption` is what stops the release PR from refusing
+ * the release it is cutting, and it keys off this pattern, so the string
+ * `releaseCommitSubject` builds is pinned against this regex by a test rather
+ * than by two files agreeing in prose.
  */
-const RELEASE_COMMIT_RE = /^chore(?:\([\w-]+\))?: release v?\d+\.\d+\.\d+$/u
+export const RELEASE_COMMIT_RE = /^chore(?:\([\w-]+\))?: release v?\d+\.\d+\.\d+$/u
 
 /** Why this PR is not gated, or undefined if it is. */
 export function exemption(pr: GatePullRequest): string | undefined {
@@ -537,9 +545,10 @@ export function evaluateMilestone(input: MilestoneGateInput): GateReport {
  * workflow (`release-tag-check.yml`) DETECTS — it is the only placement that
  * can see the tag that was actually pushed, and it fires within seconds, while
  * the tag is still almost certainly unconsumed and can be deleted rather than
- * moved. It is deliberately NOT on the release commit: the runbook's flow bumps
- * and tags in one `release:manual` invocation, so a push-to-main check would
- * race the tag push it is meant to precede and could not name the tag anyway.
+ * moved. It is deliberately NOT wired onto the release commit as a third
+ * placement: `release:tag` re-reads the MERGED `package.json` and refuses unless
+ * it is exactly the version about to be tagged — the same assertion, one step
+ * earlier, against the only tree the tag can point at.
  */
 export function checkTagVersion(tag: string, packageVersion: string): GateReport {
   const subject = `tag ${tag} vs package.json ${packageVersion}`
@@ -587,14 +596,17 @@ export function readPackageVersion(file: string): string {
  * forbids moving a published tag, because a consumer's `bun.lock` pins the
  * resolved SHA and only `bun update` re-resolves.
  *
- * WHERE IT RUNS, AND WHY THERE. Primarily inside `release.ts`, ahead of `bumpp`
- * — the same placement argument the clean-tree guard makes, for the same reason:
- * `bumpp` commits, tags AND pushes, so every refusal has to be upstream of it or
- * it is an alarm rather than a guard. It is NOT wired only into a preflight a
- * human runs, because "a human runs it" is the discipline these gates replace,
- * and it is not wired only into a tag-push workflow, because by then the tag is
- * immutable. The `order` subcommand exists for the by-hand path in runbook §4
- * and for a tag-push tripwire (`--pushed`), both of which are secondary.
+ * WHERE IT RUNS, AND WHY THERE — TWICE, ONCE PER RELEASE PHASE.
+ * `release:prepare` runs it ahead of `bumpp`, the same placement argument the
+ * clean-tree guard makes: a refusal there costs a re-run rather than a version
+ * spent. `release:tag` runs it AGAIN, immediately before the tag is created,
+ * because that is now the last line before the tag exists and the release PR may
+ * have sat open for hours — long enough for another agent to push the very tag
+ * this gate is about. Neither placement is a preflight a human runs, because "a
+ * human runs it" is the discipline these gates replace, and neither is only a
+ * tag-push workflow, because by then the tag is immutable. The `order`
+ * subcommand exists for the by-hand path in runbook §4 and for a tag-push
+ * tripwire (`--pushed`), both of which are secondary.
  *
  * WHICH TAGS IT COMPARES AGAINST — LOCAL **AND** REMOTE. A local checkout is
  * stale by default: nothing fetches tags on its own, so a tag another agent (or
@@ -626,10 +638,10 @@ export function readPackageVersion(file: string): string {
  */
 
 /**
- * The remote a release is pushed to. `bumpp` ends in a bare `git push`, which
- * follows the branch's upstream; every checkout that has cut a release here has
- * that on `origin`. Overridable on the CLI (`--remote`) for a fork or a scratch
- * clone.
+ * The remote a release is pushed to. `release:prepare` pushes the release branch
+ * there and `release:tag` pushes the tag there; every checkout that has cut a
+ * release here has that on `origin`. Overridable on the CLI (`--remote`) for a
+ * fork or a scratch clone.
  */
 export const DEFAULT_REMOTE = "origin"
 
@@ -775,6 +787,18 @@ export function evaluateTagOrder(input: TagOrderInput): GateReport {
  *     shape `untrackedNote` in `release.ts` uses for the same reason. (The PR
  *     gate already blocks the missing milestone on the PR itself, so this is a
  *     reminder, not a second enforcement point.)
+ *
+ * THE RELEASE PR IS EXEMPT, AND THAT IS LOAD-BEARING NOW. `exemption` runs
+ * first here exactly as it does in gates 1 and 2, so a PR titled
+ * `chore: release vX.Y.Z` is skipped. Since `release:prepare` lands the release
+ * commit through a pull request, that PR is by definition open while the
+ * release is being cut — and on a re-run (`CHANGELOG.md` already documents the
+ * version, so the changelog step is skipped and this gate is the only thing
+ * still reading GitHub) it would otherwise be a blocking `open-pr-in-release`
+ * finding against itself. The signal is the TITLE, not the branch name: the
+ * title is what squash-merge turns into the commit subject and what every other
+ * gate in this file already reads, and a branch name is a convention nothing
+ * verifies. See `RELEASE_COMMIT_RE`.
  */
 export function evaluateOpenPrs(
   tag: string,

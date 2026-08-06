@@ -46,10 +46,17 @@
  *   `required_approving_review_count` is unasserted — raising it from 0 is a
  *   tightening, and pinning it would fail on the day someone does.
  *
- * THE ONE ASSERTION THIS USUALLY CANNOT MAKE is the bypass list, and it is the
- * most load-bearing one: `release:manual` pushes the release commit straight to
- * `main`, so with `pull_request` required and no bypass actor, EVERY RELEASE IS
- * BLOCKED. `bypass_actors` is only returned to a token that can read repository
+ * THE ONE ASSERTION THIS USUALLY CANNOT MAKE is the bypass list, and both
+ * rulesets now demand the same thing of it: NO bypass actor at all. `main` used
+ * to carry an always-mode admin bypass so `release:manual` could push the
+ * release commit straight to it; that flow is gone. `release:prepare` lands the
+ * release commit through a pull request like everything else, and `release:tag`
+ * pushes the tag, which no ruleset here restricts (both are `target: branch`,
+ * and there is no tag ruleset). So a bypass actor appearing on `main-require-pr`
+ * is now DRIFT rather than a requirement — it would restore the one commit that
+ * reached `main` with no check run against it.
+ *
+ * `bypass_actors` is only returned to a token that can read repository
  * administration — measured: an unauthenticated read of this public repo's
  * rulesets returns 200 with the rules and conditions intact and the
  * `bypass_actors` key ABSENT ENTIRELY, and a workflow `GITHUB_TOKEN` cannot be
@@ -115,9 +122,9 @@ export const EXPECTED: ReadonlyArray<Expectation> = [
     requiredContexts: ["test", "windows", "gate"],
     strictUpdate: true,
     mergeMethods: ["squash"],
-    bypass: "some",
+    bypass: "none",
     bypassWhy:
-      "`release:manual` pushes the release commit directly to `main`. With `pull_request` required and no bypass actor, every release is blocked — whoever removes the bypass must move the release flow to a PR in the same change (docs/release-runbook.md).",
+      "Nothing may reach `main` outside a pull request, the release included. `release:prepare` lands the release commit on `release/vX.Y.Z` and opens a PR for it, and `release:tag` then tags the MERGED head — tags are unrestricted here, because both rulesets are `target: branch` and there is no tag ruleset. A bypass actor would put back the one commit that used to reach `main` with no `test`, `windows` or `gate` run against it (docs/release-runbook.md).",
   },
   {
     name: "main-protect-history",
@@ -126,7 +133,7 @@ export const EXPECTED: ReadonlyArray<Expectation> = [
     rules: ["deletion", "non_fast_forward"],
     bypass: "none",
     bypassWhy:
-      "History protection with an exemption is not history protection. Nothing needs to force-push `main`; `release:manual` only fast-forwards.",
+      "History protection with an exemption is not history protection. Nothing needs to force-push `main`; the release only ever fast-forwards it through a merged pull request.",
   },
 ]
 

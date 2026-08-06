@@ -4,6 +4,7 @@ import path from "node:path"
 
 import { ARTIFACTS } from "./check-bindings"
 import type { CommandRunner } from "./prepack"
+import { RELEASE_COMMIT_RE } from "./release-gates"
 import type { GhResult, GhRunner, PullRequest } from "./release-notes"
 import {
   applyChangelog,
@@ -12,18 +13,27 @@ import {
   CHANGELOG_FILE,
   changelogHasVersion,
   cleanTreeObjection,
+  DEFAULT_BASE,
   executeCommand,
   insertChangelogBlock,
   main,
+  manifestVersion,
+  mergedManifestObjection,
   NO_PUBLISH_FLAG,
+  NOT_THE_TREE_BEING_TAGGED,
+  notOnMergedHeadObjection,
   parseArgv,
   parseStatus,
   planChangelog,
+  prepare,
   REBUILD_FLAG,
-  release,
   rebuildAndStage,
+  releaseBranch,
+  releaseCommitSubject,
+  releasePrBody,
   stageArgv,
   stagePathspecs,
+  tagRelease,
   untrackedNote,
 } from "./release"
 
@@ -74,19 +84,31 @@ function recorder(statuses: Array<number> = []): {
   }
 }
 
+interface Refs {
+  /** What `git rev-parse FETCH_HEAD` answers — the merged commit. */
+  merged?: string
+  /** What `git rev-parse HEAD` answers. Defaults to `merged`. */
+  head?: string
+  /** The `package.json` `git show <merged>:package.json` answers with. */
+  manifest?: string
+}
+
 /**
  * A `git` that answers `status` with `porcelain`, the two tag reads gate 4 makes
- * with `tags`, and succeeds at everything else.
+ * with `tags`, phase B's two `rev-parse`s and one `show` with `refs`, and
+ * succeeds at everything else.
  */
 function gitStub(
   porcelain: string,
   statuses: Record<string, number> = {},
   tags: { local?: ReadonlyArray<string>; remote?: ReadonlyArray<string> } = {},
+  refs: Refs = {},
 ): {
   calls: Array<Array<string>>
   git: (args: ReadonlyArray<string>) => { status: number; stdout: string; stderr: string }
 } {
   const calls: Array<Array<string>> = []
+  const merged = refs.merged ?? MERGED_SHA
   return {
     calls,
     git: (args) => {
@@ -96,11 +118,19 @@ function gitStub(
         verb === "status" ? porcelain
         : verb === "tag" ? (tags.local ?? []).join("\n")
         : verb === "ls-remote" ? (tags.remote ?? []).map((t) => `deadbeef\trefs/tags/${t}`).join("\n")
+        : verb === "rev-parse" ? `${args[1] === "HEAD" ? refs.head ?? merged : merged}\n`
+        : verb === "show" ? refs.manifest ?? MANIFEST
         : ""
       return { status: statuses[verb] ?? 0, stdout, stderr: "" }
     },
   }
 }
+
+/** The commit the squash merge produced. Phase B tags this and nothing else. */
+const MERGED_SHA = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c"
+
+/** `main`'s package.json after the release PR merged: bumped to the tag. */
+const MANIFEST = `{\n  "name": "@stuffbucket/maximal-core",\n  "version": "0.4.2"\n}\n`
 
 function silent(): { lines: Array<string>; log: (line: string) => void } {
   const lines: Array<string> = []
@@ -145,15 +175,18 @@ const merged = (number: number, title: string): PullRequest => ({
   mergeCommit: { oid: "abc1234def5678901234567890abcdef12345678" },
 })
 
+const PR_URL = "https://example.invalid/stuffbucket/maximal-core/pull/91"
+
 /**
  * A `gh` wired for one milestone. `prs` drives the notes; an empty list is the
  * fatal `empty-milestone` case, and `milestones: false` is a missing one.
  * `open` drives gate 5, and is matched ahead of the milestone search because
- * both are `gh pr list`.
+ * both are `gh pr list`. `pr create` is phase A's last step and answers with a
+ * URL rather than JSON, exactly as the real `gh` does.
  */
 function ghStub(
   prs: ReadonlyArray<PullRequest>,
-  options: { milestone?: boolean; open?: ReadonlyArray<unknown> } = {},
+  options: { milestone?: boolean; open?: ReadonlyArray<unknown>; prCreate?: number } = {},
 ): { calls: Array<Array<string>>; gh: GhRunner } {
   const calls: Array<Array<string>> = []
   const routes: Array<[string, unknown]> = [
@@ -168,6 +201,11 @@ function ghStub(
     gh: (args) => {
       calls.push([...args])
       const joined = args.join(" ")
+      // `pr create` answers with a URL rather than JSON, like the real thing.
+      if (joined.includes("pr create")) {
+        const status = options.prCreate ?? 0
+        return { status, stdout: status === 0 ? `${PR_URL}\n` : "", stderr: status === 0 ? "" : "gh: refused" }
+      }
       const hit = routes.find(([needle]) => joined.includes(needle))
       const result: GhResult =
         hit ?
@@ -189,8 +227,16 @@ describe("parity with the real package.json", () => {
   // The whole point of the wrapper is that the sequence lives in ONE process
   // that can order the guard, the pin, the bump and the tag. A `&&` chain
   // cannot express "guard the tree that the step after next will modify".
-  test("`release:manual` is this script and nothing else", () => {
-    expect(readScripts()["release:manual"]).toBe("bun scripts/ops/release.ts")
+  test("both phases are this script, and nothing else", () => {
+    expect(readScripts()["release:prepare"]).toBe("bun scripts/ops/release.ts prepare")
+    expect(readScripts()["release:tag"]).toBe("bun scripts/ops/release.ts tag")
+  })
+
+  // The flow that pushed the release commit straight to `main` is gone, and so
+  // is the script that did it. Leaving the name behind as an alias would leave a
+  // command in everyone's shell history that fails at the push, after the bump.
+  test("`release:manual` is gone rather than aliased", () => {
+    expect(readScripts()["release:manual"]).toBeUndefined()
   })
 
   // The preflight stays a separate, runnable command: the runbook tells a
@@ -260,6 +306,14 @@ describe("cleanTreeObjection", () => {
     expect(objection).toContain("REFUSING")
     expect(objection).toContain("src/lib/config.ts")
     expect(objection).toContain("--all")
+  })
+
+  // The consequence paragraph is the caller's, because the two phases have
+  // different answers — and a clean tree is still clean whichever is passed.
+  test("the consequence is the caller's, and a clean tree is clean either way", () => {
+    expect(cleanTreeObjection(" M a.ts", NOT_THE_TREE_BEING_TAGGED)).toContain("the tag publishes")
+    expect(cleanTreeObjection(" M a.ts", NOT_THE_TREE_BEING_TAGGED)).not.toContain("--all")
+    expect(cleanTreeObjection(CLEAN, NOT_THE_TREE_BEING_TAGGED)).toBeUndefined()
   })
 
   test("a STAGED modification is refused too — `--all` commits the index", () => {
@@ -339,7 +393,18 @@ describe("bumppArgv", () => {
   })
 
   test("the execute hook is passed as one argument", () => {
-    expect(bumppArgv("<hook>")).toEqual(["x", "bumpp", "--all", "--execute", "<hook>"])
+    expect(bumppArgv("<hook>")).toEqual([
+      "x", "bumpp", "--all", "--no-tag", "--no-push", "--execute", "<hook>",
+    ])
+  })
+
+  // THE PHASE-A INVARIANT. `bumpConfigDefaults` is `{commit, tag, push}` all
+  // true, so an unflagged bumpp tags the BRANCH commit — and the squash merge
+  // rewrites that SHA, leaving the tag naming a commit `main` never receives.
+  // `--no-push` goes with it: bumpp's gitPush also runs `git push --tags`.
+  test("no tag and no push, or the tag names a commit main never gets", () => {
+    expect(bumppArgv("hook")).toContain("--no-tag")
+    expect(bumppArgv("hook")).toContain("--no-push")
   })
 
   // `bun x bumpp` rather than a bare `bumpp`: Bun's lifecycle PATH carries
@@ -605,53 +670,108 @@ describe("planChangelog", () => {
 
 describe("parseArgv", () => {
   test("claims the tag positionally", () => {
-    expect(parseArgv([TAG]).tag).toBe(TAG)
-    expect(parseArgv([TAG, "-y"])).toMatchObject({ tag: TAG, bumppArgs: ["-y"] })
-    expect(parseArgv([NO_PUBLISH_FLAG, TAG])).toMatchObject({ tag: TAG, bumppArgs: [] })
+    expect(parseArgv(["prepare", TAG]).tag).toBe(TAG)
+    expect(parseArgv(["prepare", TAG, "-y"])).toMatchObject({ tag: TAG, bumppArgs: ["-y"] })
+    expect(parseArgv(["prepare", NO_PUBLISH_FLAG, TAG])).toMatchObject({ tag: TAG, bumppArgs: [] })
+  })
+
+  // The two phases do very different things, so neither is a default: inferring
+  // one from an argv that named neither is how somebody opens a second release
+  // PR when they meant to tag the first.
+  test("the phase is read, and only from position 0", () => {
+    expect(parseArgv(["prepare", TAG]).subcommand).toBe("prepare")
+    expect(parseArgv(["tag", TAG]).subcommand).toBe("tag")
+    expect(parseArgv([TAG]).subcommand).toBeUndefined()
+    expect(parseArgv(["ship", TAG]).subcommand).toBeUndefined()
+  })
+
+  // `-t <template>` is bumpp's tag NAME. Reading its value as the phase — or
+  // the phase word out of the middle of a forwarded flag list — would run the
+  // wrong half of the release.
+  test("a forwarded flag is never mistaken for the phase", () => {
+    expect(parseArgv(["prepare", TAG, "-t", "tag"]).subcommand).toBe("prepare")
+    expect(parseArgv(["prepare", TAG, "-t", "tag"]).bumppArgs).toEqual(["-t", "tag"])
   })
 
   test("no tag is not an invented one", () => {
-    expect(parseArgv([]).tag).toBeUndefined()
-    expect(parseArgv(["-y"]).tag).toBeUndefined()
+    expect(parseArgv(["prepare"]).tag).toBeUndefined()
+    expect(parseArgv(["prepare", "-y"]).tag).toBeUndefined()
   })
 
   // Prereleases are not modelled by any of this tooling, and `v0.3` is not a
   // milestone title gate 1 accepts either.
   test("only a full release tag is claimed", () => {
-    expect(parseArgv(["v0.4"]).tag).toBeUndefined()
-    expect(parseArgv(["v0.4.2-rc.1"]).tag).toBeUndefined()
-    expect(parseArgv(["v0.4"]).bumppArgs).toEqual(["v0.4"])
+    expect(parseArgv(["prepare", "v0.4"]).tag).toBeUndefined()
+    expect(parseArgv(["prepare", "v0.4.2-rc.1"]).tag).toBeUndefined()
+    expect(parseArgv(["prepare", "v0.4"]).bumppArgs).toEqual(["v0.4"])
   })
 
   // `-t v9.9.9` names bumpp's tag template. Reading a forwarded flag's value as
   // the release tag would cut the wrong version.
   test("a forwarded flag's value is not mistaken for the tag", () => {
-    expect(parseArgv(["-t", "v9.9.9"]).tag).toBeUndefined()
-    expect(parseArgv(["-t", "v9.9.9"]).bumppArgs).toEqual(["-t", "v9.9.9"])
-    expect(parseArgv([TAG, "-t", "v9.9.9"]).tag).toBe(TAG)
+    expect(parseArgv(["prepare", "-t", "v9.9.9"]).tag).toBeUndefined()
+    expect(parseArgv(["prepare", "-t", "v9.9.9"]).bumppArgs).toEqual(["-t", "v9.9.9"])
+    expect(parseArgv(["prepare", TAG, "-t", "v9.9.9"]).tag).toBe(TAG)
   })
 
   // Two sources for the version is how `v0.1.1` came to be tagged off a `0.1.0`
   // manifest. There is one source, and it is the tag.
   test("--release is refused, not forwarded", () => {
-    expect(parseArgv([TAG, "--release", "minor"]).objection).toContain("REFUSING")
+    expect(parseArgv(["prepare", TAG, "--release", "minor"]).objection).toContain("REFUSING")
   })
 
   test("this script's own flags are never forwarded", () => {
-    expect(parseArgv([TAG, NO_PUBLISH_FLAG, REBUILD_FLAG]).bumppArgs).toEqual([])
+    expect(parseArgv(["prepare", TAG, NO_PUBLISH_FLAG, REBUILD_FLAG]).bumppArgs).toEqual([])
   })
 })
 
-describe("release", () => {
-  const ok = (porcelain: string, argv: Array<string> = [TAG], prs = [merged(42, "feat: a thing")]): {
+describe("the release commit's subject", () => {
+  // THE COUPLING THAT MAKES THE TWO-PHASE FLOW POSSIBLE. Gate 5 blocks any PR
+  // open in the milestone being cut, and the release PR is by definition one of
+  // those on a re-run. `release-gates.ts` exempts it by TITLE, so the title this
+  // builds has to match that regex — pinned here rather than left to two files
+  // agreeing in prose.
+  test("the PR title is exactly what gate 5 exempts", () => {
+    expect(RELEASE_COMMIT_RE.test(releaseCommitSubject(TAG))).toBe(true)
+    expect(RELEASE_COMMIT_RE.test(releaseCommitSubject("v1.10.0"))).toBe(true)
+  })
+
+  // It is also bumpp's own default commit message (`chore: release v` + the new
+  // version), so the commit and the PR carry one subject without configuring
+  // anything — and the tag annotation reuses it, matching every tag from v0.4.1.
+  test("it is bumpp's default commit message, verbatim", () => {
+    expect(releaseCommitSubject(TAG)).toBe(`chore: release ${TAG}`)
+  })
+
+  test("the branch is named from the tag", () => {
+    expect(releaseBranch(TAG)).toBe(`release/${TAG}`)
+  })
+
+  // A reviewer cannot derive from the diff that a second command is still owed.
+  test("the PR body says the tag is not cut yet", () => {
+    const body = releasePrBody(TAG)
+    expect(body).toContain(`release:tag ${TAG}`)
+    expect(body).toContain("not cut yet")
+    expect(body).toContain(DEFAULT_BASE)
+  })
+})
+
+describe("prepare", () => {
+  const ok = (
+    porcelain: string,
+    argv: Array<string> = ["prepare", TAG],
+    prs = [merged(42, "feat: a thing")],
+  ): {
     code: number
     calls: Array<Invocation>
+    gitCalls: Array<Array<string>>
+    ghCalls: Array<Array<string>>
     lines: Array<string>
     handedOver: Array<string | undefined>
   } => {
     const { calls, run, handedOver, handOverBlock } = recorder()
-    const { git } = gitStub(porcelain)
-    const { gh } = ghStub(prs)
+    const { calls: gitCalls, git } = gitStub(porcelain)
+    const { calls: ghCalls, gh } = ghStub(prs)
     const { lines, log } = silent()
     const code = main(argv, {
       ...ON_PIN,
@@ -665,14 +785,12 @@ describe("release", () => {
       bun: "/pin/bun",
       script: "/x/release.ts",
     })
-    return { code, calls, lines, handedOver }
+    return { code, calls, gitCalls, ghCalls, lines, handedOver }
   }
 
-  // `bumpp` is the LAST child process this script runs. Publishing moved to
-  // `publish-package.yml`, which fires on the tag `bumpp` pushes — so a second
-  // invocation here would mean the registry is being reached from a laptop
-  // again, off whatever Bun is on PATH.
-  test("a clean tree bumps, and that is the last thing it runs", () => {
+  // `bumpp` is the only child process this phase runs. It bumps and commits;
+  // the branch, the push and the PR are `git` and `gh`, and the tag is phase B.
+  test("a clean tree bumps, and that is the only thing it runs", () => {
     const { code, calls } = ok(CLEAN)
     expect(code).toBe(0)
     expect(calls).toEqual([
@@ -682,6 +800,75 @@ describe("release", () => {
         block: expect.stringContaining("## [0.4.2]") as unknown as string,
       },
     ])
+  })
+
+  // THE SHAPE OF PHASE A, END TO END: branch, bump, push the BRANCH, open the
+  // PR — and no `git tag` anywhere, because the squash merge has not happened
+  // and any tag cut here would name a commit `main` never receives.
+  test("it branches, pushes the branch, and cuts no tag", () => {
+    const { code, gitCalls } = ok(CLEAN)
+    expect(code).toBe(0)
+    expect(gitCalls).toEqual([
+      ["status", "--porcelain"],
+      ["tag", "--list"],
+      ["ls-remote", "--tags", "origin"],
+      ["switch", "-c", `release/${TAG}`],
+      ["push", "--set-upstream", "origin", `release/${TAG}`],
+    ])
+    expect(gitCalls.some((call) => call[0] === "tag" && call[1] !== "--list")).toBe(false)
+  })
+
+  // The title is the whole of gate 5's exemption. A PR opened under any other
+  // one is a PR open in the milestone being cut, and refuses the re-run.
+  test("the PR is opened with the title gate 5 exempts, and no milestone", () => {
+    const { ghCalls, lines } = ok(CLEAN)
+    const create = ghCalls.find((call) => call[0] === "pr" && call[1] === "create")
+    expect(create).toBeDefined()
+    expect(create).toContain("--head")
+    expect(create).toContain(`release/${TAG}`)
+    expect(create?.[create.indexOf("--title") + 1]).toBe(releaseCommitSubject(TAG))
+    expect(create).not.toContain("--milestone")
+    expect(lines.join("\n")).toContain("NO TAG HAS BEEN CUT")
+  })
+
+  // The branch is the first thing written, and it is written LAST of the
+  // preparatory steps — so every refusal above leaves the checkout where it was.
+  test("nothing is branched until every gate has passed", () => {
+    const { gitCalls } = ok(" M src/main.ts")
+    expect(gitCalls.some((call) => call[0] === "switch")).toBe(false)
+  })
+
+  // A pushed branch with no PR is recoverable, but only if the failure says so
+  // — and says which title to reopen it under.
+  test("a failed `gh pr create` reports the branch is already pushed", () => {
+    const { calls, run, handOverBlock } = recorder()
+    const { git } = gitStub(CLEAN)
+    const { gh } = ghStub([merged(1, "feat: x")], { prCreate: 1 })
+    const { lines, log } = silent()
+    const code = prepare({
+      ...ON_PIN, tag: TAG, run, git, gh, log, handOverBlock, read: () => CHANGELOG,
+      now: () => new Date("2026-08-06T00:00:00Z"),
+    })
+    expect(code).toBe(2)
+    expect(calls).toHaveLength(1)
+    expect(lines.join("\n")).toContain("is pushed")
+    expect(lines.join("\n")).toContain(releaseCommitSubject(TAG))
+  })
+
+  // The branch already existing means a previous attempt got further than this
+  // one, and deleting it blind could throw away a finished release commit.
+  test("a branch that already exists refuses before bumpp", () => {
+    const { calls, run } = recorder()
+    const { git } = gitStub(CLEAN, { switch: 128 })
+    const { gh } = ghStub([merged(1, "feat: x")])
+    const { lines, log } = silent()
+    expect(prepare({
+      ...ON_PIN, tag: TAG, run, git, gh, log, read: () => CHANGELOG,
+      now: () => new Date("2026-08-06T00:00:00Z"),
+    })).toBe(1)
+    expect(calls).toEqual([])
+    expect(lines.join("\n")).toContain("REFUSING")
+    expect(lines.join("\n")).toContain(`release/${TAG}`)
   })
 
   // The version reaches bumpp from the tag, so gate 3 — "the tag matches
@@ -701,10 +888,21 @@ describe("release", () => {
   })
 
   test("no tag refuses with the usage, and nothing spawned", () => {
-    const { code, calls, lines } = ok(CLEAN, [])
+    const { code, calls, lines } = ok(CLEAN, ["prepare"])
     expect(code).toBe(1)
     expect(calls).toEqual([])
-    expect(lines.join("\n")).toContain("release:manual vX.Y.Z")
+    expect(lines.join("\n")).toContain("release:prepare vX.Y.Z")
+    expect(lines.join("\n")).toContain("release:tag vX.Y.Z")
+  })
+
+  // Neither phase is a default. An argv that names no phase gets both spelled
+  // out rather than one of them run.
+  test("no phase refuses, naming both", () => {
+    const { code, calls, lines } = ok(CLEAN, [TAG])
+    expect(code).toBe(1)
+    expect(calls).toEqual([])
+    expect(lines.join("\n")).toContain("prepare")
+    expect(lines.join("\n")).toContain("tag")
   })
 
   // Nothing irreversible may happen on the refusal path: `bumpp` commits, tags
@@ -737,7 +935,7 @@ describe("release", () => {
     const { calls: ghCalls, gh } = ghStub([merged(1, "feat: x")])
     const { calls, run } = recorder()
     const { log } = silent()
-    release({ ...ON_PIN, tag: TAG, run, git, gh, log, read: () => CHANGELOG })
+    prepare({ ...ON_PIN, tag: TAG, run, git, gh, log, read: () => CHANGELOG })
     expect(gitCalls[0]).toEqual(["status", "--porcelain"])
     expect(calls).toEqual([])
     expect(ghCalls).toEqual([])
@@ -747,7 +945,7 @@ describe("release", () => {
     const { calls, run } = recorder()
     const { git } = gitStub(CLEAN, { status: 128 })
     const { lines, log } = silent()
-    expect(release({ ...ON_PIN, tag: TAG, run, git, log })).toBe(2)
+    expect(prepare({ ...ON_PIN, tag: TAG, run, git, log })).toBe(2)
     expect(calls).toEqual([])
     expect(lines.join("\n")).toContain("could not read the working tree")
   })
@@ -756,7 +954,7 @@ describe("release", () => {
     const { calls, run } = recorder()
     const { git } = gitStub(CLEAN)
     const { lines, log } = silent()
-    expect(release({ tag: TAG, run, git, log, running: "1.3.14", pinned: PINNED })).toBe(1)
+    expect(prepare({ tag: TAG, run, git, log, running: "1.3.14", pinned: PINNED })).toBe(1)
     expect(calls).toEqual([])
     expect(lines.join("\n")).toContain("REFUSING")
   })
@@ -766,7 +964,7 @@ describe("release", () => {
     const { git } = gitStub(CLEAN)
     const { gh } = ghStub([merged(1, "feat: x")])
     const { log } = silent()
-    expect(release({
+    expect(prepare({
       ...ON_PIN, tag: TAG, run, git, gh, log, handOverBlock, read: () => CHANGELOG,
     })).toBe(2)
     expect(calls).toHaveLength(1)
@@ -776,15 +974,15 @@ describe("release", () => {
   // longer runs; erroring on it now would break a muscle-memory invocation for
   // no gain, so it produces the same release as omitting it.
   test("--no-publish is accepted and changes nothing", () => {
-    const { code, calls } = ok(CLEAN, [TAG, NO_PUBLISH_FLAG])
+    const { code, calls } = ok(CLEAN, ["prepare", TAG, NO_PUBLISH_FLAG])
     expect(code).toBe(0)
-    expect(calls).toEqual(ok(CLEAN, [TAG]).calls)
+    expect(calls).toEqual(ok(CLEAN, ["prepare", TAG]).calls)
   })
 
   // `--no-publish` is ours; forwarding it would make `bumpp` set `publish: false`
   // on its own config and skip the push.
   test("this script's own flags are not forwarded to bumpp", () => {
-    const { calls } = ok(CLEAN, [TAG, NO_PUBLISH_FLAG, "-y"])
+    const { calls } = ok(CLEAN, ["prepare", TAG, NO_PUBLISH_FLAG, "-y"])
     expect(calls[0]?.args).not.toContain(NO_PUBLISH_FLAG)
     expect(calls[0]?.args.slice(-1)).toEqual(["-y"])
   })
@@ -818,7 +1016,7 @@ describe("release", () => {
   })
 })
 
-describe("release — gate 4, the tag must be ahead of every tag that exists", () => {
+describe("prepare — gate 4, the tag must be ahead of every tag that exists", () => {
   const cut = (
     tags: { local?: Array<string>; remote?: Array<string> },
     statuses: Record<string, number> = {},
@@ -828,7 +1026,7 @@ describe("release — gate 4, the tag must be ahead of every tag that exists", (
     const { git } = gitStub(CLEAN, statuses, tags)
     const { calls: ghCalls, gh } = ghStub([merged(42, "feat: a thing")], { open })
     const { lines, log } = silent()
-    const code = release({
+    const code = prepare({
       ...ON_PIN, tag: TAG, run, git, gh, log, handOverBlock, read: () => CHANGELOG,
       now: () => new Date("2026-08-06T00:00:00Z"), bun: "/pin/bun", script: "/x/release.ts",
     })
@@ -891,12 +1089,12 @@ describe("release — gate 4, the tag must be ahead of every tag that exists", (
     const { run } = recorder()
     const { gh } = ghStub([merged(1, "feat: x")])
     const { log } = silent()
-    release({ ...ON_PIN, tag: TAG, run, git, gh, log, read: () => CHANGELOG })
+    prepare({ ...ON_PIN, tag: TAG, run, git, gh, log, read: () => CHANGELOG })
     expect(gitCalls.map((c) => c[0])).toEqual(["status", "tag", "ls-remote"])
   })
 })
 
-describe("release — gate 5, nothing that ships here is still open", () => {
+describe("prepare — gate 5, nothing that ships here is still open", () => {
   const open = (number: number, milestone: string | null): unknown => ({
     number,
     title: "fix: in flight",
@@ -912,7 +1110,7 @@ describe("release — gate 5, nothing that ships here is still open", () => {
     const { git } = gitStub(CLEAN)
     const { gh } = ghStub([merged(42, "feat: a thing")], { open: openPrs })
     const { lines, log } = silent()
-    const code = release({
+    const code = prepare({
       ...ON_PIN, tag: TAG, run, git, gh, log, handOverBlock, read: () => changelog,
       now: () => new Date("2026-08-06T00:00:00Z"),
     })
@@ -956,5 +1154,184 @@ describe("release — gate 5, nothing that ships here is still open", () => {
     const { code, lines } = cut([open(13, "v0.4.1")])
     expect(code).toBe(0)
     expect(lines.join("\n")).toContain("open-pr-earlier-release")
+  })
+
+  // THE ONE THE TWO-PHASE FLOW ADDED. Phase A now opens a real PR for the
+  // release commit, so from the second run onwards there IS a PR open in the
+  // milestone being cut — its own. Gate 5 exempts it by title, which is why
+  // `releaseCommitSubject` has to keep matching `RELEASE_COMMIT_RE`. Without
+  // this, a re-run after a failed push could never get past its own PR.
+  test("the release PR does not refuse the release it is cutting", () => {
+    const releasePr = {
+      number: 91,
+      title: releaseCommitSubject(TAG),
+      milestone: { title: TAG },
+      labels: [],
+    }
+    const { code, lines } = cut([releasePr])
+    expect(code).toBe(0)
+    expect(lines.join("\n")).not.toContain("open-pr-in-release")
+
+    // And it is the TITLE doing the work, not the branch or the number: the
+    // same PR under any other title is blocking.
+    expect(cut([{ ...releasePr, title: "chore: cut the release" }]).code).toBe(1)
+  })
+})
+
+describe("tagRelease", () => {
+  const cut = (
+    options: {
+      porcelain?: string
+      statuses?: Record<string, number>
+      tags?: { local?: Array<string>; remote?: Array<string> }
+      refs?: { merged?: string; head?: string; manifest?: string }
+      tag?: string
+    } = {},
+  ): { code: number; gitCalls: Array<Array<string>>; lines: Array<string> } => {
+    const { calls: gitCalls, git } = gitStub(
+      options.porcelain ?? CLEAN,
+      options.statuses ?? {},
+      options.tags ?? { local: ["v0.4.1"], remote: ["v0.4.0", "v0.4.1"] },
+      options.refs ?? {},
+    )
+    const { lines, log } = silent()
+    return { code: tagRelease({ tag: options.tag ?? TAG, git, log }), gitCalls, lines }
+  }
+
+  // THE GOOD PATH, IN ORDER. Fetch, read both SHAs, read the merged manifest,
+  // read the tree, gate 4, then exactly one annotated tag and one push.
+  test("it fetches, asserts, gates, then cuts one annotated tag on the merged head", () => {
+    const { code, gitCalls, lines } = cut()
+    expect(code).toBe(0)
+    expect(gitCalls).toEqual([
+      ["fetch", "origin", DEFAULT_BASE],
+      ["rev-parse", "FETCH_HEAD"],
+      ["rev-parse", "HEAD"],
+      ["show", `${MERGED_SHA}:package.json`],
+      ["status", "--porcelain"],
+      ["tag", "--list"],
+      ["ls-remote", "--tags", "origin"],
+      ["tag", "-a", TAG, "-m", releaseCommitSubject(TAG), MERGED_SHA],
+      ["push", "origin", TAG],
+    ])
+    expect(lines.join("\n")).toContain("publish-package.yml")
+  })
+
+  // `-a`, never a lightweight tag: nothing else in the repo checks it, and
+  // `git tag -f` without `-a` silently downgrades an annotated tag to one.
+  test("the tag is annotated, and names the merged SHA explicitly", () => {
+    const { gitCalls } = cut()
+    const tagged = gitCalls.find((call) => call[0] === "tag" && call[1] === "-a")
+    expect(tagged?.[1]).toBe("-a")
+    expect(tagged?.[tagged.length - 1]).toBe(MERGED_SHA)
+  })
+
+  // THE FAILURE THIS PHASE EXISTS FOR. The PR did not merge, or something else
+  // did: the manifest on `main` is not the version being tagged, and a tag whose
+  // commit disagrees with it has already shipped here once (v0.1.1 / 0.1.0).
+  test("a merged manifest at another version refuses, before any tag", () => {
+    const { code, gitCalls, lines } = cut({
+      refs: { manifest: `{ "version": "0.4.1" }` },
+    })
+    expect(code).toBe(1)
+    expect(gitCalls.some((call) => call[0] === "tag")).toBe(false)
+    expect(gitCalls.some((call) => call[0] === "push")).toBe(false)
+    expect(lines.join("\n")).toContain("REFUSING")
+    expect(lines.join("\n")).toContain("0.4.1")
+  })
+
+  test("a manifest that cannot be parsed is a refusal, not a guess", () => {
+    const { code, lines } = cut({ refs: { manifest: "<!DOCTYPE html>" } })
+    expect(code).toBe(1)
+    expect(lines.join("\n")).toContain("REFUSING")
+  })
+
+  // The tag is cut on the tree the releaser is looking at, so `git show`, a
+  // local run and the tag cannot disagree — and so the clean-tree check below
+  // is checking the tree that is about to be tagged.
+  test("a checkout that is not on the merged commit refuses", () => {
+    const { code, gitCalls, lines } = cut({ refs: { head: "aaaaaaaabbbbbbbbccccccccdddddddd00000000" } })
+    expect(code).toBe(1)
+    expect(gitCalls.some((call) => call[0] === "tag")).toBe(false)
+    expect(lines.join("\n")).toContain(`git switch ${DEFAULT_BASE}`)
+  })
+
+  // Phase B has no `git commit --all` to sweep anything anywhere, so it must
+  // not borrow phase A's explanation. What it means here is that the tree being
+  // read is not the tree the tag publishes.
+  test("a dirty tree at the merged head refuses, for phase B's reason", () => {
+    const { code, gitCalls, lines } = cut({ porcelain: " M src/main.ts" })
+    expect(code).toBe(1)
+    expect(gitCalls.some((call) => call[0] === "tag")).toBe(false)
+    expect(lines.join("\n")).toContain("REFUSING")
+    expect(lines.join("\n")).toContain("not the tree the tag publishes")
+    expect(lines.join("\n")).not.toContain("git commit --all")
+  })
+
+  // Gate 4 runs again HERE because the release PR may have sat open for hours,
+  // which is long enough for another agent to push the very tag this is about.
+  test("a tag that appeared while the PR was open refuses", () => {
+    const { code, gitCalls, lines } = cut({ tags: { remote: [TAG] } })
+    expect(code).toBe(1)
+    expect(gitCalls.some((call) => call[0] === "tag" && call[1] === "-a")).toBe(false)
+    expect(lines.join("\n")).toContain("tag-already-exists")
+  })
+
+  test("a tag below one that appeared while the PR was open refuses", () => {
+    const { code, lines } = cut({ tags: { remote: ["v0.9.0"] } })
+    expect(code).toBe(1)
+    expect(lines.join("\n")).toContain("tag-not-highest")
+  })
+
+  // A fetch that cannot run must not read as "main has not moved": the whole
+  // phase is about comparing against what actually merged.
+  test("a fetch that fails stops before anything is read", () => {
+    const { code, gitCalls, lines } = cut({ statuses: { fetch: 128 } })
+    expect(code).toBe(2)
+    expect(gitCalls).toEqual([["fetch", "origin", DEFAULT_BASE]])
+    expect(lines.join("\n")).toContain("could not fetch")
+  })
+
+  // The local tag exists at this point and nothing downstream has fired, so the
+  // message has to name both ways out.
+  test("a push that fails says the tag exists locally, and how to undo it", () => {
+    const { code, lines } = cut({ statuses: { push: 1 } })
+    expect(code).toBe(2)
+    expect(lines.join("\n")).toContain("LOCALLY")
+    expect(lines.join("\n")).toContain(`git tag -d ${TAG}`)
+  })
+
+  test("no tag refuses with the usage", () => {
+    const { git } = gitStub(CLEAN)
+    const { lines, log } = silent()
+    expect(tagRelease({ git, log })).toBe(1)
+    expect(lines.join("\n")).toContain("release:tag vX.Y.Z")
+  })
+
+  test("`main` routes the tag phase here", () => {
+    const { calls: gitCalls, git } = gitStub(CLEAN, {}, { remote: ["v0.4.1"] })
+    const { log } = silent()
+    expect(main(["tag", TAG], { git, log })).toBe(0)
+    expect(gitCalls[0]).toEqual(["fetch", "origin", DEFAULT_BASE])
+  })
+})
+
+describe("manifestVersion and its objections", () => {
+  test("reads a string version, and nothing else", () => {
+    expect(manifestVersion(`{"version":"0.4.2"}`)).toBe("0.4.2")
+    expect(manifestVersion(`{"version":42}`)).toBeUndefined()
+    expect(manifestVersion(`{}`)).toBeUndefined()
+    expect(manifestVersion("not json")).toBeUndefined()
+  })
+
+  test("the tag and the merged manifest must agree exactly", () => {
+    expect(mergedManifestObjection(TAG, `{"version":"0.4.2"}`, "origin/main")).toBeUndefined()
+    expect(mergedManifestObjection(TAG, `{"version":"0.4.20"}`, "origin/main")).toContain("REFUSING")
+    expect(mergedManifestObjection(TAG, `{"version":"0.4.2"}\n`, "origin/main")).toBeUndefined()
+  })
+
+  test("standing anywhere but the merged commit is an objection", () => {
+    expect(notOnMergedHeadObjection("abc", "abc", "origin", "main")).toBeUndefined()
+    expect(notOnMergedHeadObjection("abc", "def", "origin", "main")).toContain("REFUSING")
   })
 })
