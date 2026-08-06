@@ -113,6 +113,15 @@ jobs:
         # file, generated — do not restate it here.
         run: bun run deps:check
 
+      - name: Check for new copy-paste duplication
+        # A down-only ratchet on the SET of `src` file pairs that share
+        # copy-pasted code, recorded in scripts/check-dupes.ts; a new pair
+        # fails here by name. Not jscpd's own percentage threshold: `src` is
+        # 31k lines, so a 40-line function copied into a second file moves it
+        # 0.33% -> 0.46%, and any threshold loose enough to be green today
+        # swallows the entire class of event this exists to catch.
+        run: bun run dupes:check
+
       - name: Build
         run: bun run build
 
