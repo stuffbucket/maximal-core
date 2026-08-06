@@ -79,9 +79,10 @@ bun run release:manual vX.Y.Z  # cut the version. Refuses (exit 1, nothing writt
                                # on a missing tag, a dirty tree, an off-pin Bun, or
                                # a milestone release:notes would not emit for; then
                                # bumps, rebuilds dist/ on the pinned Bun, writes the
-                               # CHANGELOG entry itself, commits all three, tags,
-                               # pushes, and runs `bun publish --access public`.
-bun run release:manual vX.Y.Z --no-publish   # cut the tag, skip the registry
+                               # CHANGELOG entry itself, commits all three, tags and
+                               # pushes. It stops there: publish-package.yml fires on
+                               # the tag and runs `bun publish`.
+bun run release:manual vX.Y.Z --no-publish   # accepted, does nothing — the default now
 bun run release:preflight     # assert the pinned Bun without cutting anything
 
 # Ops tooling under scripts/ops/ (own tsconfig + test run)

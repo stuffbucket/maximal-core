@@ -3,6 +3,15 @@
  * The whole manual release sequence, in one process, so the tree it leaves
  * behind is correct without a human remembering a step.
  *
+ * IT ENDS AT THE PUSHED TAG. Publishing is `publish-package.yml`, which fires on
+ * the tag this script pushes and runs `bun publish` against the GitHub Package
+ * Registry. That was the intended end state all along — CI pins the Bun version
+ * by construction, so the tarball cannot be built by whatever the releaser
+ * happens to have on PATH — and it is why `--no-publish` is now a no-op rather
+ * than a switch (see `NO_PUBLISH_FLAG`). `prepack.ts` still guards the pin, both
+ * for that workflow and for anyone running `bun publish` or `bun pm pack` by
+ * hand.
+ *
  * `release:manual` was `release:preflight && bumpp && bun publish --access
  * public`. Two things were missing from it, and they turn out to be the same
  * thing twice:
@@ -63,7 +72,7 @@
  * today and would check nothing under the flag the rebuild needs. The rebuild
  * fix and the clean-tree guard are therefore not two independent chores: turning
  * on the first removes the only backstop that could have supplied the second.
- * Something has to own the ordering — guard, then pin, then bump, then publish —
+ * Something has to own the ordering — guard, then pin, then bump, then tag —
  * and a `&&` chain in `package.json` cannot express "guard the tree that the
  * step after next is allowed to modify". Hence this file.
  *
@@ -182,8 +191,8 @@
  * silently skips a NEW file (a renamed content-hash chunk).
  *
  * Usage:
- *   bun run release:manual vX.Y.Z                  # guard, pin, notes, bump+rebuild, publish
- *   bun run release:manual vX.Y.Z --no-publish     # stop after the tag is pushed
+ *   bun run release:manual vX.Y.Z                  # guard, pin, notes, bump+rebuild, tag, push
+ *   bun run release:manual vX.Y.Z --no-publish     # accepted, does nothing — the default now
  *   bun run release:manual vX.Y.Z -y               # anything else goes to bumpp
  *   bun scripts/ops/release.ts --rebuild           # just rebuild + stage dist/
  *
@@ -230,23 +239,27 @@ import {
   stripV,
 } from "./release-notes"
 
-// Every child process — `git`, `bumpp`, `bun publish` — runs through the two
-// runners imported above, both of which already resolve the repo root from
-// their own file, so this script works from any cwd without repeating it.
+// Every child process — `git`, `bumpp` — runs through the two runners imported
+// above, both of which already resolve the repo root from their own file, so
+// this script works from any cwd without repeating it.
 // `CHANGELOG.md` is the one path this file resolves itself.
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..")
 
 /** Runs only the rebuild-and-stage step. What `bumpp`'s execute hook invokes. */
 export const REBUILD_FLAG = "--rebuild"
 
-/** Cut the tag, skip the registry. Every release so far has shipped this way. */
+/**
+ * ACCEPTED AND IGNORED. This script used to end in `bun publish` and this flag
+ * skipped it; `publish-package.yml` owns publishing now, so there is nothing
+ * left to skip and every invocation behaves as if the flag were passed. It is
+ * still PARSED, and still kept out of `bumpp`'s argv, so the invocation in
+ * everyone's shell history keeps working instead of erroring — and so `bumpp`
+ * never sees a `--no-publish` it would read as its own.
+ */
 export const NO_PUBLISH_FLAG = "--no-publish"
 
 /** This script's own flags, which must never be forwarded to `bumpp`. */
 export const OWN_FLAGS: ReadonlyArray<string> = [REBUILD_FLAG, NO_PUBLISH_FLAG]
-
-/** `bun publish`'s argv, argv-identical to the tail of the old `release:manual`. */
-export const PUBLISH_ARGV: ReadonlyArray<string> = ["publish", "--access", "public"]
 
 /** The tag this release cuts. Prereleases are not modelled anywhere in this tooling. */
 export const TAG_RE = /^v\d+\.\d+\.\d+$/u
@@ -638,7 +651,6 @@ export interface ReleaseOptions extends PinOptions, ChangelogIo {
   script?: string
   /** Extra argv forwarded to `bumpp`. */
   bumppArgs?: ReadonlyArray<string>
-  publish?: boolean
   /** The remote gate 4 reads the existing tags from. Defaults to `origin`. */
   remote?: string
   /** How the rendered block reaches the hook. Defaults to `process.env`. */
@@ -646,9 +658,10 @@ export interface ReleaseOptions extends PinOptions, ChangelogIo {
 }
 
 /**
- * Guard, assert, generate, bump, publish. The order is the point: everything
- * that can refuse runs before `bumpp`, because `bumpp` commits, tags AND pushes,
- * and the runbook is explicit that a published tag must not be moved.
+ * Guard, assert, generate, bump. The order is the point: everything that can
+ * refuse runs before `bumpp`, because `bumpp` commits, tags AND pushes, and the
+ * runbook is explicit that a published tag must not be moved. The pushed tag is
+ * where this ends — `publish-package.yml` takes it from there.
  *
  * The tree comes first because it is the failure nothing else in the repo
  * catches; the pin is re-asserted at `prepack` time on the publish path anyway;
@@ -731,16 +744,7 @@ export function release(options: ReleaseOptions = {}): number {
     return 2
   }
 
-  if (options.publish === false) {
-    log("release: --no-publish — the tag is cut and pushed; nothing was published.")
-    return 0
-  }
-
-  const published = run(bun, PUBLISH_ARGV)
-  if (published.status !== 0) {
-    log(`release: \`bun publish\` exited ${published.status}${published.output ? ` — ${published.output.trim()}` : ""}`)
-    return 2
-  }
+  log(`release: ${tag} is cut and pushed. publish-package.yml publishes it from the tag.`)
   return 0
 }
 
@@ -753,6 +757,9 @@ export function usage(given?: string): string {
     + `\n`
     + `  usage: bun run release:manual vX.Y.Z [--no-publish] [bumpp flags]\n`
     + `\n`
+    + `\`--no-publish\` is accepted and does nothing. This script stops at the pushed\n`
+    + `tag; publish-package.yml publishes from it.\n`
+    + `\n`
     + `The tag names the GitHub milestone the CHANGELOG entry is generated from, and\n`
     + `it is what \`bumpp\` bumps package.json to, so the tag and the manifest cannot\n`
     + `disagree. Prereleases are not modelled by any of this tooling.\n`
@@ -762,7 +769,6 @@ export function usage(given?: string): string {
 export interface ParsedArgv {
   tag?: string
   rebuild: boolean
-  publish: boolean
   /** Everything left over, forwarded verbatim to `bumpp`. */
   bumppArgs: Array<string>
   /** Set when the argv itself is the problem. */
@@ -777,11 +783,15 @@ export interface ParsedArgv {
  * `bumpp`'s tag template, not this release. `--release` is refused outright
  * rather than forwarded: the version comes from the tag, and two sources for it
  * is exactly how `v0.1.1` was tagged off a `0.1.0` manifest.
+ *
+ * `--no-publish` is recognised here and produces nothing — see
+ * `NO_PUBLISH_FLAG`. Being in `OWN_FLAGS` is the whole of its handling: it is
+ * consumed rather than forwarded, and no longer selects between two behaviours
+ * because there is only one.
  */
 export function parseArgv(argv: ReadonlyArray<string>): ParsedArgv {
   const parsed: ParsedArgv = {
     rebuild: argv.includes(REBUILD_FLAG),
-    publish: !argv.includes(NO_PUBLISH_FLAG),
     bumppArgs: [],
   }
   for (const [index, arg] of argv.entries()) {
@@ -823,7 +833,6 @@ export function main(
   return release({
     ...options,
     tag: options.tag ?? parsed.tag,
-    publish: options.publish ?? parsed.publish,
     bumppArgs: options.bumppArgs ?? parsed.bumppArgs,
   })
 }
