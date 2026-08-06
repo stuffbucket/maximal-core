@@ -23,7 +23,9 @@
  * (where the substitution didn't happen) doesn't ReferenceError.
  */
 
-import packageJson from "../../../package.json" with { type: "json" }
+// Named, not default: `bun build` tree-shakes this to the one field, keeping
+// the rest of package.json (scripts, devDependencies) out of dist/main.js.
+import { version } from "../../../package.json" with { type: "json" }
 
 declare const __MAXIMAL_VERSION__: string
 declare const __MAXIMAL_GIT_SHA__: string
@@ -33,7 +35,7 @@ declare const __MAXIMAL_CHANNEL__: string
 export const BUILD_VERSION: string =
   typeof __MAXIMAL_VERSION__ === "string" && __MAXIMAL_VERSION__.length > 0 ?
     __MAXIMAL_VERSION__
-  : packageJson.version
+  : version
 
 export const BUILD_GIT_SHA: string | undefined =
   typeof __MAXIMAL_GIT_SHA__ === "string" && __MAXIMAL_GIT_SHA__.length > 0 ?
