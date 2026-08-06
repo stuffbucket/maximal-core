@@ -112,21 +112,35 @@ describe("parity with the real package.json", () => {
   // common dir, so a linked worktree (where simple-git-hooks always fails,
   // upstream bug: it joins `.git/hooks` onto cwd rather than the resolved git
   // dir) still passes off the main checkout's hook.
+  //
+  // The body now lives in `scripts/ops/prepare.ts` rather than an inline shell
+  // string. The inline version used `> /dev/null 2>&1` and `$(…)`, which Bun's
+  // built-in shell rejects on Windows (`expected a command or assignment but
+  // got: "Redirect"`), failing `bun install` outright there. Nothing caught it:
+  // ci.yml is Linux-only and the sole Windows leg runs on a tag push, so it
+  // surfaced only after v0.4.2 was tagged, leaving that release asset-less.
   test("`prepare` resolves its binary through the interpreter too", () => {
     const prepare = readScripts().prepare
-    expect(prepare).toContain("bun x simple-git-hooks")
-    // No bare invocation anywhere in the chain.
+    expect(prepare).toBe("bun scripts/ops/prepare.ts")
+    // No bare invocation anywhere in the chain — neither in the script entry
+    // nor in the file it delegates to.
     expect(prepare).not.toMatch(/(?:^|[;&|]\s*)simple-git-hooks/)
+    const body = fs.readFileSync(path.join(import.meta.dir, "prepare.ts"), "utf8")
+    expect(body).toContain('process.execPath, ["x", "simple-git-hooks"]')
+    expect(body).not.toMatch(/spawnSync\(\s*"(?:bun|simple-git-hooks)"/)
   })
 
   // The other half of the same fix: `prepare` must not exit 0 when the hook
   // was not installed. Guarded so it is a no-op outside a git repo, which is
   // how a git-dependency or tarball install sees it.
   test("`prepare` verifies the hook landed, and no-ops outside a git repo", () => {
-    const prepare = readScripts().prepare
-    expect(prepare).toContain("git rev-parse --git-path hooks")
-    expect(prepare).toContain("exit 0")
-    expect(prepare).toContain("/pre-commit")
+    const body = fs.readFileSync(path.join(import.meta.dir, "prepare.ts"), "utf8")
+    expect(body).toContain("rev-parse")
+    expect(body).toContain("--git-path")
+    expect(body).toContain("pre-commit")
+    // The no-op-outside-a-repo path and the it-lied path are distinct exits.
+    expect(body).toContain("process.exit(0)")
+    expect(body).toContain("process.exit(1)")
   })
 
   // `engines.node` is a DECLARATION, not a gate: `bun install` ignores it
