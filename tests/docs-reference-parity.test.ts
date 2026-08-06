@@ -507,6 +507,56 @@ describe("docs reference parity", () => {
   })
 
   // -------------------------------------------------------------------------
+  // 6. The ADR namespace
+  // -------------------------------------------------------------------------
+
+  /**
+   * The check above can only resolve a citation of the form
+   * `docs/decisions/NNNN-slug.md`. A file in `docs/decisions/` that is not
+   * named that way is therefore invisible to it — uncitable by the convention
+   * and unenforced by the mechanism. This closes the namespace so that gap
+   * cannot reappear.
+   *
+   * Cheap and precision-safe by construction: it reads a directory listing and
+   * tests filenames against the same shape the citation regex already assumes.
+   * The only way to fail is to add a file to `docs/decisions/` that is not a
+   * numbered ADR, which is exactly the event worth a red result.
+   */
+  const NON_ADR_DECISION_FILES = new Set([
+    // Unnumbered, predates the convention being enforced. Whether it belongs
+    // in docs/decisions/ at all is an open maintainer question: its producer
+    // side (the Astro site, deploy-pages.yml) left with the core split, but it
+    // is the design record for the manifest schema `parseManifestVersion` in
+    // src/lib/update/update-check.ts still parses. Resolve it by numbering the
+    // file, moving it to docs/spec/, or dropping it — then delete this entry.
+    "site-runtime-version-manifest.md",
+  ])
+
+  it("every file in docs/decisions is a numbered ADR", () => {
+    const names = allDocs()
+      .filter((p) => inTree(p, "docs/decisions"))
+      .map((p) => p.slice("docs/decisions/".length))
+
+    const unnumbered = names.filter(
+      (n) =>
+        !/^\d{4}-[a-z0-9-]+\.md$/.test(n) && !NON_ADR_DECISION_FILES.has(n),
+    )
+    const stale = [...NON_ADR_DECISION_FILES].filter((n) => !names.includes(n))
+
+    expect(
+      unnumbered.length === 0 ?
+        ""
+      : `Not named as ADRs, so no ADR can cite them and the cross-reference check above cannot see them: ${unnumbered.join(", ")}.\n`
+          + "  Rename to docs/decisions/NNNN-slug.md, or move the file to docs/spec/ if it is a spec rather than a decision.\n",
+    ).toBe("")
+    expect(
+      stale.length === 0 ?
+        ""
+      : `Allow-listed as non-ADR files in docs/decisions but no longer present: ${stale.join(", ")}. Remove the entry from NON_ADR_DECISION_FILES.`,
+    ).toBe("")
+  })
+
+  // -------------------------------------------------------------------------
   // Keep the exclusion list honest
   // -------------------------------------------------------------------------
 
