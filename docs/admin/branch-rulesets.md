@@ -130,10 +130,15 @@ proves each required context is a real job id in a workflow that fires on
   administration at all — there is no such key in a workflow `permissions:`
   block. The check therefore reports an absent key as **unverified**, never as a
   finding, and does not escalate it: an alert that can never clear is an alert
-  nobody reads. It is verified when a human runs `bun run rules:check` locally
-  with a `repo`-scoped token, or by a scheduled run with a `RULESET_WATCH_TOKEN`
-  secret set (none is configured today). The consolation is that this particular
-  failure is loud on its own: the next release stops at a rejected push.
+  nobody reads. It is verified when a human runs `bun run rules:check` locally:
+  the token comes from `RULESET_WATCH_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN`, and
+  failing all three from `gh auth token`, because a `gh auth login` session keeps
+  its token in the CLI's own config and exports nothing to the environment — so
+  without that last fallback the local run, the only run that can see this at
+  all, silently reports it unverified. A scheduled run can also see it if a
+  `RULESET_WATCH_TOKEN` secret is set (none is configured today). The consolation
+  is that this particular failure is loud on its own: the next release stops at a
+  rejected push.
 - **A private repository.** The ruleset endpoints return 403 on a private repo
   without GitHub Pro. The rulesets keep applying; the check just stops being
   able to read them. That is exit 2 — "nobody can currently tell" — and it files

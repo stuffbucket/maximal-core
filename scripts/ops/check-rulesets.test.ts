@@ -6,6 +6,7 @@ import {
   evaluate,
   EXPECTED,
   exitCodeFor,
+  ghCliToken,
   jobIds,
   KNOWN_CONTEXT_COLLISIONS,
   renderIssue,
@@ -224,6 +225,19 @@ describe("rendering", () => {
     for (const want of EXPECTED) expect(summary).toContain(want.name)
   })
 
+  test("the summary carries each finding's detail, not just a count", () => {
+    // The only output a local run produces; the issue body needs --body-file.
+    // Printing `1 finding(s)` and nothing else sends the reader to the settings
+    // UI to guess which assertion broke.
+    const live = healthy()
+    requirePr(live).enforcement = "disabled"
+    const summary = renderSummary(evaluate(live))
+    const [finding] = evaluate(live).findings
+    expect(finding).toBeDefined()
+    expect(summary).toContain(finding!.assertion)
+    expect(summary).toContain(finding!.detail)
+  })
+
   test("the issue body carries the fix path and the deliberate-change path", () => {
     const live = healthy()
     requirePr(live).enforcement = "disabled"
@@ -239,6 +253,25 @@ describe("rendering", () => {
     expect(body).toContain("403")
     expect(body).toContain("not")
     expect(body).toContain("private")
+  })
+})
+
+describe("token resolution", () => {
+  // The local run is the only one that can ever read `bypass_actors`, and a
+  // `gh auth login` session exports no token to the environment — so without
+  // this fallback the one assertion that matters most is always "unverified".
+  test("falls back to the token gh is logged in with", () => {
+    expect(ghCliToken(() => ({ status: 0, stdout: "gho_fake\n" }))).toBe("gho_fake")
+  })
+
+  test("is null when gh is logged out, absent, or prints nothing", () => {
+    expect(ghCliToken(() => ({ status: 1, stdout: "" }))).toBeNull()
+    expect(ghCliToken(() => ({ status: 0, stdout: "  \n" }))).toBeNull()
+    expect(
+      ghCliToken(() => {
+        throw new Error("ENOENT")
+      }),
+    ).toBeNull()
   })
 })
 

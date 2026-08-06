@@ -59,9 +59,11 @@
  * cannot match: an answer you could not compute must never be rendered as an
  * answer you did compute. Deliberately it does not escalate either: a daily
  * scheduled run can never read it, and an alert that fires every single day is
- * an alert nobody reads. It is verified when a human runs this locally
- * (`gh auth` with `repo` scope), or by a run with a `RULESET_WATCH_TOKEN`
- * secret. See docs/admin/branch-rulesets.md.
+ * an alert nobody reads. It is verified when a human runs this locally — the
+ * token comes from `RULESET_WATCH_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`, or, failing
+ * all three, from `gh auth token`, because a `gh auth login` session exports
+ * nothing to the environment and the local run is the only one that can see
+ * this at all. See docs/admin/branch-rulesets.md.
  *
  * IF THE REPO GOES PRIVATE. The ruleset endpoints return 403 on a private
  * repo without GitHub Pro — the rulesets keep applying, but this check can no
@@ -76,6 +78,7 @@
  * suite in check-rulesets.test.ts runs offline.
  */
 
+import { spawnSync } from "node:child_process"
 import fs from "node:fs/promises"
 import path from "node:path"
 
@@ -230,8 +233,34 @@ export function repoSlug(env: Record<string, string | undefined> = process.env):
   return env.RULESET_REPO ?? env.GITHUB_REPOSITORY ?? "stuffbucket/maximal-core"
 }
 
+/**
+ * The token `gh` is already logged in with, or null. Without this the local run
+ * — the ONLY run that can see `bypass_actors` — silently reports it unverified,
+ * because a `gh auth login` session stores its token in the CLI's own config
+ * and exports nothing to the environment.
+ */
+export function ghCliToken(
+  run: (cmd: string, args: Array<string>) => { status: number | null; stdout: string } = (
+    cmd,
+    args,
+  ) => {
+    const res = spawnSync(cmd, args, { encoding: "utf8" })
+    return { status: res.status, stdout: res.stdout ?? "" }
+  },
+): string | null {
+  try {
+    const res = run("gh", ["auth", "token"])
+    if (res.status !== 0) return null
+    const token = res.stdout.trim()
+    return token === "" ? null : token
+  } catch {
+    return null // `gh` is not installed — CI, or a machine without it.
+  }
+}
+
 function ghHeaders(env: Record<string, string | undefined>): Record<string, string> {
-  const token = env.RULESET_WATCH_TOKEN ?? env.GH_TOKEN ?? env.GITHUB_TOKEN
+  const token =
+    env.RULESET_WATCH_TOKEN ?? env.GH_TOKEN ?? env.GITHUB_TOKEN ?? ghCliToken() ?? undefined
   const headers: Record<string, string> = {
     accept: "application/vnd.github+json",
     "user-agent": "maximal-ruleset-check",
@@ -418,10 +447,16 @@ export function renderSummary(
   report: Report,
   expected: ReadonlyArray<Expectation> = EXPECTED,
 ): string {
-  const lines = expected.map((want) => {
-    const n = report.findings.filter((f) => f.ruleset === want.name).length
-    return `${n === 0 ? "ok   " : "DRIFT"}  ${want.name.padEnd(22)} ${n === 0 ? "meets the floor" : `${n} finding(s)`}`
-  })
+  const lines: Array<string> = []
+  for (const want of expected) {
+    const findings = report.findings.filter((f) => f.ruleset === want.name)
+    lines.push(
+      `${findings.length === 0 ? "ok   " : "DRIFT"}  ${want.name.padEnd(22)} ${findings.length === 0 ? "meets the floor" : `${findings.length} finding(s)`}`,
+    )
+    // The count alone is not actionable, and this is the only output a local
+    // run produces — the issue body is written only under --body-file.
+    for (const f of findings) lines.push(`         expected ${f.assertion}`, `         got ${f.detail}`)
+  }
   for (const u of report.unverified) {
     lines.push(`?     ${u.ruleset.padEnd(22)} unverified: ${u.assertion}`)
   }
