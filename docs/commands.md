@@ -26,10 +26,17 @@ bun run check:fast   # lint:fast + typecheck + lint:all (the per-edit inner loop
 bun run check:deep   # check:fast + casts:check + bun test + knip + deps:check +
                      # build + typecheck:downstream + bindings:check
                      # (end-of-task gate; superset of CI)
-bun run deps:check   # dependency-cruiser. Only its two `error` rules affect the
-                     # exit code (`not-to-test`, `no-route-imports-from-lib-or-services`).
-                     # `no-circular` is `warn` with 47 standing matches and never
-                     # fails — green here is NOT "no cycles". Read the output.
+bun run deps:check   # dependency-cruiser (scripts/check-deps.ts). All three
+                     # `error` rules fail the build. `not-to-test` and
+                     # `no-route-imports-from-lib-or-services` are absolute;
+                     # `no-circular` is ratcheted against the set of imports
+                     # that close a cycle, recorded in scripts/check-deps.ts.
+                     # A new one fails and is named; fixing one also fails,
+                     # until you re-record it. The recorded set is the only
+                     # statement of how many cycles there are — no count is
+                     # written down anywhere else, here included.
+bun run deps:check --list    # the standing cycles, grouped by component
+bun run deps:check --update  # re-record after fixing cycles (refuses to add)
 bun run knip         # find unused exports/files
 
 # Secret scanning
