@@ -19,7 +19,12 @@ import {
 // Spread the real module so this stub doesn't strip `~/lib/platform/utils`'s other
 // exports for sibling files, and restore it in an awaited afterAll so it can't
 // leak forward (Bun keeps module mocks for the whole `bun test` process).
-const realUtilsModule = await import("~/lib/platform/utils")
+//
+// The capture is a spread COPY, not the namespace itself: `mock.module` mutates
+// the live module record in place, so the namespace object would carry the stub
+// by the time afterAll reads it and the restore would re-install the stub.
+// See docs/dev/testing-strategy.md §5.1.
+const realUtilsModule = { ...(await import("~/lib/platform/utils")) }
 await mock.module("~/lib/platform/utils", () => ({
   ...realUtilsModule,
   sleep: () => Promise.resolve(),

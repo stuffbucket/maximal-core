@@ -61,12 +61,18 @@ const harness = {
 // (poll-access-token, github-token-store) have their own dedicated test
 // files — those go through __setAuthControllerDepsForTests instead of
 // mock.module so the registry stays clean.
-const realGetDeviceCodeModule =
-  await import("~/services/github/get-device-code")
-const realGetUserModule = await import("~/services/github/get-user")
-const realTokenModule = await import("~/lib/auth/token")
-const realUtilsModule = await import("~/lib/platform/utils")
-const realFsPromisesModule = await import("node:fs/promises")
+//
+// Each capture is a spread COPY, not the namespace: `mock.module` mutates the
+// live module record in place, so the namespace object would carry the stub by
+// the time afterAll reads it and the restore would re-install what it meant to
+// undo. See docs/dev/testing-strategy.md §5.1.
+const realGetDeviceCodeModule = {
+  ...(await import("~/services/github/get-device-code")),
+}
+const realGetUserModule = { ...(await import("~/services/github/get-user")) }
+const realTokenModule = { ...(await import("~/lib/auth/token")) }
+const realUtilsModule = { ...(await import("~/lib/platform/utils")) }
+const realFsPromisesModule = { ...(await import("node:fs/promises")) }
 
 await mock.module("~/services/github/get-device-code", () => ({
   getDeviceCode: () => harness.getDeviceCodeImpl(),

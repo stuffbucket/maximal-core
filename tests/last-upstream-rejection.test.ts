@@ -184,11 +184,16 @@ describe("clearLastUpstreamRejection", () => {
 // the pattern in tests/auth-controller.test.ts. Restored in afterAll so
 // the stubs don't leak to later test files in the same `bun test` run.
 
-const realGetDeviceCodeModule =
-  await import("~/services/github/get-device-code")
-const realGetUserModule = await import("~/services/github/get-user")
-const realTokenModule = await import("~/lib/auth/token")
-const realFsPromisesModule = await import("node:fs/promises")
+// Each capture is a spread COPY, taken before any install. `mock.module`
+// mutates the live module record in place, so the namespace object itself would
+// carry the stub by the time afterAll reads it and the restore would re-install
+// what it meant to undo. See docs/dev/testing-strategy.md §5.1.
+const realGetDeviceCodeModule = {
+  ...(await import("~/services/github/get-device-code")),
+}
+const realGetUserModule = { ...(await import("~/services/github/get-user")) }
+const realTokenModule = { ...(await import("~/lib/auth/token")) }
+const realFsPromisesModule = { ...(await import("node:fs/promises")) }
 
 await mock.module("~/services/github/get-device-code", () => ({
   getDeviceCode: () =>

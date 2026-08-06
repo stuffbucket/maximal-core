@@ -27,9 +27,16 @@ import {
 } from "bun:test"
 
 // --- Mocks for the chunky boot dependencies ------------------------
+//
+// Every `real*Module` below is a spread COPY of the namespace, captured before
+// any install. `mock.module` mutates the live module record in place, so the
+// namespace object itself would carry this file's stubs by the time `afterAll`
+// reads it, and restoring from it would re-install exactly what the restore
+// meant to undo. That missing spread was the whole of #27. See
+// docs/dev/testing-strategy.md §5.1.
 
 const initOpencodeVersionMock = mock(() => Promise.resolve())
-const realOpencodeModule = await import("~/lib/platform/opencode")
+const realOpencodeModule = { ...(await import("~/lib/platform/opencode")) }
 await mock.module("~/lib/platform/opencode", () => ({
   ...realOpencodeModule,
   initOpencodeVersion: initOpencodeVersionMock,
@@ -39,14 +46,14 @@ await mock.module("~/lib/platform/opencode", () => ({
 // real `~/server` — we keep its PATHS map intact and only stub
 // `ensurePaths` so the test never touches disk.
 const ensurePathsMock = mock(() => Promise.resolve())
-const realPathsModule = await import("~/lib/platform/paths")
+const realPathsModule = { ...(await import("~/lib/platform/paths")) }
 await mock.module("~/lib/platform/paths", () => ({
   ...realPathsModule,
   ensurePaths: ensurePathsMock,
 }))
 
 const initProxyFromEnvMock = mock(() => {})
-const realProxyModule = await import("~/lib/http/proxy")
+const realProxyModule = { ...(await import("~/lib/http/proxy")) }
 await mock.module("~/lib/http/proxy", () => ({
   ...realProxyModule,
   initProxyFromEnv: initProxyFromEnvMock,
@@ -54,11 +61,13 @@ await mock.module("~/lib/http/proxy", () => ({
 
 // `~/lib/auth/secrets` is NOT mocked. Stubbing it to keep boot off disk also
 // replaced `SECRET_DEFS` — a shared data table `~/debug` and
-// tests/anthropic-key-precedence.test.ts read — and Bun evaluates every test
-// file's module body up front, before any `afterAll` runs, so the restore below
-// could never protect a sibling that linked the stub. The boot step is
+// tests/anthropic-key-precedence.test.ts read. `bun test` interleaves evaluation
+// and execution (evaluate a file, run its tests, evaluate the next), so the
+// restore below does run before the next file is evaluated — but only a restore
+// that hands back a pre-install snapshot restores anything, and a leaked data
+// table is read silently and yields a plausible wrong answer. The boot step is
 // neutralized through the `__setBootSecretsForTests` DI seam instead (wired
-// below, after import).
+// below, after import), which has no leak window at all.
 const bootSecretsMock = mock(() => {})
 
 const cacheModelsMock = mock(() => Promise.resolve())
@@ -66,7 +75,7 @@ const cacheVSCodeVersionMock = mock(() => Promise.resolve())
 const cacheMacMachineIdMock = mock(() => {})
 const cacheVsCodeSessionIdMock = mock(() => {})
 const cacheVsCodeDeviceIdMock = mock(() => Promise.resolve())
-const realUtilsModule = await import("~/lib/platform/utils")
+const realUtilsModule = { ...(await import("~/lib/platform/utils")) }
 await mock.module("~/lib/platform/utils", () => ({
   ...realUtilsModule,
   cacheModels: cacheModelsMock,
@@ -86,7 +95,7 @@ const logUserMock = mock(() => {
   return Promise.resolve()
 })
 const setupCopilotTokenMock = mock(() => Promise.resolve())
-const realTokenModule = await import("~/lib/auth/token")
+const realTokenModule = { ...(await import("~/lib/auth/token")) }
 await mock.module("~/lib/auth/token", () => ({
   ...realTokenModule,
   logUser: logUserMock,
@@ -95,7 +104,7 @@ await mock.module("~/lib/auth/token", () => ({
 
 let storedRecord: { accessToken: string } | null = null
 const readDefaultRecordMock = mock(() => Promise.resolve(storedRecord))
-const realStoreModule = await import("~/lib/auth/github-token-store")
+const realStoreModule = { ...(await import("~/lib/auth/github-token-store")) }
 await mock.module("~/lib/auth/github-token-store", () => ({
   ...realStoreModule,
   readDefaultRecord: readDefaultRecordMock,
@@ -113,7 +122,7 @@ const fakeLogger = {
   error: () => {},
   debug: () => {},
 }
-const realLoggerModule = await import("~/lib/platform/logger")
+const realLoggerModule = { ...(await import("~/lib/platform/logger")) }
 await mock.module("~/lib/platform/logger", () => ({
   ...realLoggerModule,
   createHandlerLogger: () => fakeLogger,
@@ -519,14 +528,17 @@ describe("start.run — citty args → runServer options", () => {
 // other test files in the same `bun test` process don't observe our
 // stubs. Bun's `mock.restore()` only undoes function spies, not module
 // mocks, so we re-`mock.module` each one back to the captured real
-// module reference.
+// module snapshot.
 //
-// Note this restore is a best-effort backstop, NOT a guarantee: Bun evaluates
-// every test file's module body during startup, before any test — and therefore
-// before any `afterAll` — runs, so a sibling that statically imports one of
-// these modules has already bound whatever was installed here. Anything a
-// sibling reads passively (a `const` table, not a function it calls) must use a
-// DI seam instead; see `__setBootSecretsForTests` above.
+// This restore does land in time on Bun 1.3.11: `bun test` interleaves
+// evaluation and execution, so `afterAll` runs before the next file's module
+// body is evaluated (measured; testing-strategy §5.1). What it depends on is the
+// SHAPE of the captured value — every `real*Module` above is a spread copy taken
+// before the install, because restoring from the live namespace would re-install
+// the stub. It is still a backstop, not a licence: the ordering is scheduling,
+// not contract, and anything a sibling reads passively (a `const` table, not a
+// function it calls) belongs behind a DI seam — see `__setBootSecretsForTests`
+// above.
 afterAll(async () => {
   stopCopilotOnlineRetry()
   globalThis.fetch = realFetch

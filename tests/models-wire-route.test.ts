@@ -25,7 +25,10 @@ import { modelRoutes } from "~/routes/models/route"
 // assert the prime *repopulated* the cache (order-dependent) — only that an
 // unloadable catalog never 5xxes. The repopulation path is unit-tested in
 // tests/refresh-models.test.ts with injected fns.
-const actualGetModels = await import("~/services/copilot/get-models")
+// The capture is a spread COPY, not the namespace: `mock.module` mutates the
+// live module record in place, so the namespace object would carry the stub by
+// the time afterAll reads it. See docs/dev/testing-strategy.md §5.1.
+const actualGetModels = { ...(await import("~/services/copilot/get-models")) }
 await mock.module("~/services/copilot/get-models", () => ({
   ...actualGetModels,
   getModels: () => Promise.reject(new Error("models endpoint down")),

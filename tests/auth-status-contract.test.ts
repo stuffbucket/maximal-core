@@ -49,11 +49,16 @@ const harness = {
   addAccountCalls: [] as Array<AccountRecord>,
 }
 
-const realGetDeviceCodeModule =
-  await import("~/services/github/get-device-code")
-const realGetUserModule = await import("~/services/github/get-user")
-const realTokenModule = await import("~/lib/auth/token")
-const realUtilsModule = await import("~/lib/platform/utils")
+// Each capture is a spread COPY, taken before any install. `mock.module`
+// mutates the live module record in place, so the namespace object itself would
+// carry the stub by the time afterAll reads it and the restore would re-install
+// what it meant to undo. See docs/dev/testing-strategy.md §5.1.
+const realGetDeviceCodeModule = {
+  ...(await import("~/services/github/get-device-code")),
+}
+const realGetUserModule = { ...(await import("~/services/github/get-user")) }
+const realTokenModule = { ...(await import("~/lib/auth/token")) }
+const realUtilsModule = { ...(await import("~/lib/platform/utils")) }
 
 await mock.module("~/services/github/get-device-code", () => ({
   getDeviceCode: () =>

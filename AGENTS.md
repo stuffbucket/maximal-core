@@ -44,12 +44,15 @@ Each rule states the prohibition; the linked doc is its only elaboration.
 - **Never `git stash pop` in a shared working tree.** It merges another
   in-flight agent's stash into yours. Isolate first —
   [`docs/architecture.md`](docs/architecture.md) → _Parallel-agent convention_.
-- **Do not `mock.module` a shared module — inject instead.** Bun evaluates every
-  test file's body before any test runs, so a mock installed at module scope is
-  already linked by every sibling that imports it. Restoring in `afterAll` is
-  not a weak mitigation, it is *not a mitigation* — teardown runs long after the
-  binding was taken. Use a DI seam (`__setServeForTests`,
-  `__setBootSecretsForTests`); `mockModuleLeakGuard` catches only some shapes —
+- **Do not `mock.module` a shared module — inject instead.** The stub reaches
+  every file evaluated *after* the installing one (`bun test` interleaves
+  evaluation and execution, so the leak is forward-only). An `afterAll` restore
+  does run before the next file evaluates — but only works if it hands back a
+  copy captured *before* the install: `mock.module` mutates the live namespace in
+  place, so `() => realModule` re-installs the stub. Capture
+  `const real = { ...(await import("…")) }`. That missing spread was the whole of
+  #27. Prefer a DI seam (`__setServeForTests`, `__setBootSecretsForTests`);
+  `mockModuleLeakGuard` catches only some shapes —
   [`docs/dev/testing-strategy.md`](docs/dev/testing-strategy.md) §5.1.
 - **Reset module-level state in BOTH `beforeEach` and `afterEach`.** A singleton
   reset only on the way in leaks to the next file; only on the way out inherits
