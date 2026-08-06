@@ -3,17 +3,21 @@
  *
  * Values are injected by `bun build --compile --define ...` for release
  * binaries. **Core no longer compiles one** — delivery is the GitHub Package
- * Registry — but the compile did not stop happening, and these are NOT dead:
- * `stuffbucket/maximal`'s `scripts/build-sidecar.ts` runs `bun build --compile`
- * over **this repo's** `src/main.ts`, reached through the git dependency at
- * `shell/node_modules/@stuffbucket/maximal-core/src/main.ts`, and injects all
- * four itself. That binary is what ships to users, so `BUILD_CHANNEL` still
- * decides which channel a shipped build polls
- * (`src/lib/update/update-check.ts`) and `BUILD_GIT_SHA` still lands in
- * `x-maximal-version`. Nothing in this repo references that producer, which is
- * exactly why this paragraph is here.
+ * Registry — but the compile did not stop happening, so these are NOT dead:
  *
- * All four go together: `__MAXIMAL_VERSION__` (from package.json),
+ *   - `scripts/build-sidecar.ts` in `stuffbucket/maximal` compiles **this
+ *     repo's `src/main.ts`**, reached through the git dependency at
+ *     `shell/node_modules/@stuffbucket/maximal-core/src/main.ts`, and injects
+ *     all four defines itself.
+ *
+ * That is now the only producer, it is the one that ships to users, and nothing
+ * in this repo references it — which is exactly why this paragraph is here. Do
+ * not treat these globals as dead because core's own binary pipeline is gone:
+ * the downstream compile still sets them, so `BUILD_CHANNEL` still decides
+ * which channel a shipped build polls (`src/lib/update/update-check.ts`) and
+ * `BUILD_GIT_SHA` still lands in `x-maximal-version`.
+ *
+ * All four are injected together: `__MAXIMAL_VERSION__` (from package.json),
  * `__MAXIMAL_GIT_SHA__` (short SHA), `__MAXIMAL_GIT_BRANCH__`, and
  * `__MAXIMAL_CHANNEL__` (derived from the version's prerelease tag). When unset
  * — running source via `bun src/main.ts`, or after a stock `bun build` without

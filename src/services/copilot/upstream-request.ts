@@ -5,6 +5,7 @@ import type { CompactType } from "~/lib/models/compact"
 import type { State } from "~/lib/runtime-state/state"
 import type { SubagentMarker } from "~/lib/runtime-state/subagent"
 
+import { CREDENTIAL_HEALTH } from "~/lib/auth/auth-types"
 import {
   copilotHeaders,
   prepareForCompact,
@@ -15,9 +16,15 @@ import {
   parseCopilotErrorBody,
 } from "~/lib/errors/copilot-error-parser"
 import { logCopilotRateLimits } from "~/lib/errors/copilot-rate-limit"
-import { CopilotAuthFatalError, HTTPError } from "~/lib/errors/error"
+import {
+  CopilotAuthFatalError,
+  CopilotTokenStaleError,
+  HTTPError,
+} from "~/lib/errors/error"
 import {
   clearLastUpstreamRejection,
+  copilotRefreshHealth,
+  copilotTokenHealth,
   setLastUpstreamRejection,
   state,
 } from "~/lib/runtime-state/state"
@@ -40,11 +47,25 @@ export interface CopilotCallOptions {
 }
 
 /**
- * Asserts the Copilot token is present and returns it narrowed to non-null.
- * Every builder needs this before it can construct headers.
+ * Asserts the Copilot token is present AND still usable, returning it narrowed
+ * to non-null. Every builder needs this before it can construct headers.
+ *
+ * The health gate is the #9 fix: when the bearer is `expired` (past the expiry
+ * upstream gave us, with the refresh that should have replaced it failing),
+ * sending it produces a `403 authentication_failed` that our deliberately
+ * conservative body-marker policy does not class as auth-fatal — so it forwards
+ * verbatim and every client tells the user to re-login, which cannot help. Fail
+ * the request here instead, with an error that says what is actually wrong.
+ *
+ * `refreshing` — a failing refresh under a bearer that is still within its
+ * lifetime — deliberately does NOT gate: that is the recoverable case, and
+ * failing it would turn a blip into an outage.
  */
 export const requireCopilotToken = (): string => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
+  if (copilotTokenHealth() === CREDENTIAL_HEALTH.expired) {
+    throw new CopilotTokenStaleError(copilotRefreshHealth().lastFailureReason)
+  }
   return state.copilotToken
 }
 
