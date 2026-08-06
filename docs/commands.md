@@ -54,9 +54,10 @@ bun run scan:secrets # manual full-repo trufflehog scan. Requires trufflehog on
 
 # End-to-end (spawns the real binary + a real port; outside `bun test`)
 bun run e2e          # e2e:seam + e2e:feed + e2e:lifecycle + e2e:replace
-bun run e2e:binary   # the same four harnesses against a compiled binary
-                     # --binary=<path> runs them against an existing artifact
-                     # instead of compiling a throwaway one
+MAXIMAL_E2E_BINARY=<path> bun run e2e
+                     # the same four harnesses against a compiled binary. Core
+                     # builds none — stuffbucket/maximal compiles this repo's
+                     # src/main.ts — so point it at that artifact.
 
 # Mutation testing (manual only — not wired into check:deep)
 bun run mutate       # Stryker over the module(s) in stryker.conf.json's `mutate`

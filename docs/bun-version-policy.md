@@ -3,7 +3,7 @@
 Pinned in `.bun-version` — read by `bun install`, by Bun's own version manager,
 and at runtime by every CI workflow that needs Bun: `ci.yml`, `tooling-ci.yml`,
 `watch-external-drift.yml`, `watch-branch-rules.yml`, `randomized-test-order.yml`,
-`release-gates.yml`, `release-tag-check.yml`, `release-artifacts.yml`, and
+`release-gates.yml`, `release-tag-check.yml`, and
 `publish-package.yml` each
 `cat .bun-version` into `setup-bun`. No workflow holds a copy of the version
 literal, so dev/CI drift is not representable — which is the point: drift is

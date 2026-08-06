@@ -145,7 +145,7 @@ jobs:
       - name: End-to-end suite, from source
         # seam / feed / lifecycle / replace, run against `src/` rather than a
         # compiled artifact. Until now these four ran in exactly one place: the
-        # `windows` job below, via `e2e:binary`. So the from-source path — the
+        # `windows` job below, against a compiled artifact. So the from-source path — the
         # one `bun run dev` and `bun start` use — was exercised by no workflow,
         # and neither was Linux: a regression in the control seam, the SSE feed,
         # shutdown, or port takeover reached a tag before anything on ubuntu
@@ -161,82 +161,63 @@ jobs:
         run: bun run e2e
 
   windows:
-    # The `bun-windows-x64` release leg, run before a tag exists.
+    # Windows exposure for a codebase that ships no Windows artifact of its own.
     #
-    # Until this job, the ONLY Windows exposure in the repo was
-    # release-artifacts.yml, which triggers on `push: tags: v*`. So Windows was
-    # first exercised AFTER the tag was immutable — which is how v0.4.2 shipped
-    # with no binaries: #38 replaced `prepare` with an inline shell one-liner
-    # using `> /dev/null 2>&1` and `$(…)`, Bun's built-in shell (the only shell
-    # for lifecycle scripts on Windows) rejects that form, `bun install` failed
-    # outright, the leg died at install, `publish` never ran. Every PR was
-    # green, because every PR only ever ran on ubuntu-latest.
+    # WHAT IT USED TO BE. Until #38 the only Windows in this repo was
+    # release-artifacts.yml, which triggered on `push: tags: v*` — so Windows
+    # was first exercised AFTER the tag was immutable. That is how v0.4.2
+    # shipped with no binaries: #38 replaced `prepare` with an inline shell
+    # one-liner using `> /dev/null 2>&1` and `$(…)`, Bun's built-in shell (the
+    # only shell for lifecycle scripts on Windows) rejects that form,
+    # `bun install` failed outright, the leg died at install, `publish` never
+    # ran. Every PR was green, because every PR only ever ran on ubuntu-latest.
+    # This job was that leg, run before a tag existed.
     #
-    # This is that leg minus the rename/checksum/upload — same runner, same
-    # `bun install`, same three package.json scripts, same order — plus the
-    # unit suite appended after it.
+    # WHAT IT IS NOW. That pipeline is gone — core delivers through the GitHub
+    # Package Registry, not compiled binaries — so there is no release leg left
+    # to mirror and the build/verify/e2e-against-the-artifact steps went with
+    # it. What survives is the part that was doing the work:
     #
-    # MEASURED on this repo (job wall clock, all legs concurrent):
+    #   1. `bun install`. THE #38 CHECK, and the whole reason this job predates
+    #      the artifacts it used to build. Running the lifecycle scripts under
+    #      Bun's Windows shell is what catches a script that shell cannot parse
+    #      — on the PR, where it is a one-line fix.
+    #   2. `bun test`. `resolveConfigPath`, the secrets file tier, CLI detection
+    #      and the atomic JSON writers had ZERO Windows coverage before it, and
+    #      its first run here found a Windows-only product bug in the secrets
+    #      loader that every green ubuntu run had missed. The SQLite handle leak
+    #      (#71) surfaced the same way — as an EBUSY on Windows, where an open
+    #      handle locks the file, and as nothing at all on POSIX.
     #
-    #   ubuntu `test` (the job above)                       79s
-    #   windows, checkout + setup-bun + `bun install`       66s
-    #   windows, + build:binary + verify:artifact + e2e     95s
-    #   windows, + `bun test`                              112s  <- this job
+    # STILL WORTH ITS WALL CLOCK. Measured before the strip: checkout 7s,
+    # setup-bun 12s, `bun install` 54s, the release leg 16s, `bun test` ~17s,
+    # against the concurrent ubuntu `test` job's 79s. Removing the release leg
+    # takes ~16s off; the rest was always inside the wall clock the merge was
+    # already spending.
     #
-    # Per-step: checkout 7s, setup-bun 12s, `bun install` 54s, the release leg
-    # 16s, `bun test` ~17s. Three conclusions the numbers make for us:
+    # DO NOT DELETE THIS JOB TO SIMPLIFY. `windows` is a REQUIRED status check
+    # (docs/admin/branch-rulesets.md, CHECK_JOBS in scripts/ops/check-rulesets.ts)
+    # and check-ci-coverage.readJobs() throws if the id disappears. Removing it
+    # leaves every PR waiting forever on a context that never reports, and with
+    # no bypass actor that cannot be fixed by pushing.
     #
-    # 1. The install IS the cost, and it is the check — running the lifecycle
-    #    scripts under Bun's Windows shell is the whole of what catches #38.
-    #    Stopping there would save 16 seconds and give up every build- and
-    #    runtime-level Windows failure, including the class #30 and #47 fixed
-    #    (`e2e:lifecycle` spawning POSIX `sleep`). 16s is not a reason to ship
-    #    a check that only covers the first step of the thing it is proxying.
+    # It runs concurrently with `test` and carries no path filter, so it reports
+    # in the merge queue like any other check (a path-filtered required check
+    # never reports there — see the note on `bindings:check` above).
     #
-    # 2. `bun test` adds ~17s on top of that, entirely inside the wall clock
-    #    the concurrent ubuntu `test` job already spends. It costs the merge
-    #    queue nothing it was not already waiting for.
-    #
-    # 3. What it buys: `resolveConfigPath`, the secrets file tier, CLI
-    #    detection and the atomic JSON writers had ZERO Windows coverage, and
-    #    the first `bun test` run here found a Windows-only product bug in the
-    #    secrets loader that every green ubuntu run had missed.
-    #
-    # It runs concurrently with `test` and carries no path filter, so it
-    # reports in the merge queue like any other check (a path-filtered required
-    # check never reports there — see the note on `bindings:check` above).
-    #
-    # WHAT THIS STILL CANNOT CATCH: the macOS leg, the second target's compile,
-    # and the publish job's rename/checksum/ARTIFACTS.md assembly. Those need
-    # the real workflow, and the cheapest way to get them before a tag is a
-    # `workflow_dispatch` dry run of release-artifacts.yml (`publish` defaults
-    # to false) — now step 2 of docs/release-runbook.md.
-    #
-    # KEEP IN SYNC with the `bun-windows-x64` leg of release-artifacts.yml. The
-    # coupling is via package.json script names rather than copied shell, so a
-    # change to what those scripts do reaches both; a change to the leg's step
-    # LIST does not, and has to be mirrored here by hand.
+    # WHAT IT STILL CANNOT CATCH: anything needing a Windows machine you can
+    # iterate on. Every Windows defect here has been found by pushing and
+    # watching CI — see #90, and #88/#89 alongside it.
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
       run:
-        # Not the Windows default (pwsh) — same reason release-artifacts.yml
-        # sets it: every step here is a bash script. Set per-job so the ubuntu
-        # job above keeps GitHub's `bash -e` and does not silently gain
-        # `pipefail`.
+        # Not the Windows default (pwsh): every step here is a bash script. Set
+        # per-job so the ubuntu job above keeps GitHub's `bash -e` and does not
+        # silently gain `pipefail`.
         shell: bash
     steps:
       - uses: actions/checkout@v6
-
-      - name: Runner arch matches the release target
-        # release-artifacts.yml asserts this for the same reason: a floating
-        # `windows-latest` label that changed architecture would turn this into
-        # a check of a target we do not ship.
-        run: |
-          set -euo pipefail
-          actual="$(uname -m)"
-          echo "runner arch: $actual (expected x86_64)"
-          [ "$actual" = "x86_64" ]
 
       - name: Read Bun version
         id: bun
@@ -250,59 +231,23 @@ jobs:
 
       # `export PATH` in each step rather than relying on the GITHUB_PATH entry
       # setup-bun writes: `$HOME/.bun/bin` under Git-for-Windows bash is a mixed
-      # `C:\Users\…/.bun/bin` path, and release-artifacts.yml already exports
-      # explicitly on this runner for that reason. Do not drop these lines.
+      # `C:\Users\…/.bun/bin` path. Do not drop these lines.
 
       - name: Install dependencies
-        # THE #38 CHECK. Plain `bun install`, matching both the ubuntu job and
-        # the release leg — which means the `prepare` lifecycle script runs, in
-        # Bun's built-in Windows shell, exactly as it does on a tag. A script
-        # that shell cannot parse fails here, on the PR, instead of on the tag.
+        # THE #38 CHECK. Plain `bun install`, matching the ubuntu job — which
+        # means the `prepare` lifecycle script runs, in Bun's built-in Windows
+        # shell. A script that shell cannot parse fails here, on the PR.
         run: |
           set -euo pipefail
           export PATH="$HOME/.bun/bin:$PATH"
           bun install
 
-      - name: Build the Windows artifact
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.bun/bin:$PATH"
-          bun run build:binary -- --target=bun-windows-x64 --out=dist-release/maximal.exe
-          ls -l dist-release
-
-      - name: Verify the artifact
-        # No `--expect-version`: verify-artifact.ts falls back to
-        # package.json's version, which is the right claim on a branch. The tag
-        # comparison is release-artifacts.yml's job and needs a tag to exist.
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.bun/bin:$PATH"
-          bun run verify:artifact -- --binary=dist-release/maximal.exe
-
-      - name: End-to-end suite against the artifact
-        # #30 and #47 made this leg portable; this is what keeps it that way.
-        # Windows has no SIGTERM, so the shutdown assertions here prove the
-        # binary is terminable, not that it drained — same asymmetry
-        # release-artifacts.yml documents, and not one this job can close.
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.bun/bin:$PATH"
-          bun run e2e:binary -- --binary=dist-release/maximal.exe
-
       - name: Run tests
-        # The unit suite, on the platform we ship a `windows-x64` binary for.
+        # The unit suite, on the platform whose filesystem semantics differ.
         #
-        # Deliberately LAST, after the release leg above and not interleaved
-        # with it. Two reasons: the leg's step sequence stays byte-for-byte the
-        # shape release-artifacts.yml runs (the KEEP IN SYNC note below is only
-        # checkable if nothing is spliced into the middle), and a unit failure
-        # can never mask a build/verify/e2e failure by short-circuiting ahead
-        # of it.
-        #
-        # This was absent until now because 22 of 1574 cases failed here. All
-        # 22 were POSIX assumptions in `tests/**` except one, which was a real
-        # product bug on Windows that no other check could have found — see the
-        # PR that added this step.
+        # 22 of 1574 cases failed the first time this ran. All 22 were POSIX
+        # assumptions in `tests/**` except one, which was a real product bug on
+        # Windows that no other check could have found.
         #
         # 1 case stays skipped on win32, with the reason at its skip site:
         # secrets.test.ts's "refuses a group/world-readable secrets file"

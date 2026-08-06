@@ -1,16 +1,25 @@
 /**
  * Compile-time build metadata.
  *
- * Values are injected by `bun build --compile --define ...` for
- * release binaries — `buildBinary()` in `scripts/dev/build-binary.ts`
- * is the single place that passes them, and it injects all four:
- * `__MAXIMAL_VERSION__` (from package.json), `__MAXIMAL_GIT_SHA__`
- * (short SHA), `__MAXIMAL_GIT_BRANCH__`, and `__MAXIMAL_CHANNEL__`
- * (derived from the version's prerelease tag). When unset — running
- * source via `bun src/main.ts`, or after a stock `bun build` without
- * the defines — we fall back to package.json's version and leave the
- * git SHA undefined (the live `.git` walk in
- * `src/lib/update/version.ts` picks it up in dev).
+ * Values are injected by `bun build --compile --define ...` for release
+ * binaries. **Core no longer compiles one** — delivery is the GitHub Package
+ * Registry — but the compile did not stop happening, and these are NOT dead:
+ * `stuffbucket/maximal`'s `scripts/build-sidecar.ts` runs `bun build --compile`
+ * over **this repo's** `src/main.ts`, reached through the git dependency at
+ * `shell/node_modules/@stuffbucket/maximal-core/src/main.ts`, and injects all
+ * four itself. That binary is what ships to users, so `BUILD_CHANNEL` still
+ * decides which channel a shipped build polls
+ * (`src/lib/update/update-check.ts`) and `BUILD_GIT_SHA` still lands in
+ * `x-maximal-version`. Nothing in this repo references that producer, which is
+ * exactly why this paragraph is here.
+ *
+ * All four go together: `__MAXIMAL_VERSION__` (from package.json),
+ * `__MAXIMAL_GIT_SHA__` (short SHA), `__MAXIMAL_GIT_BRANCH__`, and
+ * `__MAXIMAL_CHANNEL__` (derived from the version's prerelease tag). When unset
+ * — running source via `bun src/main.ts`, or after a stock `bun build` without
+ * the defines — we fall back to package.json's version and leave the git SHA
+ * undefined (the live `.git` walk in `src/lib/update/version.ts` picks it up in
+ * dev).
  *
  * Why globals + --define instead of build-time codegen: identical
  * effect, no .gen.ts file to gitignore, no extra prebuild script

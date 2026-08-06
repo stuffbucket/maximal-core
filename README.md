@@ -245,8 +245,8 @@ milestone `release:notes` would not emit for, then bumps, rebuilds `dist/`,
 writes the changelog entry, commits all of it on `release/vX.Y.Z`, pushes the
 branch and opens the PR — it cuts no tag. Once that PR is merged,
 `bun run release:tag vX.Y.Z` cuts the annotated tag on `main`'s merged HEAD,
-which is what builds and publishes the binaries (`release-artifacts.yml`) and
-publishes the package (`publish-package.yml`).
+which is what publishes the package (`publish-package.yml`) and re-runs the tag
+gates (`release-tag-check.yml`). Core attaches no binaries.
 
 `main` requires a pull request, three green checks (`test`, `windows`, `gate`)
 and a branch that is up to date before it will merge. There is no exemption and

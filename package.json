@@ -52,7 +52,6 @@
   "scripts": {
     "bindings:check": "bun scripts/ops/check-bindings.ts",
     "build": "bun build src/main.ts --target=bun --outdir dist",
-    "build:binary": "bun scripts/dev/build-binary.ts",
     "build:lib": "tsup",
     "casts": "bun run scripts/find-casts.ts",
     "casts:check": "bun run scripts/find-casts.ts --check",
@@ -66,7 +65,6 @@
     "dupes": "bun scripts/check-dupes.ts --list",
     "dupes:check": "bun scripts/check-dupes.ts",
     "e2e": "bun run e2e:seam && bun run e2e:feed && bun run e2e:lifecycle && bun run e2e:replace",
-    "e2e:binary": "bun scripts/dev/e2e-binary.ts",
     "e2e:feed": "bun scripts/dev/e2e-feed.ts",
     "e2e:lifecycle": "bun scripts/dev/e2e-lifecycle.ts",
     "e2e:replace": "bun scripts/dev/e2e-replace.ts",
@@ -94,7 +92,6 @@
     "typecheck": "tsc",
     "typecheck:downstream": "bun downstream/check.ts",
     "typecheck:ops": "tsc -p scripts/ops/tsconfig.json",
-    "verify:artifact": "bun scripts/dev/verify-artifact.ts",
     "watch:drift": "bun scripts/ops/watch-external-drift.ts"
   },
   "simple-git-hooks": {

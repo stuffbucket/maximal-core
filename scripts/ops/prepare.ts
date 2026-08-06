@@ -10,9 +10,10 @@
  *     error: prepare script from "@stuffbucket/maximal" exited with 1
  *
  * That failed `bun install` outright on Windows. Nothing caught it: `ci.yml`
- * is Linux-only, and the sole Windows leg lives in `release-artifacts.yml`,
- * which runs on a tag push — so it surfaced only after v0.4.2 was tagged, with
- * the release left asset-less.
+ * was Linux-only, and the sole Windows leg ran on a tag push — so it surfaced
+ * only after v0.4.2 was tagged, with the release left asset-less. `ci.yml` now
+ * has a `windows` job whose whole point is running this script under Bun's
+ * Windows shell on every PR; that pipeline is gone, this check is not.
  *
  * The verification itself exists because `simple-git-hooks` ends its CLI in
  * `.catch(e => console.log(...))`, so every install error exits 0 — a failed
