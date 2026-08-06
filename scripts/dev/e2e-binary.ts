@@ -8,9 +8,10 @@
  * appears once compiled would otherwise be found by a user, in a signed build,
  * with no stack trace worth reading.
  *
- * So: compile for the host, then re-run the existing seam / feed / lifecycle
- * harnesses against it via `MAXIMAL_E2E_BINARY`. Same assertions, shipped
- * artifact. Nothing is duplicated — the checks live where they already lived.
+ * So: compile for the host, then re-run the existing seam / feed / lifecycle /
+ * replace harnesses against it via `MAXIMAL_E2E_BINARY`. Same assertions,
+ * shipped artifact. Nothing is duplicated — the checks live where they already
+ * lived.
  *
  * Host target only. Cross-compiled Windows binaries cannot be executed here, so
  * `bun run build:binary --target=bun-windows-x64` verifies they *build*; proving
@@ -60,7 +61,7 @@ if (workdir) {
   console.log(`using the provided artifact: ${binary}`)
 }
 
-const suites = ["e2e:seam", "e2e:feed", "e2e:lifecycle"]
+const suites = ["e2e:seam", "e2e:feed", "e2e:lifecycle", "e2e:replace"]
 let failed = false
 
 try {

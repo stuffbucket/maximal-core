@@ -58,6 +58,17 @@ export interface StartOptions {
    *  killing the process that owns the pipes. */
   parentPid?: number
   readyTimeoutMs?: number
+  /** Public `/v1` port to request. Defaults to 0 — let the OS choose, which is
+   *  what every harness wants unless contention *is* the subject. Pass a port
+   *  something else already holds to exercise the port policy or `--replace`.
+   *  The control port stays ephemeral either way. */
+  proxyPort?: number
+  /** Pass `--replace`: evict whatever holds `proxyPort` before binding. */
+  replace?: boolean
+  /** `COPILOT_API_HOME` for this engine. Defaults to a fresh temp dir. Pass one
+   *  you made yourself when the engine has to boot with a seeded `config.json`
+   *  — config is read during boot, so it cannot be written afterwards. */
+  home?: string
 }
 
 /**
@@ -71,13 +82,21 @@ export interface StartOptions {
  * from a source run. A regression that only appears once compiled would
  * otherwise reach a signed DMG unnoticed.
  */
-function launchCommand(): { cmd: string; args: Array<string> } {
+function launchCommand(options: StartOptions): {
+  cmd: string
+  args: Array<string>
+} {
+  const args = [
+    "start",
+    "--port",
+    String(options.proxyPort ?? 0),
+    "--control-port",
+    "0",
+    ...(options.replace === true ? ["--replace"] : []),
+  ]
   const binary = process.env.MAXIMAL_E2E_BINARY
-  if (binary) return { cmd: binary, args: ["start", "--port", "0", "--control-port", "0"] }
-  return {
-    cmd: "bun",
-    args: ["src/main.ts", "start", "--port", "0", "--control-port", "0"],
-  }
+  if (binary) return { cmd: binary, args }
+  return { cmd: "bun", args: ["src/main.ts", ...args] }
 }
 
 /** What the current run is exercising, for harness output. */
@@ -88,18 +107,25 @@ export function launchLabel(): string {
 }
 
 /**
- * Spawn the real binary and wait until it announces its bound port.
+ * Spawn the engine and hand back the process, without waiting for anything.
  *
- * Always `--port 0` and always a fresh temp home: a harness must never read or
+ * Split out of `startSidecar` for the harnesses whose subject is a boot that
+ * *fails* — an engine that refuses to evict a foreign occupant never emits a
+ * ready-line, so `startSidecar` can only report that as a timeout.
+ *
+ * The caller owns both pipes from the moment this returns and must consume
+ * them: either `startSidecar` (which awaits the ready-line, then collects) or
+ * `collectLines`. Leave a pipe undrained and its buffer fills, blocking the
+ * child on its next write.
+ *
+ * Always a fresh temp home unless one is supplied: a harness must never read or
  * write the developer's real config, and must never collide with an engine they
  * already have running.
  */
-export async function startSidecar(
-  options: StartOptions = {},
-): Promise<Sidecar> {
-  const home = mkdtempSync(join(tmpdir(), "maximal-e2e-"))
-  const { cmd, args } = launchCommand()
-  const child = spawn(cmd, args, {
+export function spawnEngine(options: StartOptions = {}): SidecarChild {
+  const home = options.home ?? mkdtempSync(join(tmpdir(), "maximal-e2e-"))
+  const { cmd, args } = launchCommand(options)
+  return spawn(cmd, args, {
     cwd: process.cwd(),
     env: {
       ...process.env,
@@ -108,23 +134,41 @@ export async function startSidecar(
     },
     stdio: ["ignore", "pipe", "pipe"],
   })
+}
+
+/**
+ * Drain stdout+stderr into a live-appended buffer and return it.
+ *
+ * Collect rather than discard, so a harness can attribute an exit to a cause —
+ * and drain rather than ignore, because a full pipe buffer blocks the child.
+ */
+export function collectLines(child: SidecarChild): Array<string> {
+  const lines: Array<string> = []
+  const collect = (chunk: Buffer | string): void => {
+    for (const line of String(chunk).split("\n")) {
+      if (line.trim()) lines.push(line)
+    }
+  }
+  child.stdout.on("data", collect)
+  child.stderr.on("data", collect)
+  return lines
+}
+
+/**
+ * Spawn the real binary and wait until it announces its bound port.
+ */
+export async function startSidecar(
+  options: StartOptions = {},
+): Promise<Sidecar> {
+  const child = spawnEngine(options)
 
   const bootLines: Array<string> = []
   const ready = await awaitReadyLine(child.stdout, {
     timeoutMs: options.readyTimeoutMs ?? 30_000,
     onLine: (line) => bootLines.push(line),
   })
-  // The harness owns both pipes from here. Keep *draining* them — stop and the
-  // pipe buffer fills, blocking the sidecar on its next write — but collect
-  // rather than discard, so a harness can attribute an exit to a cause.
-  const logLines: Array<string> = []
-  const collect = (chunk: Buffer | string): void => {
-    for (const line of String(chunk).split("\n")) {
-      if (line.trim()) logLines.push(line)
-    }
-  }
-  child.stdout.on("data", collect)
-  child.stderr.on("data", collect)
+  // The harness owns both pipes from here.
+  const logLines = collectLines(child)
 
   return {
     child,
@@ -161,12 +205,22 @@ export function createReporter(title: string): Reporter {
   }
 }
 
-/** Resolve once the child has exited, or with null if it outlives the deadline. */
+/** Resolve once the child has exited, or with null if it outlives the deadline.
+ *
+ *  Answers immediately for a child that has *already* exited. Node emits `exit`
+ *  exactly once, so a listener attached afterwards never fires — a caller that
+ *  only learns it should look after the fact (e.g. an eviction, which is
+ *  complete by the time the evicting process is up) would otherwise sit out the
+ *  whole timeout and report a live process as a survivor. */
 export function waitForExit(
   child: SidecarChild,
   timeoutMs: number,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null } | null> {
   return new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve({ code: child.exitCode, signal: child.signalCode })
+      return
+    }
     const timer = setTimeout(() => resolve(null), timeoutMs)
     child.once("exit", (code, signal) => {
       clearTimeout(timer)
