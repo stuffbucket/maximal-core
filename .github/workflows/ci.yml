@@ -88,13 +88,21 @@ jobs:
       - name: Knip (unused files / exports / deps)
         run: bun run knip
 
-      - name: Dependency layer rules
+      - name: Dependency rules and the circular-dependency ratchet
         # `.dependency-cruiser.cjs` had been in the repo, correct, and invoked by
         # nothing — not check:fast, not check:deep, not any workflow. Its two
-        # `error` rules (`not-to-test`, `no-route-imports-from-lib-or-services`)
-        # do fire and do exit 2; they had simply never been run. Its `warn` rules
-        # (`no-circular`, 47 standing matches) do not affect the exit code, so a
-        # green step here means "no layering violation", not "no cycles".
+        # layering `error` rules (`not-to-test`,
+        # `no-route-imports-from-lib-or-services`) do fire and do exit 2; they
+        # had simply never been run.
+        #
+        # `no-circular` used to be `warn`, which never affects depcruise's exit
+        # code, so a green step here meant "no layering violation", not "no
+        # cycles" — and the standing match count was hand-typed into this comment
+        # with nothing checking it. It is now `error`, and `deps:check` runs
+        # scripts/check-deps.ts: the standing backlog is a recorded set of
+        # cycle-closing imports there, a new one fails this step by name, and
+        # fixing one fails until the set is re-recorded. The count lives in that
+        # file, generated — do not restate it here.
         run: bun run deps:check
 
       - name: Build
