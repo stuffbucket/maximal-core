@@ -124,6 +124,42 @@ against source and a running engine:
 - `state.shellApiKey` (`MAXIMAL_SHELL_KEY`) still bypasses the enforce flag in
   `decideAuth`, but core never sets it — it is a desktop-shell affordance.
 
+**Amendment (2026-08-06) — the §6.2 machinery is deleted, and the
+route-enumeration test now enumerates.** Two follow-ups to the amendment above.
+
+- **§6.2's remains are gone.** `MANDATORY_AUTH_PREFIX`,
+  `alwaysEnforcePrefixes`, and `requireAuthPrefixes` are deleted, along with
+  `decideAuth`'s `mandatory` parameter. Unreachable configuration on a security
+  path is a liability: it reads as a live control and invites a reviewer to
+  assume a gate exists. Nothing published imports them — `package.json`'s
+  `exports` map covers only `client`, `contract`, `control-contract`,
+  `supervisor`, and `settings-types`, none of which reach `origin-guard.ts` or
+  `request-auth.ts` — so this is not a breaking change. Bring one back with the
+  caller that needs it. §6.2 itself stays **superseded, not implemented**:
+  `/control` is protected by the loopback bind + peer-IP 404 + Origin guard.
+- **The route-enumeration test was guarding a fiction.** The test this section
+  promised ("walks `app.routes` so a new `/settings/api` route that isn't
+  Origin-gated fails by omission") was never written. What shipped as
+  `tests/security/origin-guard.test.ts` asserted `/settings/api` membership in
+  `CSRF_GUARDED_PREFIXES` and mounted its *own* Hono app on `/settings/api` — so
+  it passed while exercising a surface deleted at the core split, and never read
+  a route table. It could not have failed, which is how `/control` came to be
+  added to the guarded list with nothing checking that the guard reached it.
+
+  It now walks the real `routes` tables of `publicApp` and `controlApp` and
+  asserts four things: every route on the control listener falls under a guarded
+  prefix; nothing outside `/_internal` is guarded on the public listener (the
+  §6.6 CLI/plugin invariant, stated as a property of the route table rather than
+  a sample); every guarded prefix is either served or explicitly declared dead
+  (`/settings/api` is the one declared-dead entry, and a separate test asserts it
+  really is unserved); and every enumerated guarded route 403s `csrf_error` when
+  driven through the **real** app with a cross-origin `Origin`. Verified to fail
+  on three mutations: a new unguarded `controlApp` route, `/v1` added to
+  `CSRF_GUARDED_PREFIXES`, and the guard unmounted from `applyCommonMiddleware`.
+- **User-facing strings.** The boot warning and `requireGithubAuth`'s hint both
+  sent users to a Settings UI that core does not have. They now name
+  `maximal auth` and the `/control` auth flow.
+
 Current behaviour is documented in
 [`docs/spec/wire/auth-transport-wire-prd.md`](../spec/wire/auth-transport-wire-prd.md).
 
@@ -151,6 +187,11 @@ rejects a missing/wrong token; a **self-extending route-enumeration** test that
 walks `app.routes` so a new `/settings/api` route that isn't Origin-gated fails
 by omission; a **no-`Origin` `Bearer` `/v1/*` regression** test; and a
 mutation-test that kills the "re-couple auth to `enforce`" mutant.
+
+> **As-built (2026-08-06).** The route-enumeration test exists and walks both
+> real route tables; see the second amendment above for what it asserts and the
+> mutations it was proven against. The `/settings/api` and WS items in the list
+> above are moot — neither surface exists in core.
 
 ## Out of scope
 

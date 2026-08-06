@@ -4,17 +4,16 @@ import { Hono } from "hono"
 import { createOriginGuardMiddleware } from "~/lib/auth/origin-guard"
 
 /**
- * CLI/plugin non-regression (spec §6.6, §11.1 blocker).
+ * CLI/plugin non-regression (ADR-0021 §6.6).
  *
  * Claude Code, opencode, and SDK clients are non-browser callers that send NO
  * `Origin` and hit `/v1/*` (+ the `api claude-code` key mint) with
- * `Authorization: Bearer <key>` — NOT `/settings/api`. The Origin gate must let a
- * missing-Origin request through. Skipped until the middleware body lands.
+ * `Authorization: Bearer <key>`. The Origin gate must let a missing-Origin
+ * request through.
  *
- * The OTHER half of the invariant — that the enforce-decoupled mandatory
- * `/settings/api` auth (§6.2) does NOT gate `/v1/*` — is asserted where that auth
- * lives (a mode of `createAuthMiddleware`, `request-auth.ts`), not here; there is
- * no separate settings-api gate to regress.
+ * This checks the middleware in isolation. The complementary property — that no
+ * proxy route on the public listener falls under a guarded prefix in the first
+ * place — is asserted against the real route table in `origin-guard.test.ts`.
  */
 
 /** Mounts the Origin guard in front of a `/v1` route (a no-Origin surface). */
@@ -27,7 +26,7 @@ function mountWithGuard() {
   return app
 }
 
-describe("no-Origin Bearer client on /v1/* still succeeds — unskip when implemented", () => {
+describe("no-Origin Bearer client on /v1/* still succeeds", () => {
   test("a Bearer request with no Origin header reaches /v1/messages", async () => {
     const res = await mountWithGuard().request("/v1/messages", {
       method: "POST",
