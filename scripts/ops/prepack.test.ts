@@ -70,9 +70,10 @@ describe("parity with the real package.json", () => {
   // is now `scripts/ops/release.ts`, which additionally has to guard the tree
   // BEFORE `bumpp` and rebuild `dist/` INSIDE it — an order no chain can state.
   // The ordering itself is asserted in `release.test.ts`; this only pins that
-  // `release:manual` still goes through the file that owns it.
-  test("`release:manual` routes through the wrapper that owns the ordering", () => {
-    expect(readScripts()["release:manual"]).toBe("bun scripts/ops/release.ts")
+  // both release phases still go through the file that owns it.
+  test("both release phases route through the wrapper that owns the ordering", () => {
+    expect(readScripts()["release:prepare"]).toBe("bun scripts/ops/release.ts prepare")
+    expect(readScripts()["release:tag"]).toBe("bun scripts/ops/release.ts tag")
   })
 
   test("`release:preflight` asserts without building", () => {

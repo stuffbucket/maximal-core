@@ -13,18 +13,19 @@
 # discipline these gates replace, and because this is the only placement that
 # can see the tag that was ACTUALLY pushed rather than the one someone meant to
 # push. It fires within seconds, while the tag is almost certainly unconsumed
-# and can be deleted and re-cut rather than moved. It is not on the release
-# COMMIT: `release:manual` bumps and tags in one invocation, so a push-to-main
-# check would race the tag push it is meant to precede, and could not name the
-# tag anyway. The full argument is in checkTagVersion's doc comment.
+# and can be deleted and re-cut rather than moved. It is not wired onto the
+# release COMMIT: that commit now lands through a PR, where ci.yml's `test` job
+# already runs, and `release:tag` re-reads the merged package.json before cutting
+# the tag. The full argument is in checkTagVersion's doc comment.
 #
 # Precedent for the failure it catches: `git show v0.1.1:package.json` reads
 # `0.1.0`.
 #
 # Gate 4 is here for the same reason one step further out. Its preventive
-# placement is inside `release:manual`, ahead of `bumpp` — but a tag cut by hand
+# placements are inside `release:prepare`, ahead of `bumpp`, and inside
+# `release:tag`, immediately before the tag is created — but a tag cut by hand
 # (`git tag && git push`, the runbook's by-hand path in §4) never goes through
-# that process, so nothing at all saw it. `--pushed` is the shape this placement
+# either, so nothing at all saw it. `--pushed` is the shape this placement
 # needs: the tag exists by definition here, so its own existence stops being a
 # finding and it is compared against every OTHER tag.
 #

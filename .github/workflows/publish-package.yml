@@ -2,6 +2,7 @@
 #
 # Until this workflow the package had never been published at all — the npm
 # registry 404s for it and every release ran `release:manual --no-publish`, so
+# (that command is now `release:prepare` plus `release:tag` — see the runbook)
 # `stuffbucket/maximal` consumed this repo as a git dependency. This is the
 # publish path now; `scripts/ops/release.ts` no longer runs `bun publish`.
 #
