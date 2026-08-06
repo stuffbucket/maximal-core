@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // @bun
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -30766,7 +30766,7 @@ var isOpencodeOauthApp = () => {
     return "opencode/" + version4;
   }
   return OPENCODE_VERSION;
-}, OPENCODE_SEMVER = "1.17.20", OPENCODE_VERSION, OPENCODE_LLM_USER_AGENT, COPILOT_VERSION = "0.46.0", EDITOR_PLUGIN_VERSION, USER_AGENT, CLAUDE_AGENT_USER_AGENT = "vscode_claude_code/2.1.209 (external, sdk-ts, agent-sdk/0.2.112)", API_VERSION = "2025-10-01", copilotBaseUrl = (state2) => {
+}, OPENCODE_SEMVER = "1.18.14", OPENCODE_VERSION, OPENCODE_LLM_USER_AGENT, COPILOT_VERSION = "0.46.0", EDITOR_PLUGIN_VERSION, USER_AGENT, CLAUDE_AGENT_SEMVER = "2.1.223", CLAUDE_AGENT_SDK_MINOR = "0.3", CLAUDE_AGENT_SDK_SEMVER, CLAUDE_AGENT_USER_AGENT, API_VERSION = "2025-10-01", copilotBaseUrl = (state2) => {
   const enterpriseDomain = getEnterpriseDomain();
   if (enterpriseDomain) {
     return `https://copilot-api.${enterpriseDomain}`;
@@ -30878,9 +30878,11 @@ var init_api_config = __esm(() => {
   init_compact();
   init_opencode();
   OPENCODE_VERSION = `opencode/${OPENCODE_SEMVER}`;
-  OPENCODE_LLM_USER_AGENT = `opencode/${OPENCODE_SEMVER} ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.13, opencode/${OPENCODE_SEMVER}`;
+  OPENCODE_LLM_USER_AGENT = `opencode/${OPENCODE_SEMVER} ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14, opencode/${OPENCODE_SEMVER}`;
   EDITOR_PLUGIN_VERSION = `copilot-chat/${COPILOT_VERSION}`;
   USER_AGENT = `GitHubCopilotChat/${COPILOT_VERSION}`;
+  CLAUDE_AGENT_SDK_SEMVER = `${CLAUDE_AGENT_SDK_MINOR}.${CLAUDE_AGENT_SEMVER.split(".")[2]}`;
+  CLAUDE_AGENT_USER_AGENT = `vscode_claude_code/${CLAUDE_AGENT_SEMVER} (external, sdk-ts, agent-sdk/${CLAUDE_AGENT_SDK_SEMVER})`;
   GITHUB_APP_SCOPES = ["read:user"].join(" ");
 });
 

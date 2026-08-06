@@ -74,13 +74,15 @@ client — opencode also sends request headers we currently omit. When the
 inbound request is opencode-shaped, these should pass through verbatim
 too; the synthesized fallback (opencode mode with no inbound opencode
 headers) should include them from constants. Known gaps as of `sst/opencode`
-v1.17.20 (source: `packages/opencode/src/plugin/github-copilot/copilot.ts`),
-surfaced during the #317 pin bump:
+v1.18.14 (source: `packages/opencode/src/plugin/github-copilot/copilot.ts`),
+surfaced during the #317 pin bump and re-verified at the v1.18.14 bump — the
+whole `github-copilot` plugin tree is byte-identical between v1.17.20 and
+v1.18.14, so every gap below still stands:
 
 - `X-GitHub-Api-Version: 2026-06-01` — sent on **both** the Copilot
   completions and `/models` requests by every opencode ≥ v1.16.0
   ("token-based billing", PR sst/opencode#30181). Its absence is a
-  plausible fingerprint now that we impersonate 1.17.x. **MED** priority.
+  plausible fingerprint now that we impersonate 1.18.x. **MED** priority.
 - `X-Interaction-Type: agent-session-name-generation` — sent **only** on
   title / session-name-generation side-calls (`agent === "title"`).
   **LOW** priority; the proxy has no code path that distinguishes
@@ -92,7 +94,7 @@ A standalone hardcoded-constant patch for these was deliberately **not**
 taken (see closed #318): it adds another pin that drifts and needs
 reconciliation, in exactly the subsystem this phase moves toward
 passthrough. Confirm the header name/casing/value against a live
-opencode 1.17.x capture before shipping — the exact date string may
+opencode 1.18.x capture before shipping — the exact date string may
 matter for fingerprint fidelity.
 
 ### 7.3 Token sharing with opencode's on-disk auth
