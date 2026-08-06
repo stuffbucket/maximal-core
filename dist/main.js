@@ -30704,7 +30704,7 @@ var isOpencodeOauthApp = () => {
     return "opencode/" + version4;
   }
   return OPENCODE_VERSION;
-}, OPENCODE_SEMVER = "1.17.20", OPENCODE_VERSION, OPENCODE_LLM_USER_AGENT, COPILOT_VERSION = "0.46.0", EDITOR_PLUGIN_VERSION, USER_AGENT, CLAUDE_AGENT_USER_AGENT = "vscode_claude_code/2.1.209 (external, sdk-ts, agent-sdk/0.2.112)", API_VERSION = "2025-10-01", copilotBaseUrl = (state2) => {
+}, OPENCODE_SEMVER = "1.18.14", OPENCODE_VERSION, OPENCODE_LLM_USER_AGENT, COPILOT_VERSION = "0.46.0", EDITOR_PLUGIN_VERSION, USER_AGENT, CLAUDE_AGENT_USER_AGENT = "vscode_claude_code/2.1.223 (external, sdk-ts, agent-sdk/0.2.112)", API_VERSION = "2025-10-01", copilotBaseUrl = (state2) => {
   const enterpriseDomain = getEnterpriseDomain();
   if (enterpriseDomain) {
     return `https://copilot-api.${enterpriseDomain}`;

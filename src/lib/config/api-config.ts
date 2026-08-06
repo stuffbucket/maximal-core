@@ -156,7 +156,7 @@ export const getOpencodeVersion = () => {
 // the drift watcher's `--fix` path bumps this one constant and every derived
 // string follows — a raw literal would half-update. See
 // scripts/ops/watch-external-drift.ts (opencode pin → OPENCODE_SEMVER).
-const OPENCODE_SEMVER = "1.17.20"
+const OPENCODE_SEMVER = "1.18.14"
 const OPENCODE_VERSION = `opencode/${OPENCODE_SEMVER}`
 const OPENCODE_LLM_USER_AGENT = `opencode/${OPENCODE_SEMVER} ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.13, opencode/${OPENCODE_SEMVER}`
 
@@ -164,7 +164,7 @@ const COPILOT_VERSION = "0.46.0"
 const EDITOR_PLUGIN_VERSION = `copilot-chat/${COPILOT_VERSION}`
 const USER_AGENT = `GitHubCopilotChat/${COPILOT_VERSION}`
 const CLAUDE_AGENT_USER_AGENT =
-  "vscode_claude_code/2.1.209 (external, sdk-ts, agent-sdk/0.2.112)"
+  "vscode_claude_code/2.1.223 (external, sdk-ts, agent-sdk/0.2.112)"
 
 const API_VERSION = "2025-10-01"
 
