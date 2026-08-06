@@ -22,6 +22,7 @@ import {
   NO_PUBLISH_FLAG,
   NOT_THE_TREE_BEING_TAGGED,
   notOnMergedHeadObjection,
+  notTheReleaseCommitObjection,
   parseArgv,
   parseStatus,
   planChangelog,
@@ -91,12 +92,14 @@ interface Refs {
   head?: string
   /** The `package.json` `git show <merged>:package.json` answers with. */
   manifest?: string
+  /** The merged commit's subject. Defaults to the release commit's. */
+  subject?: string
 }
 
 /**
  * A `git` that answers `status` with `porcelain`, the two tag reads gate 4 makes
- * with `tags`, phase B's two `rev-parse`s and one `show` with `refs`, and
- * succeeds at everything else.
+ * with `tags`, phase B's two `rev-parse`s, one `show` and one `log` with `refs`,
+ * and succeeds at everything else.
  */
 function gitStub(
   porcelain: string,
@@ -120,6 +123,7 @@ function gitStub(
         : verb === "ls-remote" ? (tags.remote ?? []).map((t) => `deadbeef\trefs/tags/${t}`).join("\n")
         : verb === "rev-parse" ? `${args[1] === "HEAD" ? refs.head ?? merged : merged}\n`
         : verb === "show" ? refs.manifest ?? MANIFEST
+        : verb === "log" ? `${refs.subject ?? releaseCommitSubject(TAG)}\n`
         : ""
       return { status: statuses[verb] ?? 0, stdout, stderr: "" }
     },
@@ -1184,7 +1188,7 @@ describe("tagRelease", () => {
       porcelain?: string
       statuses?: Record<string, number>
       tags?: { local?: Array<string>; remote?: Array<string> }
-      refs?: { merged?: string; head?: string; manifest?: string }
+      refs?: Refs
       tag?: string
     } = {},
   ): { code: number; gitCalls: Array<Array<string>>; lines: Array<string> } => {
@@ -1199,7 +1203,8 @@ describe("tagRelease", () => {
   }
 
   // THE GOOD PATH, IN ORDER. Fetch, read both SHAs, read the merged manifest,
-  // read the tree, gate 4, then exactly one annotated tag and one push.
+  // read the merged subject, read the tree, gate 4, then exactly one annotated
+  // tag and one push.
   test("it fetches, asserts, gates, then cuts one annotated tag on the merged head", () => {
     const { code, gitCalls, lines } = cut()
     expect(code).toBe(0)
@@ -1208,6 +1213,7 @@ describe("tagRelease", () => {
       ["rev-parse", "FETCH_HEAD"],
       ["rev-parse", "HEAD"],
       ["show", `${MERGED_SHA}:package.json`],
+      ["log", "-1", "--format=%s", MERGED_SHA],
       ["status", "--porcelain"],
       ["tag", "--list"],
       ["ls-remote", "--tags", "origin"],
@@ -1244,6 +1250,48 @@ describe("tagRelease", () => {
     const { code, lines } = cut({ refs: { manifest: "<!DOCTYPE html>" } })
     expect(code).toBe(1)
     expect(lines.join("\n")).toContain("REFUSING")
+  })
+
+  // THE WINDOW BETWEEN THE MERGE AND THE TAG. An ordinary PR landed on top of
+  // the release commit, so package.json still reads 0.4.2 and the manifest
+  // assertion above passes — the tag would capture a commit the changelog never
+  // mentions. Only the subject can see this.
+  test("a tip that is not the release commit refuses, and names what it is", () => {
+    const { code, gitCalls, lines } = cut({ refs: { subject: "fix(control): tighten the ready-line" } })
+    expect(code).toBe(1)
+    expect(gitCalls.some((call) => call[0] === "tag" && call[1] === "-a")).toBe(false)
+    expect(gitCalls.some((call) => call[0] === "push")).toBe(false)
+    expect(lines.join("\n")).toContain("REFUSING")
+    expect(lines.join("\n")).toContain("fix(control): tighten the ready-line")
+    expect(lines.join("\n")).toContain(releaseCommitSubject(TAG))
+  })
+
+  // A release commit for the WRONG version is the same failure wearing the
+  // right shape, and it survives a manifest check that only ever sees 0.4.2.
+  test("the release commit of another version is not this one", () => {
+    const { code, lines } = cut({ refs: { subject: releaseCommitSubject("v0.4.1") } })
+    expect(code).toBe(1)
+    expect(lines.join("\n")).toContain("REFUSING")
+  })
+
+  // The subject is read BEFORE the checkout is compared, so a releaser whose
+  // clone is also behind is told the tip is wrong rather than told to
+  // fast-forward onto a commit that would be refused a moment later.
+  test("an overtaken tip is reported ahead of a stale checkout", () => {
+    const { lines } = cut({
+      refs: { head: "aaaaaaaabbbbbbbbccccccccdddddddd00000000", subject: "docs: unrelated" },
+    })
+    expect(lines.join("\n")).toContain("docs: unrelated")
+    expect(lines.join("\n")).not.toContain(`git switch ${DEFAULT_BASE}`)
+  })
+
+  // A read that cannot run must not read as "the subject is empty", which would
+  // refuse for the wrong reason with the wrong remedy.
+  test("a subject that cannot be read is a step failure, not a refusal", () => {
+    const { code, gitCalls, lines } = cut({ statuses: { log: 128 } })
+    expect(code).toBe(2)
+    expect(gitCalls.some((call) => call[0] === "tag" && call[1] === "-a")).toBe(false)
+    expect(lines.join("\n")).toContain("git log")
   })
 
   // The tag is cut on the tree the releaser is looking at, so `git show`, a
@@ -1333,5 +1381,37 @@ describe("manifestVersion and its objections", () => {
   test("standing anywhere but the merged commit is an objection", () => {
     expect(notOnMergedHeadObjection("abc", "abc", "origin", "main")).toBeUndefined()
     expect(notOnMergedHeadObjection("abc", "def", "origin", "main")).toContain("REFUSING")
+  })
+
+  // The subject is the identity, so it is compared to `releaseCommitSubject`
+  // itself rather than to a literal — the same string the tag annotation and
+  // the PR title are built from, which is what makes the check load-bearing
+  // rather than a second opinion about what a release commit looks like.
+  test("only the release commit's own subject passes", () => {
+    const ok = (subject: string): string | undefined =>
+      notTheReleaseCommitObjection(TAG, subject, MERGED_SHA, "origin", "main")
+    expect(ok(releaseCommitSubject(TAG))).toBeUndefined()
+    expect(ok(`${releaseCommitSubject(TAG)}\n`)).toBeUndefined()
+    expect(ok(releaseCommitSubject("v0.4.1"))).toContain("REFUSING")
+    expect(ok("feat(control): diagnostics endpoint (#91)")).toContain("REFUSING")
+    expect(ok("")).toContain("REFUSING")
+  })
+
+  // Actionable, not just correct: it has to say what the tip IS, what was
+  // expected, and what to do — the release commit is still on `main`, so the
+  // way out is to tag that commit rather than this one.
+  test("the refusal names the offending subject, the expected one, and the way out", () => {
+    const objection = notTheReleaseCommitObjection(TAG, "chore(deps): bump undici", MERGED_SHA, "origin", "main") ?? ""
+    expect(objection).toContain("chore(deps): bump undici")
+    expect(objection).toContain(releaseCommitSubject(TAG))
+    expect(objection).toContain(MERGED_SHA.slice(0, 12))
+    expect(objection).toContain("git log --oneline origin/main")
+    expect(objection).toContain(`git tag -a ${TAG}`)
+    // The reason the manifest check cannot catch this, in the message itself.
+    expect(objection).toContain("0.4.2")
+  })
+
+  test("a commit with no subject at all is named, not blanked out", () => {
+    expect(notTheReleaseCommitObjection(TAG, "   ", MERGED_SHA, "origin", "main")).toContain("(no subject)")
   })
 })

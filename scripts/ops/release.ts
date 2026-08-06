@@ -14,9 +14,10 @@
  *                            rebuild, commit on `release/vX.Y.Z`, push the
  *                            BRANCH, open the PR. CUTS NO TAG.
  *   release:tag vX.Y.Z       once that PR has merged: fetch, assert the merged
- *                            manifest reads X.Y.Z on the tree you are standing
- *                            on, re-run gate 4, cut the ANNOTATED tag on the
- *                            merged HEAD, push it.
+ *                            manifest reads X.Y.Z and that the tip IS the
+ *                            release commit, on the tree you are standing on,
+ *                            re-run gate 4, cut the ANNOTATED tag on the merged
+ *                            HEAD, push it.
  *
  * THE TAG CANNOT BE CUT IN PHASE A, and that is what makes this two commands
  * rather than one flag. A squash merge rewrites the SHA, so a tag created on the
@@ -232,10 +233,10 @@
  * off-pin Bun, a tag that already exists or is not ahead of every tag that does,
  * a PR still open in the milestone being cut, a milestone the notes cannot be
  * generated from, or a `release/vX.Y.Z` branch that is already there. Phase B
- * refuses on a merged manifest that is not X.Y.Z, a checkout that is not
- * standing on that merged commit with a clean tree, or gate 4. Every phase-A
- * refusal is ahead of the branch and `bumpp`; every phase-B refusal is ahead of
- * `git tag`.
+ * refuses on a merged manifest that is not X.Y.Z, a merged head that is not the
+ * release commit itself, a checkout that is not standing on that merged commit
+ * with a clean tree, or gate 4. Every phase-A refusal is ahead of the branch and
+ * `bumpp`; every phase-B refusal is ahead of `git tag`.
  *
  * TWO OF THOSE REFUSALS ARE `release-gates.ts`, CALLED FROM HERE. Gate 4 (the
  * tag is ahead of every tag that exists, local AND remote) and gate 5 (nothing
@@ -1017,6 +1018,60 @@ export function mergedManifestObjection(
 }
 
 /**
+ * Why the merged head is not the release commit, and therefore must not be
+ * tagged.
+ *
+ * THE HOLE THIS CLOSES. `mergedManifestObjection` above asks what the tip's
+ * `package.json` says; it cannot ask whether the tip IS the release. An ordinary
+ * PR does not bump the version, so anything merged between the release PR
+ * landing and this command running leaves the manifest reading X.Y.Z while the
+ * tag quietly captures commits no CHANGELOG entry describes. Several agents open
+ * PRs here in parallel, so that window is not theoretical — v0.4.4 came close.
+ *
+ * THE SUBJECT IS THE IDENTITY, and comparing the tip's TREE or its touched paths
+ * would be worse, not stronger. There is nothing to compare a tree against:
+ * phase B builds nothing by design (see `tagRelease`), so an expected tree could
+ * only come from rebuilding on the pinned Bun, which is the whole of phase A. A
+ * path set is worse still — `dist/lib`'s chunk names are content hashes, and the
+ * changelog step is skipped wholesale when the entry is already there, so the
+ * release commit's own path set legitimately varies. Meanwhile a subject is not
+ * a unique identifier ON ITS OWN, but it is not being asked to be one: the tip
+ * must ALSO carry a manifest reading exactly X.Y.Z, and the only commit that
+ * does both is the one `bumpp` made. This is also the identity the rest of the
+ * repo already runs on — squash-merge turns the PR title into the subject,
+ * `release-gates.ts` exempts the release PR by matching it, and the tag
+ * annotation is it — so nothing new has to be believed for this to hold.
+ */
+export function notTheReleaseCommitObjection(
+  tag: string,
+  subject: string,
+  merged: string,
+  remote: string,
+  base: string,
+): string | undefined {
+  const expected = releaseCommitSubject(tag)
+  if (subject.trim() === expected) return undefined
+  return (
+    `release: REFUSING — ${remote}/${base} is at \`${merged.slice(0, 12)}\`, whose subject is\n`
+    + `\n`
+    + `    ${subject.trim() || "(no subject)"}\n`
+    + `\n`
+    + `  and not \`${expected}\`.\n`
+    + `\n`
+    + `Something merged on top of the release PR. The check above cannot see it —\n`
+    + `an ordinary PR does not touch the version, so package.json still reads\n`
+    + `${stripV(tag)} — and tagging here would publish commits the ${CHANGELOG_FILE} entry for\n`
+    + `\`${tag}\` does not describe.\n`
+    + `\n`
+    + `Find the release commit and tag THAT: it is on \`${base}\`, and its tree is exactly\n`
+    + `what the changelog says \`${tag}\` is. Whatever landed after it ships in the next\n`
+    + `release:\n`
+    + `    git log --oneline ${remote}/${base}\n`
+    + `    git tag -a ${tag} -m ${JSON.stringify(expected)} <that sha> && git push ${remote} ${tag}\n`
+  )
+}
+
+/**
  * Why this checkout is not standing where the tag has to be cut.
  *
  * Phase B could tag a SHA it never checked out, and refusing instead is
@@ -1066,11 +1121,14 @@ export interface TagOptions {
  *
  * WHAT IT ASSERTS, AND WHY EACH ONE. The fetch is the only write it makes, and
  * it writes nothing this repo tracks. Then: the merged manifest must read
- * exactly this version (gate 3, asked against the tree being tagged); the
- * checkout must BE that commit with a clean tree, so the tree the releaser is
- * looking at is the tree the tag names; and gate 4 runs last, because after the
- * PR has sat open for review, another agent's tag is likelier than it was in
- * phase A — this is now the last line before the tag exists.
+ * exactly this version (gate 3, asked against the tree being tagged); that
+ * merged head must be the release commit and not something that landed on top
+ * of it (`notTheReleaseCommitObjection`, which is the only assertion here that
+ * can see a merge inside the review window); the checkout must BE that commit
+ * with a clean tree, so the tree the releaser is looking at is the tree the tag
+ * names; and gate 4 runs last, because after the PR has sat open for review,
+ * another agent's tag is likelier than it was in phase A — this is now the last
+ * line before the tag exists.
  *
  * `git push origin vX.Y.Z` is unrestricted: both of this repo's rulesets are
  * `target: branch` and there is no tag ruleset, so the bypass that used to carry
@@ -1117,6 +1175,23 @@ export function tagRelease(options: TagOptions = {}): number {
   const mismatch = mergedManifestObjection(tag, manifest.value ?? "", `${remote}/${base}`)
   if (mismatch !== undefined) {
     log(mismatch)
+    return 1
+  }
+
+  // Beside the manifest read, because it is the same question about the same
+  // object: that read says what the tip CONTAINS, this one says what it IS. It
+  // is ahead of `notOnMergedHeadObjection` on purpose — that objection's remedy
+  // is `git merge --ff-only`, and sending a releaser to fast-forward onto a tip
+  // that is then refused anyway makes the real diagnosis the second thing they
+  // see. `log -1`, not `show -s`, so it cannot be confused with the read above.
+  const subject = gitLine(git, ["log", "-1", "--format=%s", merged.value ?? ""])
+  if (subject.error !== undefined) {
+    log(`release: ${subject.error}`)
+    return 2
+  }
+  const overtaken = notTheReleaseCommitObjection(tag, subject.value ?? "", merged.value ?? "", remote, base)
+  if (overtaken !== undefined) {
+    log(overtaken)
     return 1
   }
 
