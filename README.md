@@ -215,7 +215,8 @@ downstream/                Simulated consumer, compiled by `bun run typecheck:do
 docs/spec/                 Feature specs (tool-bridge, observability, wire PRDs);
                            docs/spec/archive/ holds superseded ones (web-tools).
 docs/decisions/            ADRs.
-docs/admin/                Operator/MDM reference.
+docs/admin/                Operator/MDM reference, and what `main` enforces
+                           (docs/admin/branch-rulesets.md).
 scripts/                   Dev harnesses (scripts/dev/) and release/ops tooling (scripts/ops/).
 LICENSE                    MIT.
 THIRD-PARTY-LICENSE        Bundled-dependency license pointer (npm SBOM).
@@ -233,6 +234,11 @@ Bun, or a milestone `release:notes` would not emit for, then bumping, rebuilding
 commit, tagging, pushing, and publishing to npm unless `--no-publish` is passed.
 Cutting a release is a deliberate human step; pushing the tag is what builds and
 publishes the binaries (`release-artifacts.yml`).
+
+`main` requires a pull request, three green checks (`test`, `windows`, `gate`)
+and a branch that is up to date before it will merge. The release commit is the
+one exception, and it lands only because `main-require-pr` carries an admin
+bypass — see [`docs/admin/branch-rulesets.md`](docs/admin/branch-rulesets.md).
 
 ## Status
 

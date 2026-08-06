@@ -5,9 +5,17 @@ on:
     branches: ["main", "dev"]
   pull_request:
     types: [opened, synchronize, reopened]
+  # `test` and `windows` below are REQUIRED status checks on `main`
+  # (docs/admin/branch-rulesets.md), so renaming either job wedges every PR:
+  # GitHub waits forever for a context that no longer reports. The parity guard
+  # is in scripts/ops/check-rulesets.test.ts.
+  #
   # GitHub merge queue: dispatched against synthetic
   # gh-readonly-queue/<base>/... refs. Required status checks must run
-  # here too or the queue blocks indefinitely waiting for them.
+  # here too or the queue blocks indefinitely waiting for them. No queue is
+  # enabled today — it is unavailable on a user-owned repo, and the ruleset's
+  # strict-update policy (branch must be up to date before merge) stands in for
+  # it — so this trigger is inert, and kept for the day that changes.
   merge_group:
 
 jobs:

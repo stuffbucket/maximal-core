@@ -623,7 +623,11 @@ We would specifically like external judgment on these:
 ## 9. CI gates & the local equivalents
 
 CI (`.github/workflows/ci.yml`) runs on every pull request, on pushes to `main`
-and `dev`, and in the merge queue, and is the merge gate. It has **two
+and `dev`, and — inertly, since no Merge Queue exists on a user-owned repo — in
+the merge queue. Its two jobs, `test` and `windows`, are **required status
+checks** on `main` alongside `release-gates.yml`'s `gate`, so they block the
+merge button rather than merely reporting; the branch must also be up to date
+with `main` before it can merge (`docs/admin/branch-rulesets.md`). It has **two
 concurrent jobs**.
 
 **Job `test`** (`ubuntu-latest`) — the product gate. Steps, in order:
@@ -645,9 +649,11 @@ concurrent jobs**.
    unannotated boundary cast.
 9. **`bun test`** (full suite).
 10. **`bun run knip`** (unused files / exports / deps).
-11. **`bun run deps:check`** (dependency-cruiser). Only its two `error` rules
-    affect the exit code; `no-circular` is a `warn` with 47 standing matches, so
-    green here means "no layering violation", not "no cycles".
+11. **`bun run deps:check`** (dependency-cruiser via `scripts/check-deps.ts`).
+    All three `error` rules affect the exit code: `no-circular` is no longer a
+    `warn`, and the standing backlog is ratcheted against a recorded set of
+    cycle-closing imports in that script. A new cycle fails by name; fixing one
+    fails too, until the set is re-recorded (`--update`).
 12. **`bun run build`**.
 
 **Job `windows`** (`windows-latest`) — the `bun-windows-x64` release leg, run

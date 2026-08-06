@@ -68,6 +68,14 @@ Each rule states the prohibition; the linked doc is its only elaboration.
   [`docs/architecture.md`](docs/architecture.md) → _Release & PR conventions_.
 - **Assign every PR to a release milestone.** The milestone title is the tag
   that will be cut; it is how a PR pre-selects the release it ships in.
+- **`main` requires a PR, three green checks, and an up-to-date branch.** `test`
+  and `windows` (`ci.yml`) plus `gate` (`release-gates.yml`) are *required*
+  status checks — a red one blocks the merge button, and so does a branch that
+  has fallen behind `main` (`gh pr update-branch`; nothing rebases for you
+  here). Direct pushes to `main` are rejected, and `main` cannot be deleted or
+  force-pushed by anyone. The one exemption — the admin bypass that lets
+  `release:manual` push the release commit — is load-bearing: removing it blocks
+  every release. [`docs/admin/branch-rulesets.md`](docs/admin/branch-rulesets.md).
 
 ## Read before you touch
 
@@ -77,6 +85,7 @@ Each rule states the prohibition; the linked doc is its only elaboration.
 | Tests, especially mocks or mutation testing | [`docs/architecture.md`](docs/architecture.md) → _Testing gotchas_, then [`docs/dev/testing-strategy.md`](docs/dev/testing-strategy.md) |
 | Running scripts or setting up the dev environment | [`docs/commands.md`](docs/commands.md) |
 | Opening a PR or cutting a release | [`docs/architecture.md`](docs/architecture.md) → _Release & PR conventions_, then [`docs/release-runbook.md`](docs/release-runbook.md) |
+| Branch protection, required checks, or anything in repo settings | [`docs/admin/branch-rulesets.md`](docs/admin/branch-rulesets.md) |
 | Spawning parallel agents or using worktrees | [`docs/architecture.md`](docs/architecture.md) → _Parallel-agent convention_ |
 | Changing the pinned Bun version | [`docs/bun-version-policy.md`](docs/bun-version-policy.md) |
 | The Claude Code or Opencode plugin | [`docs/plugins.md`](docs/plugins.md) |

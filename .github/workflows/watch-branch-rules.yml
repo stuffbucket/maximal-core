@@ -1,0 +1,116 @@
+# Daily branch-ruleset drift watch.
+#
+# The protection on `main` (docs/admin/branch-rulesets.md) is the one gate in
+# this repo that does not live in this repo: two repository rulesets, editable
+# in the settings UI by anyone with admin, in seconds, with no PR, no review and
+# no record. Every other check here is blocking BECAUSE of them, so weakening
+# one silently un-gates everything else. This job runs
+# scripts/ops/check-rulesets.ts and reacts WITHOUT a human, but stops at
+# DETECTION — same shape, and same reasoning, as watch-external-drift.yml:
+#
+#   - drift (a ruleset deleted, downgraded to `evaluate`, retargeted, a rule or
+#     a required check removed, strict-update turned off, merge methods widened)
+#     or an unreadable API → file/refresh ONE idempotent `ruleset-drift`
+#     issue naming the assertion that failed.
+#   - clean → close a stale one.
+#
+# WHY AN ISSUE RATHER THAN A RED BUILD. A scheduled job that fails puts a red X
+# on a branch nobody touched, which is how a signal gets trained out of people.
+# An issue is addressed to someone.
+#
+# WHY IT IS NOT IN check:deep. It needs the network; check:deep must work
+# offline. The offline half — that each required status check names a real job
+# id in a workflow that fires on pull_request — is in check-rulesets.test.ts and
+# runs on every PR via `test:ops`.
+#
+# TOKEN. `github.token` is enough for everything except `bypass_actors`, which
+# GitHub returns only to a caller that can read repository administration — a
+# permission a workflow token cannot be granted at all. That assertion is
+# therefore reported as UNVERIFIED and does not escalate; set a
+# `RULESET_WATCH_TOKEN` secret (classic PAT, `repo` scope) to verify it here.
+# See docs/admin/branch-rulesets.md → What this cannot verify.
+
+name: watch-branch-rules
+
+on:
+  schedule:
+    - cron: "41 7 * * *" # daily, 07:41 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: branch-rules-drift
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      # Pin Bun to the repo's source of truth (docs/bun-version-policy.md) — no
+      # hardcoded copy of the version literal.
+      - name: Read Bun version
+        id: bun
+        run: |
+          set -euo pipefail
+          echo "version=$(cat .bun-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ steps.bun.outputs.version }}
+
+      # Never act on broken tooling — the colocated ops tests are offline and
+      # take milliseconds, and they carry this check's parity guard.
+      - name: Self-check tooling
+        run: bun run test:ops
+
+      # Detect only. Exit 1 is drift, 2 is "could not read the rulesets at all";
+      # both set drift=true and write the body. `set +e` because GitHub's default
+      # `bash -e` would abort before the exit code is read.
+      - name: Check the rulesets
+        id: rules
+        env:
+          GH_TOKEN: ${{ secrets.RULESET_WATCH_TOKEN || github.token }}
+        run: |
+          set -uo pipefail
+          set +e
+          bun run scripts/ops/check-rulesets.ts \
+            --repo "${{ github.repository }}" --body-file ruleset-drift-report.md
+          code=$?
+          echo "check exited $code"
+          [ "$code" -le 2 ] || exit "$code"
+
+      - name: File or refresh drift issue
+        if: steps.rules.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh label create ruleset-drift --color D93F0B \
+            --description "Branch protection on main no longer meets the recorded floor" --force
+          NUM=$(gh issue list --label ruleset-drift --state open --json number --jq '.[0].number // empty')
+          if [ -n "$NUM" ]; then
+            gh issue edit "$NUM" --body-file ruleset-drift-report.md
+            echo "Refreshed issue #$NUM"
+          else
+            gh issue create --label ruleset-drift \
+              --title "Branch-ruleset drift on main" \
+              --body-file ruleset-drift-report.md
+          fi
+
+      - name: Close stale drift issue
+        if: steps.rules.outputs.drift == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          NUM=$(gh issue list --label ruleset-drift --state open --json number --jq '.[0].number // empty')
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --body "\`main\` meets the recorded floor again — auto-closing."
+            gh issue close "$NUM"
+          fi
