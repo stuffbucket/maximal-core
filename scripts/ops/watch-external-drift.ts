@@ -97,7 +97,7 @@ export const VERSION_PINS: ReadonlyArray<PinSpec> = [
   {
     id: "claudeCode",
     file: "src/lib/config/api-config.ts",
-    pattern: /vscode_claude_code\/([\d.]+)/u,
+    pattern: /const CLAUDE_AGENT_SEMVER = "([\d.]+)"/u,
     repo: "anthropics/claude-code",
     describe:
       "Claude Code agent version we send (CLAUDE_AGENT_USER_AGENT).",
@@ -207,10 +207,13 @@ export function normalizeTag(tag: string): string {
  * Throws if the pattern no longer matches (the parity test guards that).
  *
  * SAFETY: this only touches the single captured site. A pin whose version is
- * duplicated in a coupled string (the opencode UA repeats it) must therefore
- * be sourced from ONE constant that the copies derive from — that is why the
+ * duplicated in a coupled string (both UAs repeat it) must therefore be
+ * sourced from ONE constant that the copies derive from — that is why the
  * opencode pin targets `OPENCODE_SEMVER`, not the raw `OPENCODE_VERSION`
- * literal. Only fixable VERSION_PINS are ever passed here; HEADER_PINS and the
+ * literal, and the claudeCode pin targets `CLAUDE_AGENT_SEMVER`, not the
+ * `vscode_claude_code/` site inside the UA (that pattern left the coupled
+ * `agent-sdk/` version behind and shipped a pair that never existed upstream).
+ * Only fixable VERSION_PINS are ever passed here; HEADER_PINS and the
  * Anthropic spec SHA deliberately stay on the issue-only path.
  */
 export function applyFix(source: string, spec: PinSpec, next: string): string {
