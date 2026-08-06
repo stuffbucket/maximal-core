@@ -25,6 +25,7 @@ import {
   test,
   type Mock,
 } from "bun:test"
+import { createServer } from "node:net"
 
 // --- Mocks for the chunky boot dependencies ------------------------
 //
@@ -194,8 +195,29 @@ function resetState(): void {
   cacheModelsMock.mockClear()
 }
 
+/**
+ * A port the OS has just confirmed free.
+ *
+ * NOT `41000 + random(1000)`, which is what this was: that picks a number and
+ * hopes. `runServer` bind-tests the requested port through `resolvePort`, so a
+ * collision makes the policy fall back to the next port and
+ * `expect(publicArg.port).toBe(port)` fails — green on a quiet laptop, red on a
+ * CI runner where sibling suites are binding ports concurrently. That is how it
+ * failed on the #58 rebase.
+ *
+ * Binding port 0 makes the OS pick from its ephemeral range and hand back one it
+ * knows is unused; closing immediately leaves a window, but a microsecond-wide
+ * one against a port nothing else is scanning, rather than a 1-in-1000 guess
+ * inside a range anything may hold.
+ */
 function pickFreePort(): number {
-  return 41000 + Math.floor(Math.random() * 1000)
+  const probe = createServer()
+  probe.listen(0, "127.0.0.1")
+  const address = probe.address()
+  const port = typeof address === "object" && address ? address.port : 0
+  probe.close()
+  if (port === 0) throw new Error("could not obtain an ephemeral port")
+  return port
 }
 
 function baseOptions(

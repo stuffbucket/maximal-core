@@ -613,14 +613,11 @@ describe("requireGithubAuth", () => {
     const res = await buildGithubApp().request("/protected")
     expect(res.status).toBe(401)
     const body = (await res.json()) as { error: string; hint: string }
-    expect(body).toEqual({
-      error: "not_authenticated",
-      hint: "Open Settings → Account to sign in, or run `maximal auth`.",
-    })
-    expect(body.error).toBe("not_authenticated")
-    expect(body.hint).toBe(
-      "Open Settings → Account to sign in, or run `maximal auth`.",
-    )
+    // The hint must name something core has. There is no Settings UI here.
+    const hint =
+      "Run `maximal auth` to sign in, or start the flow over the /control API."
+    expect(body).toEqual({ error: "not_authenticated", hint })
+    expect(body.hint).not.toContain("Settings")
     expect(body.error.length).toBeGreaterThan(0)
     expect(body.hint.length).toBeGreaterThan(0)
   })
