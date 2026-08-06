@@ -388,7 +388,10 @@ git push && git push origin vX.Y.Z
 > Two releases prepared concurrently is all it takes, and this repo runs several
 > agents at once. `bun run release:check order vX.Y.Z` above is the preventive
 > check on the by-hand path; `release:manual` runs it itself, before the bump
-> ([gate 4](#the-gates)).
+> ([gate 4](#the-gates)); and `release-tag-check.yml` re-runs it with `--pushed`
+> on the tag itself, so a by-hand push that skipped the preflight is still
+> caught — within seconds, while the tag is almost certainly unconsumed and can
+> still be deleted.
 
 
 ## 5. Publish the artifacts
@@ -484,7 +487,7 @@ the whole thing is unit-tested offline (`bun run check:ops`).
 | 1 | The PR carries a milestone whose title is a release tag (`vX.Y.Z`) | `release-gates.yml`, every PR |
 | 2 | The PR's required bump ≤ the milestone's bump, measured from the current release | `release-gates.yml`, every PR; `release:check milestone` at preflight |
 | 3 | The tag matches `package.json` | `release:manual vX.Y.Z` sets one from the other; `release:check version` preflight; `release-tag-check.yml` on tag push |
-| 4 | The tag does not exist and is above every release tag that does, locally **and** on `origin` | **`release:manual vX.Y.Z`, before the bump**; `release:check order` preflight and by-hand path |
+| 4 | The tag does not exist and is above every release tag that does, locally **and** on `origin` | **`release:manual vX.Y.Z`, before the bump**; `release:check order` preflight and by-hand path; `release-tag-check.yml` on tag push (`--pushed`) |
 | 5 | Nothing still open claims to ship in this release | **`release:manual vX.Y.Z`, before the bump**; `release:check milestone` at preflight |
 
 ```sh
@@ -540,7 +543,7 @@ Corner cases, and what each does:
   would ship unannounced. It is also counted as breaking for gate 2, so the
   release cannot be under-bumped while the two disagree.
 
-### What gate 4 compares, and why it is not a workflow
+### What gate 4 compares, and where it runs
 
 Gate 2 asks "is this milestone ahead of the released version" *at the moment the
 check runs*. That is not the moment the tag is pushed, and nothing anywhere
@@ -551,8 +554,11 @@ lower-semver tag carrying strictly more content, and it is unrepairable: a
 published tag must not be moved.
 
 So gate 4 runs **inside `release:manual`, ahead of `bumpp`** — the same argument
-the clean-tree guard makes. A tag-push workflow could only alarm after the fact,
-and a preflight a human runs is the discipline these gates exist to replace.
+the clean-tree guard makes. A tag-push workflow can only alarm after the fact,
+and a preflight a human runs is the discipline these gates exist to replace. It
+runs there **as well**, in `release-tag-check.yml`, because the by-hand path
+below skips `release:manual` entirely and an alarm within seconds of the push
+still lands while the tag is deletable.
 
 - **Both tag lists.** `git tag --list` for this checkout and
   `git ls-remote --tags origin` for everyone else's. Nothing keeps a checkout's
@@ -571,7 +577,8 @@ and a preflight a human runs is the discipline these gates exist to replace.
   that the version shipped. One whose base sorts at or above the tag being cut
   is a warning, in case somebody else is mid-cut.
 - **`--pushed`** compares against every *other* tag and drops the existence
-  refusal, which is the shape a tag-push tripwire needs.
+  refusal, which is the shape a tag-push tripwire needs — the tag exists by
+  then, by definition. That is how `release-tag-check.yml` calls it.
 
 ### What gate 5 decides, and what it refuses to guess
 
@@ -711,13 +718,15 @@ Listed so nobody re-derives it from a stale doc:
   returns null there, so a takeover that the graceful POST cannot complete fails
   rather than escalating. The config policy's `probePort` identity gate is unit
   tested only.
-- No check that a tag is *annotated*. `release-tag-check.yml` compares the
-  version and nothing else; `-a` is still on you.
-- **No tripwire for a tag pushed by hand.** Gates 4 and 5 run inside
-  `release:manual`, which is the only path that can still refuse for free. A
-  `git tag && git push` that skips it is caught by nothing until someone runs
-  `bun run release:check order vX.Y.Z --pushed` — the subcommand exists and is
-  what a tag-push workflow would call, but no workflow calls it yet.
+- No check that a tag is *annotated*. `release-tag-check.yml` checks the version
+  and the tag's order against every tag that exists, and nothing else; `-a` is
+  still on you.
+- **No tripwire for gate 5 on a tag pushed by hand.** Gate 4 has one —
+  `release-tag-check.yml` runs `order --pushed` on every pushed tag, so a
+  `git tag && git push` that skipped the preflight is still caught while the tag
+  is deletable. Gate 5 has no equivalent: it runs only inside `release:manual`
+  and `release:check milestone`, so a hand-pushed tag whose milestone still has
+  an open PR is caught by nothing.
 - **No gate on which open PRs *ought* to be in a release.** Gate 5 blocks a PR
   that is open in the milestone being cut and lists the ones carrying no
   milestone; it cannot know whether an unassigned PR, or one deferred to a later
