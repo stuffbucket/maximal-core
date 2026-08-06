@@ -170,12 +170,30 @@ route-enumeration test now enumerates.** Two follow-ups to the amendment above.
   citation did not. What is genuinely asserted against the real app is the
   route-table half, in `origin-guard.test.ts` (previous bullet). The
   end-to-end half — a no-Origin `Bearer` request reaching a real `/v1` handler
-  through the real middleware stack — is **still not covered by any test**.
+  through the real middleware stack — is **still not covered by any test**
+  (resolved by the 2026-08-07 amendment below).
 
   `links.spec` in this ADR's frontmatter also points at
   `docs/spec/single-window-redesign.md`, which does not exist in this repo:
   that spec was not carried over at the core split, so the "Spec §6" and
   "spec §10" references below cannot be followed from here.
+
+**Amendment (2026-08-07) — §6.6 now has the end-to-end test it was credited
+with.** `tests/security/cli-client-regression.test.ts` no longer builds its own
+Hono app. It drives the real `publicApp` from `~/server`, so the full
+`applyCommonMiddleware` stack and the real route table are in the path, and
+asserts four things: a no-Origin `Bearer` request on `/v1/models` reaches the
+real handler (the response carries a seeded model id, so a 200 from some
+middleware would not satisfy it); the same request with no credential 401s
+`authentication_error`, which is what keeps the first assertion from passing
+vacuously if auth were unmounted; a cross-origin request to the guarded
+`/_internal/shutdown` 403s `csrf_error` rather than 401ing, pinning the guard's
+mount order *ahead* of auth; and the same path with no `Origin` is not refused
+by the CSRF gate. Verified to fail on four one-line mutations: inverting
+`apiKeyAllowed`, making the auth middleware non-blocking, moving the Origin
+guard behind auth in `applyCommonMiddleware`, and flipping `isAllowedOrigin`'s
+`origin === null` arm. Adding `/v1` to `CSRF_GUARDED_PREFIXES` is caught by
+`origin-guard.test.ts`, which still owns the route-table half.
 
 Current behaviour is documented in
 [`docs/spec/wire/auth-transport-wire-prd.md`](../spec/wire/auth-transport-wire-prd.md).
