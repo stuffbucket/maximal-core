@@ -75,8 +75,15 @@ function recorder(statuses: Array<number> = []): {
   }
 }
 
-/** A `git` that answers `status` with `porcelain` and succeeds at everything else. */
-function gitStub(porcelain: string, statuses: Record<string, number> = {}): {
+/**
+ * A `git` that answers `status` with `porcelain`, the two tag reads gate 4 makes
+ * with `tags`, and succeeds at everything else.
+ */
+function gitStub(
+  porcelain: string,
+  statuses: Record<string, number> = {},
+  tags: { local?: ReadonlyArray<string>; remote?: ReadonlyArray<string> } = {},
+): {
   calls: Array<Array<string>>
   git: (args: ReadonlyArray<string>) => { status: number; stdout: string; stderr: string }
 } {
@@ -86,7 +93,12 @@ function gitStub(porcelain: string, statuses: Record<string, number> = {}): {
     git: (args) => {
       calls.push([...args])
       const verb = args[0] ?? ""
-      return { status: statuses[verb] ?? 0, stdout: verb === "status" ? porcelain : "", stderr: "" }
+      const stdout =
+        verb === "status" ? porcelain
+        : verb === "tag" ? (tags.local ?? []).join("\n")
+        : verb === "ls-remote" ? (tags.remote ?? []).map((t) => `deadbeef\trefs/tags/${t}`).join("\n")
+        : ""
+      return { status: statuses[verb] ?? 0, stdout, stderr: "" }
     },
   }
 }
@@ -131,16 +143,19 @@ const merged = (number: number, title: string): PullRequest => ({
 /**
  * A `gh` wired for one milestone. `prs` drives the notes; an empty list is the
  * fatal `empty-milestone` case, and `milestones: false` is a missing one.
+ * `open` drives gate 5, and is matched ahead of the milestone search because
+ * both are `gh pr list`.
  */
 function ghStub(
   prs: ReadonlyArray<PullRequest>,
-  options: { milestone?: boolean } = {},
+  options: { milestone?: boolean; open?: ReadonlyArray<unknown> } = {},
 ): { calls: Array<Array<string>>; gh: GhRunner } {
   const calls: Array<Array<string>> = []
   const routes: Array<[string, unknown]> = [
     ["repo view", { nameWithOwner: "stuffbucket/maximal-core" }],
     ["milestones", options.milestone === false ? [] : [{ number: 1, title: TAG, state: "open" }]],
     ["tags", [{ name: "v0.4.1" }]],
+    ["--state open", options.open ?? []],
     ["pr list", prs],
   ]
   return {
@@ -784,5 +799,146 @@ describe("release", () => {
       if (previous === undefined) delete process.env[CHANGELOG_ENV]
       else process.env[CHANGELOG_ENV] = previous
     }
+  })
+})
+
+describe("release — gate 4, the tag must be ahead of every tag that exists", () => {
+  const cut = (
+    tags: { local?: Array<string>; remote?: Array<string> },
+    statuses: Record<string, number> = {},
+    open: Array<unknown> = [],
+  ): { code: number; calls: Array<Invocation>; ghCalls: Array<Array<string>>; lines: Array<string> } => {
+    const { calls, run, handOverBlock } = recorder()
+    const { git } = gitStub(CLEAN, statuses, tags)
+    const { calls: ghCalls, gh } = ghStub([merged(42, "feat: a thing")], { open })
+    const { lines, log } = silent()
+    const code = release({
+      ...ON_PIN, tag: TAG, run, git, gh, log, handOverBlock, read: () => CHANGELOG,
+      now: () => new Date("2026-08-06T00:00:00Z"), bun: "/pin/bun", script: "/x/release.ts",
+    })
+    return { code, calls, ghCalls, lines }
+  }
+
+  // THE HAZARD, END TO END. v0.5.0 landed while v0.4.2 was being prepared;
+  // cutting v0.4.2 now would publish a lower tag with strictly more content, and
+  // a published tag must never be moved, so there is no repair afterwards.
+  test("a tag below one that already exists refuses before bumpp", () => {
+    const { code, calls, lines } = cut({ remote: ["v0.4.1", "v0.5.0"] })
+    expect(code).toBe(1)
+    expect(calls).toEqual([])
+    expect(lines.join("\n")).toContain("tag-not-highest")
+    expect(lines.join("\n")).toContain("nothing has been committed, tagged or pushed")
+  })
+
+  test("a tag that already exists refuses before bumpp", () => {
+    const { code, calls, lines } = cut({ remote: [TAG] })
+    expect(code).toBe(1)
+    expect(calls).toEqual([])
+    expect(lines.join("\n")).toContain("tag-already-exists")
+  })
+
+  // The stale-checkout case, which is the whole reason the remote is read: this
+  // checkout has never heard of v0.5.0.
+  test("a tag known only to the remote still refuses", () => {
+    const { code, calls } = cut({ local: ["v0.4.1"], remote: ["v0.4.1", "v0.5.0"] })
+    expect(code).toBe(1)
+    expect(calls).toEqual([])
+  })
+
+  test("the highest tag being below the release lets it through", () => {
+    const { code, calls } = cut({ local: ["v0.4.1"], remote: ["v0.4.0", "v0.4.1"] })
+    expect(code).toBe(0)
+    expect(calls).toHaveLength(2)
+  })
+
+  // Cheapest refusal first: gate 4 is two local `git` calls, so it must not be
+  // paid for behind four `gh` round trips — and a refusal must not have made any.
+  test("the tags are read before any GitHub call", () => {
+    const { ghCalls } = cut({ remote: ["v0.5.0"] })
+    expect(ghCalls).toEqual([])
+  })
+
+  // A gate that cannot READ what it compares against must not read as a pass:
+  // that is the reading that lets the reverse-order tag through. It is safe to
+  // fail closed here precisely because nothing has happened yet.
+  test("a remote that cannot be read stops the release at 2", () => {
+    const { code, calls, lines } = cut({}, { "ls-remote": 128 })
+    expect(code).toBe(2)
+    expect(calls).toEqual([])
+    expect(lines.join("\n")).toContain("ls-remote")
+  })
+
+  // `git fetch --tags` would answer the same question and mutate the ref store
+  // of a repository this run may be about to refuse from.
+  test("nothing fetches", () => {
+    const { calls: gitCalls, git } = gitStub(CLEAN, {}, { remote: ["v0.5.0"] })
+    const { run } = recorder()
+    const { gh } = ghStub([merged(1, "feat: x")])
+    const { log } = silent()
+    release({ ...ON_PIN, tag: TAG, run, git, gh, log, read: () => CHANGELOG })
+    expect(gitCalls.map((c) => c[0])).toEqual(["status", "tag", "ls-remote"])
+  })
+})
+
+describe("release — gate 5, nothing that ships here is still open", () => {
+  const open = (number: number, milestone: string | null): unknown => ({
+    number,
+    title: "fix: in flight",
+    milestone: milestone === null ? null : { title: milestone },
+    labels: [],
+  })
+
+  const cut = (
+    openPrs: Array<unknown>,
+    changelog = CHANGELOG,
+  ): { code: number; calls: Array<Invocation>; lines: Array<string> } => {
+    const { calls, run, handOverBlock } = recorder()
+    const { git } = gitStub(CLEAN)
+    const { gh } = ghStub([merged(42, "feat: a thing")], { open: openPrs })
+    const { lines, log } = silent()
+    const code = release({
+      ...ON_PIN, tag: TAG, run, git, gh, log, handOverBlock, read: () => changelog,
+      now: () => new Date("2026-08-06T00:00:00Z"),
+    })
+    return { code, calls, lines }
+  }
+
+  test("an open PR assigned to the release being cut refuses before bumpp", () => {
+    const { code, calls, lines } = cut([open(9, TAG)])
+    expect(code).toBe(1)
+    expect(calls).toEqual([])
+    expect(lines.join("\n")).toContain("open-pr-in-release")
+  })
+
+  // THE HOLE THIS CLOSES. `release:notes` also refuses on an open PR in the
+  // milestone — but `release.ts` skips the changelog step, `gh` reads included,
+  // when the entry is already there. Before this gate, a re-run after a failed
+  // bumpp (or a hand-pasted block) cut the tag with the open PR unnoticed.
+  test("it still refuses when the CHANGELOG already documents the version", () => {
+    const already = CHANGELOG.replace("## [0.4.1]", "## [0.4.2]")
+    expect(cut([], already).code).toBe(0)
+    const { code, calls } = cut([open(9, TAG)], already)
+    expect(code).toBe(1)
+    expect(calls).toEqual([])
+  })
+
+  test("an unmilestoned open PR is listed and does NOT block", () => {
+    const { code, calls, lines } = cut([open(11, null)])
+    expect(code).toBe(0)
+    expect(calls).toHaveLength(2)
+    expect(lines.join("\n")).toContain("open-pr-unmilestoned")
+    expect(lines.join("\n")).toContain("#11")
+  })
+
+  test("an open PR in a later release is silent", () => {
+    const { code, lines } = cut([open(12, "v0.9.0")])
+    expect(code).toBe(0)
+    expect(lines.join("\n")).not.toContain("#12")
+  })
+
+  test("an open PR in an earlier release warns and does not block", () => {
+    const { code, lines } = cut([open(13, "v0.4.1")])
+    expect(code).toBe(0)
+    expect(lines.join("\n")).toContain("open-pr-earlier-release")
   })
 })

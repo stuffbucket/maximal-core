@@ -10,7 +10,7 @@ a release PR opening itself: that pipeline was inherited from
 split and was never carried over. Do not go looking for it.
 
 What exists instead is deliberate and manual, in five steps. Nothing cuts a
-release for you; three [gates](#the-gates) check that the one you cut by hand is
+release for you; five [gates](#the-gates) check that the one you cut by hand is
 well-formed, and one workflow builds and attaches the binaries once the tag
 exists ([step 5](#5-publish-the-artifacts)).
 
@@ -89,13 +89,20 @@ bun install
 bun run check:deep        # lint, typecheck, typecheck:downstream, casts:check,
                           # tests, knip, build
 bun run e2e               # seam + feed + lifecycle + replace harnesses
-bun run release:check milestone vX.Y.Z   # every PR in the milestone vs the bump
+bun run release:check milestone vX.Y.Z   # every PR in the milestone vs the bump,
+                                         # plus everything still open
+bun run release:check order vX.Y.Z       # the tag is above every tag that exists
 ```
 
 `release:check milestone` is the blocking version of the advisory sibling
 warning the PR gate emits: it re-checks *every* PR in the milestone against the
 version about to be cut, so a milestone that was retargeted after one of its PRs
-merged cannot ship under-bumped.
+merged cannot ship under-bumped. It also lists what is still open
+([gate 5](#the-gates)).
+
+Both of these are previews. `release:manual` runs the same two checks itself,
+before it bumps — see [step 4](#4-bump-tag-push). Running them here costs
+seconds and tells you now rather than at the tag.
 
 ### Dry-run the artifacts before you tag
 
@@ -159,20 +166,24 @@ bun run release:manual vX.Y.Z   # guard, preflight, notes, bumpp; commits, tags,
 ```
 
 `release:manual` is [`scripts/ops/release.ts`](../scripts/ops/release.ts), which
-runs five steps **in that order, in one process**:
+runs seven steps **in that order, in one process**:
 
 | # | Step | Refuses on |
 |---|---|---|
 | 1 | Clean-tree guard | any **tracked** modification, staged or unstaged, including `dist/` |
 | 2 | Preflight (`prepack --check`) | the running Bun is not the one in `.bun-version` |
-| 3 | Generate the `CHANGELOG.md` entry | anything `release:notes vX.Y.Z` would refuse to emit on |
-| 4 | `bumpp --all --release X.Y.Z --execute "<pinned bun> release.ts --rebuild"` | — |
-| 5 | `bun publish --access public` | — |
+| 3 | [Gate 4](#the-gates) — tag order | the tag already exists, or is not above every tag that does (local **and** `origin`) |
+| 4 | [Gate 5](#the-gates) — what is open | a PR still open in the milestone being cut |
+| 5 | Generate the `CHANGELOG.md` entry | anything `release:notes vX.Y.Z` would refuse to emit on |
+| 6 | `bumpp --all --release X.Y.Z --execute "<pinned bun> release.ts --rebuild"` | — |
+| 7 | `bun publish --access public` | — |
 
-Steps 1 to 3 are all **before** `bumpp`, **because everything after them is
+Steps 1 to 5 are all **before** `bumpp`, **because everything after them is
 irreversible**: `bumpp` commits, tags and pushes before `bun publish` is ever
 reached, and a registry publish cannot be taken back at all. Exit `1` means it
-refused and nothing happened; exit `2` means a step failed.
+refused and nothing happened; exit `2` means a step failed — including a gate
+that could not *read* what it compares against, which here stops the release
+rather than waving it through.
 
 > **This step pushes to `main` directly, and `main` requires a PR.** The push in
 > step 4 only lands because `main-require-pr` carries an always-mode bypass
@@ -202,13 +213,13 @@ bun scripts/ops/release.ts --rebuild           # just regenerate + stage dist/, 
 bun run release:preflight                      # step 2 on its own
 ```
 
-> **Step 3 fetches and renders; the hook in step 4 writes.** Splitting it that
-> way is what makes the sequence above runnable top to bottom. The block cannot
-> be fetched until the version is known, and it must not be *written* until
+> **The changelog step fetches and renders; the `bumpp` hook writes.** Splitting
+> it that way is what makes the sequence above runnable top to bottom. The block
+> cannot be fetched until the version is known, and it must not be *written* until
 > `bumpp` is past its confirmation prompt — otherwise a decline, or a Ctrl-C,
 > leaves a modified `CHANGELOG.md` that step 1 refuses on the next attempt.
 > Which is precisely the bug this replaced: the runbook used to say "paste the
-> block into `CHANGELOG.md`" in step 3 and "run `release:manual`" in step 4,
+> block into `CHANGELOG.md`" in its step 3 and "run `release:manual`" in step 4,
 > whose first action refuses any tracked modification — including that paste. It
 > was worked around by committing the changelog separately, which is why v0.4.1
 > carries two commits (`6b04af5`, `7418be1`) where every release before it
@@ -227,10 +238,24 @@ bun run release:preflight                      # step 2 on its own
 > **An entry that is already there is left alone**, `gh` reads included. A
 > re-run after a failed `bumpp`, or a block someone pasted by hand, is detected
 > by its `## X.Y.Z` heading and skipped with a note. Nothing is ever rewritten
-> or appended twice.
+> or appended twice. That skip is why [gate 5](#the-gates) is a step of its own
+> rather than a side effect of generating the notes: `release:notes` refuses on
+> an open PR in the milestone, but on the re-run it is never asked.
 
-> **The rebuild is step 4's `--execute` hook, and it is why the commit is made
-> with `--all`.** `bun build` inlines `package.json` — `BUILD_VERSION` in
+> **Gate 4 is the step before the point of no return.** It reads `git tag
+> --list` **and** `git ls-remote --tags origin`, and refuses if the tag already
+> exists anywhere or is not above every release tag that does. The remote is not
+> optional: nothing keeps a checkout's tags up to date, so a tag another agent
+> pushed minutes ago is invisible locally — and that is the exact race. It is
+> read with `ls-remote`, never `fetch`, so a refusal leaves the ref store
+> untouched like every other refusal here. An unreachable remote **stops** the
+> release (exit `2`) instead of reading as "no tags exist"; the flow ends in a
+> `git push` to that same remote anyway. Prereleases are excluded from the
+> comparison and reported as a warning — `vX.Y.Z-rc.1` is not a release tag to
+> any of this tooling, and by semver it sorts *below* `vX.Y.Z`.
+
+> **The rebuild is the `bumpp` step's `--execute` hook, and it is why the commit
+> is made with `--all`.** `bun build` inlines `package.json` — `BUILD_VERSION` in
 > `src/lib/update/build-info.ts` falls back to `packageJson.version` — so
 > bumping the version alone makes the committed bundle stale and turns
 > `bindings:check` red on `main`. It is genuine drift, not a false positive:
@@ -274,7 +299,8 @@ bun run release:preflight                      # step 2 on its own
 > step is irreversible.
 >
 > The guard does not fight the rebuild, or the changelog write, because of
-> *where* it runs: it is step 1, and both of those are inside step 4. By the time
+> *where* it runs: it is step 1, and both of those are inside the `bumpp` step.
+> By the time
 > `dist/` and `CHANGELOG.md` are written, the guard has already passed — it only
 > ever asks "did the tree match `HEAD` when we started", which is true of every
 > tree a previous release left behind.
@@ -319,6 +345,7 @@ are yours to remember:**
 ```sh
 # package.json version MUST match the tag — checked by the preflight below
 bun run release:check version vX.Y.Z
+bun run release:check order vX.Y.Z          # nothing higher is already tagged
 git status --porcelain                     # must be empty of tracked changes
 bun run release:notes vX.Y.Z               # paste under the CHANGELOG.md anchor
 bun run build && git add -f dist/main.js   # the bundle inlines the new version
@@ -354,6 +381,14 @@ git push && git push origin vX.Y.Z
 > machines can hold different code under one version. If the tripwire fires
 > within seconds of the push and nothing has resolved the tag yet, deleting and
 > re-cutting is the lesser evil; after that, ship a new patch instead.
+
+> **And never cut a tag *below* one that already exists**, for the same reason
+> in reverse: the lower tag is immovable too, so a `v0.4.4` pushed after `v0.5.0`
+> is a permanently wrong ordering — a lower semver carrying strictly more code.
+> Two releases prepared concurrently is all it takes, and this repo runs several
+> agents at once. `bun run release:check order vX.Y.Z` above is the preventive
+> check on the by-hand path; `release:manual` runs it itself, before the bump
+> ([gate 4](#the-gates)).
 
 
 ## 5. Publish the artifacts
@@ -438,28 +473,33 @@ app.
 
 ## The gates
 
-The three conventions above used to be asserted here and enforced by nothing.
+The conventions above used to be asserted here and enforced by nothing.
 They are now checked by [`scripts/ops/release-gates.ts`](../scripts/ops/release-gates.ts),
 which is pure logic behind the same injectable `GhRunner` seam
-`release-notes.ts` uses — so the whole thing is unit-tested offline
-(`bun run check:ops`).
+`release-notes.ts` uses (plus `check-bindings.ts`'s `GitRunner` for gate 4) — so
+the whole thing is unit-tested offline (`bun run check:ops`).
 
 | Gate | What it checks | Where it runs |
 |---|---|---|
 | 1 | The PR carries a milestone whose title is a release tag (`vX.Y.Z`) | `release-gates.yml`, every PR |
 | 2 | The PR's required bump ≤ the milestone's bump, measured from the current release | `release-gates.yml`, every PR; `release:check milestone` at preflight |
 | 3 | The tag matches `package.json` | `release:manual vX.Y.Z` sets one from the other; `release:check version` preflight; `release-tag-check.yml` on tag push |
+| 4 | The tag does not exist and is above every release tag that does, locally **and** on `origin` | **`release:manual vX.Y.Z`, before the bump**; `release:check order` preflight and by-hand path |
+| 5 | Nothing still open claims to ship in this release | **`release:manual vX.Y.Z`, before the bump**; `release:check milestone` at preflight |
 
 ```sh
 bun run release:check pr <n>              # gates 1 + 2 for one PR
-bun run release:check milestone vX.Y.Z    # gate 2 across the whole milestone
+bun run release:check milestone vX.Y.Z    # gate 2 across the whole milestone, + gate 5
+bun run release:check order vX.Y.Z        # gate 4
 bun run release:check version vX.Y.Z      # gate 3
 ```
 
 Exit codes: `0` clean · `1` a convention was violated · `2` **the gate could not
 run** (a `gh` failure, unparseable JSON, a missing `package.json`). Both
 workflows treat `2` as non-blocking on purpose: a gate that fails closed on its
-own bugs takes the repo down with it.
+own bugs takes the repo down with it. **`release:manual` is the deliberate
+exception** — there, a `2` from gate 4 or 5 stops the release, because the only
+cost is a re-run and the only alternative is a tag nobody can move.
 
 ### What gate 2 actually compares
 
@@ -499,6 +539,67 @@ Corner cases, and what each does:
   blocking. The changelog is generated from titles only, so the breaking change
   would ship unannounced. It is also counted as breaking for gate 2, so the
   release cannot be under-bumped while the two disagree.
+
+### What gate 4 compares, and why it is not a workflow
+
+Gate 2 asks "is this milestone ahead of the released version" *at the moment the
+check runs*. That is not the moment the tag is pushed, and nothing anywhere
+compared a tag against the tags that already exist. With two releases in flight —
+the normal state of this repo — `v0.5.0` and `v0.4.4` can be prepared
+concurrently and land in either order. If `v0.5.0` lands first, `v0.4.4` is a
+lower-semver tag carrying strictly more content, and it is unrepairable: a
+published tag must not be moved.
+
+So gate 4 runs **inside `release:manual`, ahead of `bumpp`** — the same argument
+the clean-tree guard makes. A tag-push workflow could only alarm after the fact,
+and a preflight a human runs is the discipline these gates exist to replace.
+
+- **Both tag lists.** `git tag --list` for this checkout and
+  `git ls-remote --tags origin` for everyone else's. Nothing keeps a checkout's
+  tags current, so the local list is the stale one by construction — and a tag
+  that exists only locally is still a collision on push.
+- **`ls-remote`, never `fetch`.** The check writes nothing, so a refusal leaves
+  the repository exactly as it found it.
+- **A remote that cannot be read is a refusal**, not a pass. "No tags exist" is
+  the reading that lets the reverse-order tag through, and the release ends in a
+  push to that remote in any case.
+- **The tag already existing is its own refusal**, reported as a collision
+  rather than as "not ahead", because the fix is different: pick another
+  version, do not re-cut this one.
+- **A prerelease never blocks.** `vX.Y.Z-rc.1` is not a release tag to any of
+  this tooling, and by semver it sorts *below* `vX.Y.Z` — it is not evidence
+  that the version shipped. One whose base sorts at or above the tag being cut
+  is a warning, in case somebody else is mid-cut.
+- **`--pushed`** compares against every *other* tag and drops the existence
+  refusal, which is the shape a tag-push tripwire needs.
+
+### What gate 5 decides, and what it refuses to guess
+
+An open PR is only decidably part of a release if it *said so* — the milestone
+model is what makes that decidable at all. So:
+
+| The PR is open in… | Gate 5 |
+|---|---|
+| the milestone being cut | **blocking** — it claimed this release and will not be in the tag or the notes |
+| a **lower** release milestone | warning — that release has not shipped; cutting past it strands it, and cutting it afterwards is the reverse-order tag gate 4 will refuse |
+| a **higher** release milestone | silent — it deferred itself |
+| no milestone, or a non-release one | warning, listed by number |
+
+The last row is the honest limit. **An unassigned PR is not automatically part
+of this release**, and a gate that guessed — by touched paths, by age, by
+author — would block real releases on somebody's draft and teach everyone to
+ignore it. So it lists and does not block, the same shape `release:manual` uses
+for untracked files.
+
+The first row was already covered *by accident*: `release:notes` refuses to emit
+when a milestone holds an open PR. It is stated as a rule here because that
+accident has a hole — `release:manual` skips the changelog step, `gh` reads
+included, when `CHANGELOG.md` already documents the version, so a re-run after a
+failed `bumpp` cut the tag with the open PR unnoticed.
+
+**Not checkable, and not attempted:** whether an open PR in a *later* milestone
+touches the same code as this release, or whether an unassigned PR ought to have
+been in it. Both are judgement calls about intent.
 
 ### When a gate is wrong
 
@@ -612,6 +713,16 @@ Listed so nobody re-derives it from a stale doc:
   tested only.
 - No check that a tag is *annotated*. `release-tag-check.yml` compares the
   version and nothing else; `-a` is still on you.
+- **No tripwire for a tag pushed by hand.** Gates 4 and 5 run inside
+  `release:manual`, which is the only path that can still refuse for free. A
+  `git tag && git push` that skips it is caught by nothing until someone runs
+  `bun run release:check order vX.Y.Z --pushed` — the subcommand exists and is
+  what a tag-push workflow would call, but no workflow calls it yet.
+- **No gate on which open PRs *ought* to be in a release.** Gate 5 blocks a PR
+  that is open in the milestone being cut and lists the ones carrying no
+  milestone; it cannot know whether an unassigned PR, or one deferred to a later
+  milestone, belongs here. See
+  [what gate 5 refuses to guess](#what-gate-5-decides-and-what-it-refuses-to-guess).
 - No prerelease support anywhere. `vX.Y.Z-rc.1` is not a release tag to any of
   this tooling, and a milestone named that fails gate 1.
 - No automatic *creation* of the next milestone, and no check that a merged PR's
@@ -631,7 +742,7 @@ Listed so nobody re-derives it from a stale doc:
   the argument for the clean-tree definition and the `--all` / `--execute` pair
 - [`scripts/ops/release-notes.ts`](../scripts/ops/release-notes.ts) — the
   generator, and the rationale in its header comment
-- [`scripts/ops/release-gates.ts`](../scripts/ops/release-gates.ts) — the three
+- [`scripts/ops/release-gates.ts`](../scripts/ops/release-gates.ts) — the five
   gates, and the argument for where each one runs
 - [`docs/archive/CHANGELOG-maximal.md`](archive/CHANGELOG-maximal.md) — the
   frozen pre-split history
