@@ -25,6 +25,37 @@ export const TokenStatus = z.object({
 })
 export type TokenStatus = z.infer<typeof TokenStatus>
 
+/**
+ * Health of the Copilot bearer and of the background refresh loop that renews
+ * it — GET `/control/diagnostics`.
+ *
+ * This exists because there was no state between "healthy" and "every request
+ * fails with 403" (#9): the refresh loop retried a transport failure every 15s
+ * indefinitely and recorded nothing, so a refresh that had been broken for
+ * minutes was indistinguishable from one that had never failed.
+ *
+ * `health` uses #15's `AccountHealth` vocabulary. `needsReauth` is NOT reachable
+ * here on purpose — only an auth-fatal rejection may claim a credential is
+ * invalid, and that verdict is written on the account record by
+ * `markAuthDegraded`. An offline or upstream failure only ever reaches
+ * `refreshing` or `expired`.
+ *
+ * No token value, and `last_failure_reason` is a typed network diagnosis or an
+ * error message — never an upstream body.
+ */
+export const CopilotRefreshStatus = z.object({
+  /** `healthy` · `refreshing` (failing, bearer still live) · `expired` (bearer
+   *  past its stated expiry AND refresh failing) · `unknown` (no bearer). */
+  health: z.enum(["healthy", "refreshing", "expired", "unknown"]),
+  /** ISO expiry of the bearer held, or null when it has none (`gho_`). */
+  token_expires_at: z.string().nullable(),
+  last_success_at: z.string().nullable(),
+  last_failure_at: z.string().nullable(),
+  last_failure_reason: z.string().nullable(),
+  consecutive_failures: z.number().int(),
+})
+export type CopilotRefreshStatus = z.infer<typeof CopilotRefreshStatus>
+
 /** The proxy throttles via a fixed minimum interval between
  *  requests, not a "tokens remaining / resets-at" bucket. The
  *  contract surfaces what actually exists. */
@@ -85,6 +116,10 @@ export const DiagnosticsResponse = z.object({
   account_type: z.string(),
   models_cached: z.number().int(),
   tokens: TokenStatus,
+  /** Copilot bearer + refresh-loop health. Optional across versions, like
+   *  `copilot_service`: a sidecar predating #9 omits it, so a newer UI talking
+   *  to an older running proxy must tolerate its absence. */
+  copilot_refresh: CopilotRefreshStatus.optional(),
   rate_limit: RateLimitStatus,
   web_search: WebSearchStatus,
   /** Resolved Copilot service configuration. Optional across versions: a

@@ -37,11 +37,18 @@ import {
   ApiKeyUpdateRequest,
   ClaudeCodeToggleRequest,
   ClaudeDesktopToggleRequest,
+  type CopilotRefreshStatus,
   type DiagnosticsResponse,
 } from "~/lib/config/settings-types"
 import { forwardError } from "~/lib/errors/error"
 import { describeLaunchSource } from "~/lib/platform/cli-path"
-import { modelsCached, state, tokenPresence } from "~/lib/runtime-state/state"
+import {
+  copilotRefreshHealth,
+  copilotTokenHealth,
+  modelsCached,
+  state,
+  tokenPresence,
+} from "~/lib/runtime-state/state"
 import { BUILD_VERSION } from "~/lib/update/build-info"
 import { getGitVersion, shortSha } from "~/lib/update/version"
 
@@ -307,6 +314,25 @@ function registerAppToggles(app: HonoApp): void {
   })
 }
 
+/** ISO-8601 for an epoch-ms instant, or null when we don't have one. */
+const isoOrNull = (ms: number | null | undefined): string | null =>
+  ms === null || ms === undefined ? null : new Date(ms).toISOString()
+
+/** Project the runtime refresh-health mirror onto the wire contract. Carries no
+ *  token value; `last_failure_reason` is a typed diagnosis or an error message,
+ *  never an upstream body. */
+function buildCopilotRefreshStatus(): CopilotRefreshStatus {
+  const health = copilotRefreshHealth()
+  return {
+    health: copilotTokenHealth(),
+    token_expires_at: isoOrNull(state.copilotTokenExpiresAtMs),
+    last_success_at: isoOrNull(health.lastSuccessAtMs),
+    last_failure_at: isoOrNull(health.lastFailureAtMs),
+    last_failure_reason: health.lastFailureReason,
+    consecutive_failures: health.consecutiveFailures,
+  }
+}
+
 function buildDiagnostics(): DiagnosticsResponse {
   const git = getGitVersion()
   const launch = describeLaunchSource()
@@ -326,6 +352,7 @@ function buildDiagnostics(): DiagnosticsResponse {
       github_token_present: tokens.github,
       copilot_token_present: tokens.copilot,
     },
+    copilot_refresh: buildCopilotRefreshStatus(),
     rate_limit: {
       interval_seconds: state.rateLimitSeconds ?? null,
       last_request_at:
