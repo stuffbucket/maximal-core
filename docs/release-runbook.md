@@ -88,7 +88,7 @@ CI (`ci.yml`) gates every PR, so a green milestone is already most of this.
 bun install
 bun run check:deep        # lint, typecheck, typecheck:downstream, casts:check,
                           # tests, knip, build
-bun run e2e               # seam + feed + lifecycle harnesses
+bun run e2e               # seam + feed + lifecycle + replace harnesses
 bun run release:check milestone vX.Y.Z   # every PR in the milestone vs the bump
 ```
 
@@ -353,7 +353,7 @@ platform or both.
 ```sh
 bun run build:binary                                   # dist-bin/maximal, host target
 bun run verify:artifact -- --binary=dist-bin/maximal   # --version, boot, x-maximal-version, SIGTERM
-bun run e2e:binary -- --binary=dist-bin/maximal        # seam + feed + lifecycle vs that exact file
+bun run e2e:binary -- --binary=dist-bin/maximal        # seam + feed + lifecycle + replace vs that exact file
 ```
 
 > **`bun run dev:stale-check` is not this check and never was.** It probes a
@@ -518,7 +518,23 @@ Listed so nobody re-derives it from a stale doc:
   `TerminateProcess`, and nothing in Node or Bun can deliver a graceful stop to
   a child there. So the Windows shutdown checks prove the process is terminable;
   the drain path (Claude Code revert, pidfile removal, session sentinel) is only
-  exercised on macOS. The parent-death watchdog is exercised on both.
+  exercised on macOS. The parent-death watchdog is exercised on both — and so,
+  since `e2e:replace` landed, is the *eviction* stop: `/_internal/shutdown` ends
+  in a userspace `process.exit(0)`, which needs no signal and therefore ports.
+  (It is a different path from `initiateShutdown`, so it is not the drain above.)
+- No coverage of the `--replace` **escalation** branch, or of the
+  `server.portPolicy: "replace"` config as distinct from the `--replace` flag.
+  `e2e:replace` covers the flag end to end on both platforms — graceful takeover,
+  the incumbent exiting through its own shutdown endpoint, no eviction without
+  the flag, a foreign occupant left alive, and no credential on the shutdown POST
+  — but only ever reaches the escalation branch (stale pidfile → SIGTERM →
+  SIGKILL → `lsof`/`ps` guard) by asserting its *outcome* on a foreign occupant.
+  Manufacturing a maximal that binds the port and then stops answering HTTP is
+  what proving the branch itself would need, and there is no portable way to do
+  it. Note that branch does not exist on Windows in any case: `defaultListenerPid`
+  returns null there, so a takeover that the graceful POST cannot complete fails
+  rather than escalating. The config policy's `probePort` identity gate is unit
+  tested only.
 - No check that a tag is *annotated*. `release-tag-check.yml` compares the
   version and nothing else; `-a` is still on you.
 - No prerelease support anywhere. `vX.Y.Z-rc.1` is not a release tag to any of
