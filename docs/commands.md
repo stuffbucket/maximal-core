@@ -48,9 +48,9 @@ bun run mutate       # Stryker; configure module under test in stryker.conf.json
 bun run release:check         # scripts/ops/release-gates.ts (milestone + bump)
 bun run release:notes v0.2.1  # milestone -> CHANGELOG-shaped Markdown
                               # --release-body for a GitHub Release body
-bun run release:manual        # cut the version: guard, preflight, bump,
+bun run release:manual vX.Y.Z  # cut the version: guard, preflight, notes, bump,
                               # rebuild dist/ on the pinned Bun, commit, tag, push
-bun run release:manual --no-publish   # cut and push the tag, skip the registry
+bun run release:manual vX.Y.Z --no-publish   # cut the tag, skip the registry
 bun run release:preflight     # assert the pinned Bun without cutting anything
 
 # Ops tooling under scripts/ops/ (own tsconfig + test run)
