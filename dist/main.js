@@ -32403,7 +32403,7 @@ function findGithubUrl(text) {
 }
 
 // src/services/github/get-copilot-token.ts
-var getCopilotToken = async () => {
+var DEFAULT_REFRESH_IN_SECONDS = 1500, CopilotTokenResponseSchema, getCopilotToken = async () => {
   const response = await sendRequest(getCopilotTokenUrl(), {
     headers: githubHeaders(),
     timeoutMs: COPILOT_TOKEN_TIMEOUT_MS
@@ -32419,14 +32419,21 @@ var getCopilotToken = async () => {
     }
     throw new HTTPError("Failed to get Copilot token", response);
   }
-  return await response.json();
+  return CopilotTokenResponseSchema.parse(await response.json());
 };
 var init_get_copilot_token = __esm(() => {
   init_dist();
+  init_zod();
   init_api_config();
   init_error2();
   init_send_request();
   init_state();
+  CopilotTokenResponseSchema = exports_external.object({
+    expires_at: exports_external.number().catch(0),
+    refresh_in: exports_external.number().nonnegative().catch(DEFAULT_REFRESH_IN_SECONDS),
+    token: exports_external.string(),
+    endpoints: exports_external.object({ api: exports_external.string().optional() }).loose().optional().catch(undefined)
+  }).loose();
 });
 
 // src/lib/auth/token.ts
@@ -34566,6 +34573,8 @@ function runRetentionSweep() {
     if (removed > 0) {
       consola.debug(`Pruned ${removed} token-usage event(s) older than ${days}d`);
     }
+  }, (error51) => {
+    consola.warn("Token-usage retention sweep failed:", error51);
   });
 }
 function startTokenUsageRetention() {
@@ -35283,13 +35292,16 @@ var init_small_model = () => {};
 // src/lib/platform/shell.ts
 import { execSync } from "child_process";
 import process18 from "process";
-function getShell() {
-  const { platform: platform3, ppid, env: env3 } = process18;
+function getShell(probe = {}) {
+  const platform3 = probe.platform ?? process18.platform;
+  const ppid = probe.ppid ?? process18.ppid;
+  const env3 = probe.env ?? process18.env;
+  const run = probe.run ?? defaultRun;
   if (platform3 === "win32") {
     try {
-      const command = `wmic process get ParentProcessId,Name | findstr "${ppid}"`;
-      const parentProcess = execSync(command, { stdio: "pipe" }).toString();
-      if (parentProcess.toLowerCase().includes("powershell.exe")) {
+      const output = run(`tasklist /FI "PID eq ${ppid}" /NH /FO CSV`);
+      const parentImage = output.toLowerCase();
+      if (parentImage.includes("powershell.exe") || parentImage.includes("pwsh.exe")) {
         return "powershell";
       }
     } catch {
@@ -35309,8 +35321,8 @@ function getShell() {
     return "sh";
   }
 }
-function generateEnvScript(envVars, commandToRun = "") {
-  const shell = getShell();
+function generateEnvScript(envVars, commandToRun = "", probe = {}) {
+  const shell = getShell(probe);
   const filteredEnvVars = Object.entries(envVars).filter(([, value]) => value !== undefined);
   let commandBlock;
   switch (shell) {
@@ -35338,6 +35350,7 @@ function generateEnvScript(envVars, commandToRun = "") {
   }
   return commandBlock || commandToRun;
 }
+var defaultRun = (command) => execSync(command, { stdio: "pipe" }).toString();
 var init_shell = () => {};
 
 // src/lib/start/claude-code-flow.ts
@@ -69280,19 +69293,28 @@ async function handleWithWebToolsAgent(args) {
     return c5.json(finalResponse);
   }
   return streamSSE(c5, async (stream3) => {
-    await runStreamingAgent({
-      initialPayload: payload,
-      policy,
-      stream: stream3,
-      options,
-      executor
-    });
+    try {
+      await runStreamingAgent({
+        initialPayload: payload,
+        policy,
+        stream: stream3,
+        options,
+        executor,
+        upstreamCall: args.upstreamCall
+      });
+    } catch (error51) {
+      await emitStreamError(stream3, options.logger, {
+        error: error51,
+        flow: "chat_completions"
+      });
+    }
   });
 }
 var init_flow = __esm(() => {
   init_streaming2();
   init_create_chat_completions();
   init_non_stream_translation();
+  init_stream_error();
   init_agent();
   init_executor();
   init_rewriter();
