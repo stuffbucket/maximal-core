@@ -96,8 +96,18 @@ describe("removeLegacyShimIfPresent", () => {
 
 describe("legacyShimPath", () => {
   test("returns ~/.local/share/maximal/shims/claude for the given home", () => {
-    expect(legacyShimPath("/tmp/fake-home")).toBe(
-      "/tmp/fake-home/.local/share/maximal/shims/claude",
+    // Expected value built with `path.join`, like the implementation: a
+    // "/"-joined literal would assert `path.sep`, not the layout.
+    expect(legacyShimPath(path.join("/tmp", "fake-home"))).toBe(
+      path.join(
+        "/tmp",
+        "fake-home",
+        ".local",
+        "share",
+        "maximal",
+        "shims",
+        "claude",
+      ),
     )
   })
 })

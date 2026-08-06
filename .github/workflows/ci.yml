@@ -112,18 +112,19 @@ jobs:
     # outright, the leg died at install, `publish` never ran. Every PR was
     # green, because every PR only ever ran on ubuntu-latest.
     #
-    # This is that leg minus the rename/checksum/upload: same runner, same
-    # `bun install`, same three package.json scripts, same order.
+    # This is that leg minus the rename/checksum/upload — same runner, same
+    # `bun install`, same three package.json scripts, same order — plus the
+    # unit suite appended after it.
     #
-    # MEASURED on this repo (one run, all legs concurrent; job wall clock):
+    # MEASURED on this repo (job wall clock, all legs concurrent):
     #
     #   ubuntu `test` (the job above)                       79s
     #   windows, checkout + setup-bun + `bun install`       66s
-    #   windows, + build:binary + verify:artifact + e2e     95s  <- this job
-    #   windows, `bun test` instead of the above           112s, RED
+    #   windows, + build:binary + verify:artifact + e2e     95s
+    #   windows, + `bun test`                              112s  <- this job
     #
-    # Per-step, on this job: checkout 7s, setup-bun 12s, `bun install` 54s,
-    # everything after it 16s. Two conclusions the numbers make for us:
+    # Per-step: checkout 7s, setup-bun 12s, `bun install` 54s, the release leg
+    # 16s, `bun test` ~17s. Three conclusions the numbers make for us:
     #
     # 1. The install IS the cost, and it is the check — running the lifecycle
     #    scripts under Bun's Windows shell is the whole of what catches #38.
@@ -132,16 +133,18 @@ jobs:
     #    (`e2e:lifecycle` spawning POSIX `sleep`). 16s is not a reason to ship
     #    a check that only covers the first step of the thing it is proxying.
     #
-    # 2. `bun test` is deliberately absent. It does not pass on Windows and has
-    #    not: 22 of 1574 assert POSIX directly — mode 0600, symlinks,
-    #    `~/.local/share`, `claude` on PATH — not portable product behaviour.
-    #    Adding it would make this job red on arrival for reasons that are not
-    #    release risk. Porting those is a tests/** change, not a CI one.
+    # 2. `bun test` adds ~17s on top of that, entirely inside the wall clock
+    #    the concurrent ubuntu `test` job already spends. It costs the merge
+    #    queue nothing it was not already waiting for.
     #
-    # It runs concurrently with `test` and carries no path filter, so it costs
-    # CI ~16s of wall clock and reports in the merge queue like any other check
-    # (a path-filtered required check never reports there — see the note on
-    # `bindings:check` above).
+    # 3. What it buys: `resolveConfigPath`, the secrets file tier, CLI
+    #    detection and the atomic JSON writers had ZERO Windows coverage, and
+    #    the first `bun test` run here found a Windows-only product bug in the
+    #    secrets loader that every green ubuntu run had missed.
+    #
+    # It runs concurrently with `test` and carries no path filter, so it
+    # reports in the merge queue like any other check (a path-filtered required
+    # check never reports there — see the note on `bindings:check` above).
     #
     # WHAT THIS STILL CANNOT CATCH: the macOS leg, the second target's compile,
     # and the publish job's rename/checksum/ARTIFACTS.md assembly. Those need
@@ -225,3 +228,28 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.bun/bin:$PATH"
           bun run e2e:binary -- --binary=dist-release/maximal.exe
+
+      - name: Run tests
+        # The unit suite, on the platform we ship a `windows-x64` binary for.
+        #
+        # Deliberately LAST, after the release leg above and not interleaved
+        # with it. Two reasons: the leg's step sequence stays byte-for-byte the
+        # shape release-artifacts.yml runs (the KEEP IN SYNC note below is only
+        # checkable if nothing is spliced into the middle), and a unit failure
+        # can never mask a build/verify/e2e failure by short-circuiting ahead
+        # of it.
+        #
+        # This was absent until now because 22 of 1574 cases failed here. All
+        # 22 were POSIX assumptions in `tests/**` except one, which was a real
+        # product bug on Windows that no other check could have found — see the
+        # PR that added this step.
+        #
+        # 5 cases stay skipped on win32, each with the reason at its skip site:
+        # 4 in cli-path.test.ts (`ensureCliSymlink` returns `not-macos` before
+        # touching the filesystem, so its symlink body is unreachable on
+        # Windows) and 1 in secrets.test.ts (the "refuses a group/world-readable
+        # secrets file" fixture cannot be constructed without POSIX mode bits).
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun test

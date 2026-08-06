@@ -5,9 +5,11 @@
  * Env vars still win — this is a fallback for "I don't want my API
  * key in shell history."
  *
- * Format: one key value per file, trailing whitespace stripped. The
- * file must be mode 0600; broader modes are warned about and skipped
- * (the proxy refuses to read a key that any other user can read).
+ * Format: one key value per file, trailing whitespace stripped. On POSIX the
+ * file must be mode 0600; broader modes are warned about and skipped (the
+ * proxy refuses to read a key that any other user can read). Windows has no
+ * POSIX mode bits, so that gate does not apply there — see
+ * {@link modeIsOwnerOnly}.
  *
  * The directory is created on first read with mode 0700 if absent.
  *
@@ -27,6 +29,29 @@ const SAFE_FILE_MODE = 0o600
 const SAFE_DIR_MODE = 0o700
 
 export type SecretSource = "env" | "file" | "unset"
+
+/**
+ * True when a secrets file's on-disk permissions are narrow enough to read it.
+ *
+ * POSIX: the low 9 bits must be exactly {@link SAFE_FILE_MODE}. Anything
+ * broader means group or world can read the key, so we refuse rather than let
+ * a drive-by chmod become a credential leak.
+ *
+ * **win32: the gate is skipped, not inverted.** Windows has no POSIX mode
+ * bits; Node synthesizes `stats.mode` from the read-only attribute alone, so
+ * every writable file reports 0o666. The comparison above therefore rejected
+ * *every* secrets file on the platform we ship a `windows-x64` binary for —
+ * the file tier was dead code there, its only symptom a misleading
+ * "insecure mode 666" warning. There is nothing equivalent to check in its
+ * place: Node exposes no ACL API, and the secrets dir lives under `%APPDATA%`,
+ * which Windows already ACLs to the owning user. So on win32 the
+ * "no one else can read this" property is delegated to the directory ACL
+ * rather than asserted here.
+ */
+function modeIsOwnerOnly(mode: number): boolean {
+  if (process.platform === "win32") return true
+  return (mode & 0o777) === SAFE_FILE_MODE
+}
 
 export interface SecretRead {
   /** The resolved value, or undefined if neither source produced one. */
@@ -82,12 +107,10 @@ export function readSecret(opts: {
       }
     }
 
-    // POSIX file mode lives in the lower 9 bits of stats.mode. We only
-    // tolerate 0600 (or stricter — but that's rare). Anything broader
-    // means group or world can read; refuse so a drive-by chmod doesn't
-    // turn into a credential leak.
+    // POSIX file mode lives in the lower 9 bits of stats.mode; see
+    // modeIsOwnerOnly for why win32 takes a different branch.
     const mode = stats.mode & 0o777
-    if (mode !== SAFE_FILE_MODE) {
+    if (!modeIsOwnerOnly(mode)) {
       const msg = `${file} has insecure mode ${mode.toString(8).padStart(3, "0")} (expected 600); skipped`
       consola.warn(msg)
       return { value: undefined, source: "unset", diagnostic: msg }
@@ -181,7 +204,7 @@ export function secretIsFromFile(fileName: string, value: string): boolean {
   try {
     const stats = fs.fstatSync(fd)
     if (!stats.isFile()) return false
-    if ((stats.mode & 0o777) !== SAFE_FILE_MODE) return false
+    if (!modeIsOwnerOnly(stats.mode)) return false
     return fs.readFileSync(fd, "utf8").trim() === value
   } catch {
     return false

@@ -5,6 +5,10 @@
  * `~/Library/Application Support/Claude-3p` is never touched. Mirrors the
  * behaviour validated live on 2026-06-22 (the app boots into 3P, discovers
  * gateway models, no Anthropic sign-in).
+ *
+ * On win32 the throwaway `home` is NOT sufficient on its own — `getClaude3pDir`
+ * prefers `%LOCALAPPDATA%` over it — so `redirectLocalAppData` confines that
+ * variable to the same temp dir. See `tests/helpers/win-appdata.ts`.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
@@ -22,13 +26,18 @@ import {
   revertConfigLibraryProfile,
 } from "~/apps/claude-desktop/config"
 
+import { redirectLocalAppData } from "./helpers/win-appdata"
+
 let home: string
+let restoreLocalAppData: () => void
 
 beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "cd-3p-"))
+  restoreLocalAppData = redirectLocalAppData(home)
 })
 
 afterEach(() => {
+  restoreLocalAppData()
   try {
     fs.rmSync(home, { recursive: true, force: true })
   } catch {

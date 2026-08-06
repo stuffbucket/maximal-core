@@ -35155,6 +35155,11 @@ var init_auth_recovery = __esm(() => {
 // src/lib/auth/secrets.ts
 import fs18 from "fs";
 import path20 from "path";
+function modeIsOwnerOnly(mode) {
+  if (process.platform === "win32")
+    return true;
+  return (mode & 511) === SAFE_FILE_MODE;
+}
 function readSecret(opts) {
   const env3 = opts.env ?? process.env;
   const envVal = env3[opts.envVar];
@@ -35179,7 +35184,7 @@ function readSecret(opts) {
       };
     }
     const mode = stats.mode & 511;
-    if (mode !== SAFE_FILE_MODE) {
+    if (!modeIsOwnerOnly(mode)) {
       const msg = `${file2} has insecure mode ${mode.toString(8).padStart(3, "0")} (expected 600); skipped`;
       consola.warn(msg);
       return { value: undefined, source: "unset", diagnostic: msg };
@@ -35228,7 +35233,7 @@ function secretIsFromFile(fileName, value) {
     const stats = fs18.fstatSync(fd);
     if (!stats.isFile())
       return false;
-    if ((stats.mode & 511) !== SAFE_FILE_MODE)
+    if (!modeIsOwnerOnly(stats.mode))
       return false;
     return fs18.readFileSync(fd, "utf8").trim() === value;
   } catch {
