@@ -73,6 +73,20 @@ function requirePr(live: Array<Ruleset>): Ruleset {
   return found
 }
 
+/** One rule's `parameters` bag, for targeted mutation. Throws if the fixture drifted. */
+function params(live: Array<Ruleset>, type: string): Record<string, unknown> {
+  const found = requirePr(live).rules?.find((r) => r.type === type)?.parameters
+  if (!found) throw new Error(`fixture lost the ${type} rule`)
+  return found
+}
+
+/** The required-context list inside the `required_status_checks` rule. */
+function contexts(live: Array<Ruleset>): Array<{ context: string }> {
+  return params(live, "required_status_checks").required_status_checks as Array<{
+    context: string
+  }>
+}
+
 describe("healthy state", () => {
   test("the recorded floor is met", () => {
     const report = evaluate(healthy())
@@ -83,12 +97,8 @@ describe("healthy state", () => {
 
   test("a tightening is not drift", () => {
     const live = healthy()
-    const checks = requirePr(live).rules?.[1]
-    ;(checks?.parameters?.required_status_checks as Array<{ context: string }>).push({
-      context: "codeql",
-    })
-    ;(requirePr(live).rules?.[0].parameters as Record<string, unknown>)
-      .required_approving_review_count = 1
+    contexts(live).push({ context: "codeql" })
+    params(live, "pull_request").required_approving_review_count = 1
     expect(evaluate(live).findings).toEqual([])
   })
 
@@ -136,10 +146,7 @@ describe("weakenings are findings", () => {
 
   test("a required check dropped", () => {
     const live = healthy()
-    const checks = requirePr(live).rules?.[1]
-    if (checks?.parameters) {
-      checks.parameters.required_status_checks = [{ context: "test" }]
-    }
+    params(live, "required_status_checks").required_status_checks = [{ context: "test" }]
     const assertions = evaluate(live).findings.map((f) => f.assertion)
     expect(assertions).toContain("requires the `windows` check")
     expect(assertions).toContain("requires the `gate` check")
@@ -147,8 +154,7 @@ describe("weakenings are findings", () => {
 
   test("strict-update turned off", () => {
     const live = healthy()
-    const checks = requirePr(live).rules?.[1]
-    if (checks?.parameters) checks.parameters.strict_required_status_checks_policy = false
+    params(live, "required_status_checks").strict_required_status_checks_policy = false
     const finding = evaluate(live).findings[0]
     expect(finding.assertion).toBe("requires the branch to be up to date before merge")
     expect(finding.detail).toContain("Merge Queue")
@@ -156,8 +162,7 @@ describe("weakenings are findings", () => {
 
   test("merge methods widened past squash", () => {
     const live = healthy()
-    const pr = requirePr(live).rules?.[0]
-    if (pr?.parameters) pr.parameters.allowed_merge_methods = ["squash", "merge"]
+    params(live, "pull_request").allowed_merge_methods = ["squash", "merge"]
     const finding = evaluate(live).findings[0]
     expect(finding.assertion).toContain("only `squash`")
     expect(finding.detail).toContain("`merge`")
