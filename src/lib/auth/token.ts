@@ -546,12 +546,34 @@ export async function setupGitHubToken(
     log.info(`Logged in as ${login ?? "(unknown)"}`)
   } catch (error) {
     if (error instanceof HTTPError) {
-      log.error("Failed to get GitHub token:", await error.response.json())
+      // Read the body the way `forwardError` does: text first, then JSON only
+      // if it parses. `error.response.json()` threw `SyntaxError` on the HTML
+      // GitHub's edge (or an intercepting proxy) returns for a 502 — inside the
+      // catch, so the diagnostic never logged AND the SyntaxError replaced the
+      // typed HTTPError callers discriminate on.
+      log.error("Failed to get GitHub token:", await readErrorBody(error))
       throw error
     }
 
     log.error("Failed to get GitHub token:", error)
     throw error
+  }
+}
+
+/** The upstream error body as the most useful value available: parsed JSON when
+ *  it is JSON, the raw text when it isn't, and a note when the body can't be
+ *  read at all. Never throws — it only feeds a log line. */
+async function readErrorBody(error: HTTPError): Promise<unknown> {
+  let text: string
+  try {
+    text = await error.response.text()
+  } catch {
+    return `<unreadable ${error.response.status} body>`
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
   }
 }
 
