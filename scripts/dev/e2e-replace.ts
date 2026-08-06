@@ -63,6 +63,7 @@ import type { Occupant } from "./harness/occupant"
 
 import { startOccupant } from "./harness/occupant"
 import {
+  awaitIdentity,
   collectLines,
   createReporter,
   spawnEngine,
@@ -109,20 +110,6 @@ function track<T extends { child: ChildProcess }>(thing: T): T {
   return thing
 }
 
-/** GET `/` on a public port. Returns the body, or null if nothing answered —
- *  which is how "is that process still serving" gets asked without trusting a
- *  pid that may have been recycled. */
-async function identityOf(port: number): Promise<string | null> {
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/`, {
-      signal: AbortSignal.timeout(1000),
-    })
-    return (await res.text()).trim()
-  } catch {
-    return null
-  }
-}
-
 /** A temp `COPILOT_API_HOME` with `config.json` already written. Config is read
  *  during boot, so seeding it afterwards would be too late. */
 function homeWithConfig(config: unknown): string {
@@ -143,10 +130,17 @@ const report = createReporter(
 {
   const incumbent = track(await startSidecar())
   const port = incumbent.proxyPort
+  // Bounded retry rather than one shot: this is the first HTTP request the
+  // harness makes, and on a cold Windows runner that round-trip has taken
+  // longer than a single attempt allows. `observed` names every attempt that
+  // missed, so a slow answer is reported rather than silently absorbed.
+  const identity = await awaitIdentity(port, MAXIMAL_IDENTITY)
   report.check(
     "incumbent",
-    (await identityOf(port)) === MAXIMAL_IDENTITY,
-    `pid=${incumbent.pid} holds :${port} and answers the identity probe`,
+    identity.body === MAXIMAL_IDENTITY,
+    identity.body === MAXIMAL_IDENTITY ?
+      `pid=${incumbent.pid} holds :${port} and answered — ${identity.observed}`
+    : `pid=${incumbent.pid} announced :${port} but the identity probe never got ${JSON.stringify(MAXIMAL_IDENTITY)} in ${identity.elapsedMs}ms over ${identity.attempts} attempt(s): ${identity.observed}`,
   )
 
   const successor = track(
@@ -196,11 +190,14 @@ const report = createReporter(
     : "the escalation branch never fired: no SIGTERM was sent",
   )
 
-  const served = await identityOf(port)
+  const served = await awaitIdentity(port, MAXIMAL_IDENTITY)
+  const successorAlive = successor.child.exitCode === null
   report.check(
     "serving",
-    served === MAXIMAL_IDENTITY && successor.child.exitCode === null,
-    `:${port} answers ${JSON.stringify(served)} — and it can only be the successor`,
+    served.body === MAXIMAL_IDENTITY && successorAlive,
+    served.body === MAXIMAL_IDENTITY && successorAlive ?
+      `:${port} — ${served.observed} — and it can only be the successor`
+    : `:${port} — ${served.observed}; successor is ${successorAlive ? "running" : `code=${successor.child.exitCode}`}`,
   )
 
   successor.child.kill("SIGTERM")
@@ -223,12 +220,12 @@ const report = createReporter(
     : `asked for :${port}, took :${successor.proxyPort} instead (portPolicy "next")`,
   )
 
-  const stillThere = await identityOf(port)
+  const stillThere = await awaitIdentity(port, MAXIMAL_IDENTITY)
   report.check(
     "incumbent alive",
-    incumbent.child.exitCode === null && stillThere === MAXIMAL_IDENTITY,
+    incumbent.child.exitCode === null && stillThere.body === MAXIMAL_IDENTITY,
     incumbent.child.exitCode === null ?
-      `pid=${incumbent.pid} still serving :${port}`
+      `pid=${incumbent.pid} still serving :${port} — ${stillThere.observed}`
     : `incumbent exited code=${incumbent.child.exitCode} — an unflagged start evicted it`,
   )
 
@@ -257,10 +254,13 @@ const report = createReporter(
   const foreign: Occupant = track(
     await startOccupant({ identity: FOREIGN_IDENTITY, obeys: false }),
   )
+  const held = await awaitIdentity(foreign.port, FOREIGN_IDENTITY)
   report.check(
     "foreign occupant",
-    (await identityOf(foreign.port)) === FOREIGN_IDENTITY,
-    `pid=${foreign.child.pid} holds :${foreign.port} and does not answer ${JSON.stringify(MAXIMAL_IDENTITY)}`,
+    held.body === FOREIGN_IDENTITY,
+    held.body === FOREIGN_IDENTITY ?
+      `pid=${foreign.child.pid} holds :${foreign.port} and answers ${JSON.stringify(held.body)}, not ${JSON.stringify(MAXIMAL_IDENTITY)}`
+    : `pid=${foreign.child.pid} on :${foreign.port} — ${held.observed}; the guard below would be aimed at the wrong occupant`,
   )
 
   // `spawnEngine` rather than `startSidecar`: this boot is supposed to fail, so
@@ -281,15 +281,15 @@ const report = createReporter(
       }`,
   )
 
-  const survived = await identityOf(foreign.port)
+  const survived = await awaitIdentity(foreign.port, FOREIGN_IDENTITY)
   report.check(
     "left alone",
     foreign.child.exitCode === null
       && foreign.child.signalCode === null
-      && survived === FOREIGN_IDENTITY,
-    survived === FOREIGN_IDENTITY ?
+      && survived.body === FOREIGN_IDENTITY,
+    survived.body === FOREIGN_IDENTITY ?
       `still bound and still answering (it was ${foreign.shutdownHeaders() ? "asked to shut down and 404'd it" : "never asked"}, and never signalled)`
-    : `pid=${foreign.child.pid} is code=${foreign.child.exitCode ?? "null"} signal=${foreign.child.signalCode ?? "none"} — an unrelated process was terminated`,
+    : `pid=${foreign.child.pid} is code=${foreign.child.exitCode ?? "null"} signal=${foreign.child.signalCode ?? "none"} — ${survived.observed}`,
   )
 
   foreign.kill()
@@ -314,7 +314,9 @@ const report = createReporter(
   report.check(
     "impostor",
     successor.proxyPort === impostor.port,
-    `served ${JSON.stringify(MAXIMAL_IDENTITY)} on :${impostor.port}, obeyed the POST, and the successor took the port`,
+    successor.proxyPort === impostor.port ?
+      `served ${JSON.stringify(MAXIMAL_IDENTITY)} on :${impostor.port}, obeyed the POST, and the successor took the port`
+    : `the successor settled for :${successor.proxyPort} rather than the impostor's :${impostor.port} — no shutdown POST was sent, so there is nothing to observe below`,
   )
 
   // Non-vacuity. "No key on the wire" proves nothing if the engine had no key
@@ -327,7 +329,9 @@ const report = createReporter(
   report.check(
     "key loaded",
     without === 401 && withKey !== 401,
-    `unknown path: ${without} without the key, ${withKey} with it — the sentinel is live in this engine's config`,
+    without === 401 && withKey !== 401 ?
+      `unknown path: ${without} without the key, ${withKey} with it — the sentinel is live in this engine's config`
+    : `unknown path: ${without} without the key, ${withKey} with it — expected 401 then anything else; the sentinel is not gating, so "no credential" below proves nothing`,
   )
 
   const sent = impostor.shutdownHeaders()

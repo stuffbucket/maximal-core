@@ -19,6 +19,7 @@ import type { Readable } from "node:stream"
 
 import { spawn } from "node:child_process"
 import { mkdtempSync } from "node:fs"
+import net from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -468,6 +469,169 @@ export function waitForExit(
       resolve({ code, signal })
     })
   })
+}
+
+/** Outcome of a bare TCP connect: was the port accepting, and how long did
+ *  finding out take. */
+export interface ConnectProbe {
+  accepted: boolean
+  /** What happened, phrased for a report detail. */
+  observed: string
+  elapsedMs: number
+}
+
+/**
+ * Connect to a port and immediately hang up.
+ *
+ * The discriminator `fetch` cannot give you. A refused connect means nothing is
+ * listening; a connect that succeeds while the request goes unanswered means the
+ * listener is bound and the process is busy. Only the first would be a
+ * ready-line that outran its own bind, and the two are indistinguishable
+ * through an aborted `fetch`.
+ */
+export function tcpAccepts(
+  port: number,
+  timeoutMs: number = 1000,
+): Promise<ConnectProbe> {
+  const started = Date.now()
+  return new Promise((resolve) => {
+    const socket = new net.Socket()
+    const settle = (accepted: boolean, observed: string): void => {
+      socket.destroy()
+      resolve({ accepted, observed, elapsedMs: Date.now() - started })
+    }
+    socket.setTimeout(timeoutMs)
+    socket.once("connect", () => settle(true, "accepted a TCP connect"))
+    socket.once("timeout", () =>
+      settle(false, `TCP connect stalled for ${timeoutMs}ms`),
+    )
+    socket.once("error", (error: NodeJS.ErrnoException) =>
+      settle(false, `TCP connect failed: ${error.code ?? error.message}`),
+    )
+    socket.connect(port, "127.0.0.1")
+  })
+}
+
+/** What GET `/` on a public port actually returned. */
+export interface IdentityProbe {
+  /** The trimmed body, or null when nothing answered. */
+  body: string | null
+  /** What was observed, in the words of the observation — a status and a body,
+   *  or the failure plus whether the port was accepting connections at all.
+   *  Written to be read after a check has already failed. */
+  observed: string
+  elapsedMs: number
+  attempts: number
+}
+
+/** How long one attempt waits before it counts as unanswered. */
+const IDENTITY_ATTEMPT_MS = 1000
+/** How long `awaitIdentity` keeps asking. A cold Windows runner has taken over
+ *  a second to complete the first loopback round-trip after a boot; this bounds
+ *  that without hiding it, since every attempt that missed is reported. */
+const IDENTITY_WINDOW_MS = 10_000
+/** Gap between attempts. */
+const IDENTITY_RETRY_MS = 100
+
+async function attemptIdentity(
+  port: number,
+  timeoutMs: number,
+): Promise<IdentityProbe> {
+  const started = Date.now()
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    const body = (await res.text()).trim()
+    const elapsedMs = Date.now() - started
+    return {
+      body,
+      observed: `HTTP ${res.status} ${JSON.stringify(body)} in ${elapsedMs}ms`,
+      elapsedMs,
+      attempts: 1,
+    }
+  } catch (error) {
+    const elapsedMs = Date.now() - started
+    // Ask the socket directly before reporting, so the detail can say whether
+    // there was a listener to answer at all.
+    const socket = await tcpAccepts(port, timeoutMs)
+    const why =
+      error instanceof Error && error.name === "TimeoutError" ?
+        `no answer within ${timeoutMs}ms`
+      : `fetch threw ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`
+    const listener =
+      socket.accepted ?
+        "the port then accepted a TCP connect, so it was bound and not answering"
+      : socket.observed
+    return { body: null, observed: `${why} — ${listener}`, elapsedMs, attempts: 1 }
+  }
+}
+
+/** GET `/` once. Never throws; the failure is in `observed`. */
+export function probeIdentity(
+  port: number,
+  timeoutMs: number = IDENTITY_ATTEMPT_MS,
+): Promise<IdentityProbe> {
+  return attemptIdentity(port, timeoutMs)
+}
+
+/**
+ * GET `/` until the body is `expected`, or the window closes.
+ *
+ * Bounded and never silent: `observed` names every attempt that did not answer,
+ * so a run that only passed on the second try still says so in its detail
+ * rather than reading identically to one that answered first time.
+ *
+ * A body that *is* there but is the wrong one ends it immediately — retrying
+ * cannot turn a stranger into the expected occupant, and waiting out the window
+ * would only slow down a real failure.
+ */
+export async function awaitIdentity(
+  port: number,
+  expected: string,
+  options: { withinMs?: number; attemptMs?: number } = {},
+): Promise<IdentityProbe> {
+  const attemptMs = options.attemptMs ?? IDENTITY_ATTEMPT_MS
+  const withinMs = options.withinMs ?? IDENTITY_WINDOW_MS
+  const started = Date.now()
+  // Consecutive identical observations are collapsed: ten copies of the same
+  // ECONNREFUSED say nothing the first one did not, and burying the useful
+  // attempt in them is how a detail stops being read.
+  const missed: Array<{ observed: string; from: number; count: number }> = []
+  const render = (): string =>
+    missed
+      .map((m) => `#${m.from}${m.count > 1 ? `-${m.from + m.count - 1}` : ""} ${m.observed}`)
+      .join("; ")
+  for (let attempt = 1; ; attempt++) {
+    const probe = await attemptIdentity(port, attemptMs)
+    const elapsedMs = Date.now() - started
+    // A body that is there but wrong ends it now: retrying cannot turn a
+    // stranger into the expected occupant.
+    const settled = probe.body !== null || elapsedMs >= withinMs
+    if (probe.body === expected) {
+      return {
+        body: probe.body,
+        elapsedMs,
+        attempts: attempt,
+        observed:
+          missed.length === 0 ?
+            probe.observed
+          : `${probe.observed}, on attempt ${attempt} after ${elapsedMs}ms — earlier: ${render()}`,
+      }
+    }
+    const last = missed.at(-1)
+    if (last?.observed === probe.observed) last.count += 1
+    else missed.push({ observed: probe.observed, from: attempt, count: 1 })
+    if (settled) {
+      return {
+        body: probe.body,
+        elapsedMs,
+        attempts: attempt,
+        observed: render(),
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, IDENTITY_RETRY_MS))
+  }
 }
 
 /** Poll a live-appended log buffer for a matching line. Returns it, or null on
