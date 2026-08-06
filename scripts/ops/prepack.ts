@@ -115,11 +115,27 @@ export interface RunResult {
 /** Runs one build. The single seam every child process passes. */
 export type CommandRunner = (command: string, args: ReadonlyArray<string>) => RunResult
 
+/**
+ * `env` IS PASSED EXPLICITLY, AND IT HAS TO BE. Bun's `spawnSync` defaults the
+ * child's environment to the SNAPSHOT this process started with, not to its
+ * current `process.env` — so anything a script sets at runtime is silently
+ * dropped on the way out. Measured, Bun 1.3.11:
+ *
+ *     process.env.PROBE = "set-by-parent"
+ *     spawnSync(bun, ["-e", "…"])                      → PROBE undefined
+ *     spawnSync(bun, ["-e", "…"], { env: process.env }) → PROBE set-by-parent
+ *
+ * `release.ts` hands the rendered CHANGELOG block to `bumpp`'s execute hook that
+ * way, and the failure mode without this line is the worst shape available: a
+ * green release whose commit simply has no changelog entry in it. Node passes
+ * the live `process.env` here, so this is also the portable spelling.
+ */
 export const realRunner: CommandRunner = (command, args) => {
   const res = spawnSync(command, [...args], {
     cwd: REPO_ROOT,
     encoding: "utf8",
     stdio: "inherit",
+    env: process.env,
   })
   if (res.error) {
     return { status: 127, output: `could not run \`${command}\`: ${res.error.message}` }

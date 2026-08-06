@@ -26,7 +26,9 @@ GitHub UI before the tag exists.
 
 `bun run release:notes vX.Y.Z` reads the milestone and emits the notes. It
 refuses to emit on a PR title it cannot parse, an unmerged PR, or a milestone
-that does not exist, rather than quietly shipping wrong notes.
+that does not exist, rather than quietly shipping wrong notes. `release:manual
+vX.Y.Z` calls the same generator and writes the entry into `CHANGELOG.md` inside
+the release commit, so it refuses on all of the same things — before it bumps.
 
 ### Choosing the version
 
@@ -95,7 +97,7 @@ warning the PR gate emits: it re-checks *every* PR in the milestone against the
 version about to be cut, so a milestone that was retargeted after one of its PRs
 merged cannot ship under-bumped.
 
-## 3. Generate the notes
+## 3. Check the notes
 
 ```sh
 bun run release:notes vX.Y.Z                  # CHANGELOG block
@@ -106,41 +108,88 @@ Exit codes: `0` clean, `1` problems found (nothing written — fix them, or
 `--force` to emit the well-formed subset anyway), `2` fatal (no such milestone,
 empty milestone, no usable PRs).
 
-Paste the changelog block into `CHANGELOG.md` directly under `# Changelog`. The
-output is byte-compatible with the release-please format the archived history
-uses, so there is no format seam.
+**Nothing to paste.** [Step 4](#4-bump-tag-push) generates this same block and
+writes it into `CHANGELOG.md` itself, at the
+`<!-- releases below … -->` anchor, inside the release commit. This step is the
+preview: it prints what step 4 will insert, and its exit code is step 4's — a
+non-zero here means `release:manual` will refuse for the same reason, before it
+has touched anything.
+
+The output is byte-compatible with the release-please format the archived
+history uses, so there is no format seam between a generated entry and the
+pasted ones above it.
+
+> **If you would rather write the entry yourself** — a `--force`d subset, or
+> prose no generator would produce — paste it under the anchor and commit it
+> first. Step 4 leaves an entry that is already there alone, including the `gh`
+> reads, so a hand-written block survives untouched. That is the one path that
+> still costs a second commit, and it is opt-in.
 
 ## 4. Bump, tag, push
 
 ```sh
-bun run release:manual    # guard, preflight, bumpp prompts; commits, tags, pushes, publishes
+bun run release:manual vX.Y.Z   # guard, preflight, notes, bumpp; commits, tags, pushes, publishes
 ```
 
 `release:manual` is [`scripts/ops/release.ts`](../scripts/ops/release.ts), which
-runs four steps **in that order, in one process**:
+runs five steps **in that order, in one process**:
 
 | # | Step | Refuses on |
 |---|---|---|
 | 1 | Clean-tree guard | any **tracked** modification, staged or unstaged, including `dist/` |
 | 2 | Preflight (`prepack --check`) | the running Bun is not the one in `.bun-version` |
-| 3 | `bumpp --all --execute "<pinned bun> release.ts --rebuild"` | — |
-| 4 | `bun publish --access public` | — |
+| 3 | Generate the `CHANGELOG.md` entry | anything `release:notes vX.Y.Z` would refuse to emit on |
+| 4 | `bumpp --all --release X.Y.Z --execute "<pinned bun> release.ts --rebuild"` | — |
+| 5 | `bun publish --access public` | — |
 
-Steps 1 and 2 are both **before** `bumpp`, **because everything after them is
+Steps 1 to 3 are all **before** `bumpp`, **because everything after them is
 irreversible**: `bumpp` commits, tags and pushes before `bun publish` is ever
 reached, and a registry publish cannot be taken back at all. Exit `1` means it
 refused and nothing happened; exit `2` means a step failed.
 
+**The tag is an argument now**, and it is required. It names the milestone the
+changelog entry is generated from, and it is what `bumpp` bumps `package.json`
+to (`--release X.Y.Z`), so [gate 3](#the-gates) — the tag matches the manifest —
+holds by construction rather than by a preflight anyone can skip. `--release` is
+therefore refused rather than forwarded: one version, one source.
+
 Useful flags — anything the script does not recognise is forwarded to `bumpp`:
 
 ```sh
-bun run release:manual --no-publish            # cut and push the tag, skip the registry
-bun run release:manual --release patch -y      # non-interactive
+bun run release:manual vX.Y.Z --no-publish     # cut and push the tag, skip the registry
+bun run release:manual vX.Y.Z -y               # non-interactive
 bun scripts/ops/release.ts --rebuild           # just regenerate + stage dist/, no release
 bun run release:preflight                      # step 2 on its own
 ```
 
-> **The rebuild is step 3's `--execute` hook, and it is why the commit is made
+> **Step 3 fetches and renders; the hook in step 4 writes.** Splitting it that
+> way is what makes the sequence above runnable top to bottom. The block cannot
+> be fetched until the version is known, and it must not be *written* until
+> `bumpp` is past its confirmation prompt — otherwise a decline, or a Ctrl-C,
+> leaves a modified `CHANGELOG.md` that step 1 refuses on the next attempt.
+> Which is precisely the bug this replaced: the runbook used to say "paste the
+> block into `CHANGELOG.md`" in step 3 and "run `release:manual`" in step 4,
+> whose first action refuses any tracked modification — including that paste. It
+> was worked around by committing the changelog separately, which is why v0.4.1
+> carries two commits (`6b04af5`, `7418be1`) where every release before it
+> carries one.
+>
+> So on the refusal path — a milestone with an unmerged PR, an unparseable
+> title, no milestone at all — nothing has been written and the tree is exactly
+> as the guard found it. Re-run when the milestone is fixed.
+>
+> **The guard keeps no exemptions, and that is deliberate.** `CHANGELOG.md` is
+> not special-cased out of step 1; it is written *after* step 1, by the same
+> script, in the same window as the `dist/` rebuild — see the note below on why
+> that window exists at all. A guard whose value is that it has no exceptions
+> does not survive its first one.
+>
+> **An entry that is already there is left alone**, `gh` reads included. A
+> re-run after a failed `bumpp`, or a block someone pasted by hand, is detected
+> by its `## X.Y.Z` heading and skipped with a note. Nothing is ever rewritten
+> or appended twice.
+
+> **The rebuild is step 4's `--execute` hook, and it is why the commit is made
 > with `--all`.** `bun build` inlines `package.json` — `BUILD_VERSION` in
 > `src/lib/update/build-info.ts` falls back to `packageJson.version` — so
 > bumping the version alone makes the committed bundle stale and turns
@@ -152,7 +201,9 @@ bun run release:preflight                      # step 2 on its own
 >
 > `bumpp`'s execute hook fires after the bump and before the commit, which is
 > the only window where the new version is on disk and the commit has not
-> happened yet. But the hook alone is **not enough**, and this is the part that
+> happened yet. It is therefore also where the changelog entry is written: the
+> hook produces everything the release commit carries beyond the bump itself.
+> But the hook alone is **not enough**, and this is the part that
 > surprises people: `bumpp`'s default commit is
 > `git commit --allow-empty -m <msg> <the files bumpp updated>` — git's
 > *pathspec* form, which deliberately **ignores the index for every other
@@ -182,10 +233,11 @@ bun run release:preflight                      # step 2 on its own
 > refusing on an editor artifact would be a false positive on a path whose next
 > step is irreversible.
 >
-> The guard does not fight the rebuild, because of *where* it runs: it is step
-> 1, the rebuild is inside step 3. By the time `dist/` is written, the guard has
-> already passed — it only ever asks "did `dist/` match `HEAD` when we started",
-> which is true of every tree a previous release left behind.
+> The guard does not fight the rebuild, or the changelog write, because of
+> *where* it runs: it is step 1, and both of those are inside step 4. By the time
+> `dist/` and `CHANGELOG.md` are written, the guard has already passed — it only
+> ever asks "did the tree match `HEAD` when we started", which is true of every
+> tree a previous release left behind.
 
 > **Why the Bun version decides whether a release is publishable.** `bun publish`
 > fires `prepack`, which rebuilds `dist/` into the tarball — and `bun build`
@@ -221,13 +273,14 @@ bun run release:preflight                      # step 2 on its own
 > guarded even when run by hand, outside `release:manual`.
 
 Or by hand, if you want the commit message under your own control. **Nothing
-below is automated — the rebuild and the clean-tree check are yours to
-remember:**
+below is automated — the rebuild, the changelog entry and the clean-tree check
+are yours to remember:**
 
 ```sh
 # package.json version MUST match the tag — checked by the preflight below
 bun run release:check version vX.Y.Z
 git status --porcelain                     # must be empty of tracked changes
+bun run release:notes vX.Y.Z               # paste under the CHANGELOG.md anchor
 bun run build && git add -f dist/main.js   # the bundle inlines the new version
 git commit -am "chore: release X.Y.Z"
 git tag -a vX.Y.Z -m "vX.Y.Z — <one-line summary>"
@@ -252,7 +305,8 @@ git push && git push origin vX.Y.Z
 > *in advance*, which widens the window. `bun run release:check version vX.Y.Z`
 > above is the preventive check; `release-tag-check.yml` re-runs it on the
 > pushed tag as a tripwire. Run the preflight — by the time the tripwire fires,
-> the tag exists.
+> the tag exists. On the automated path this cannot arise: `release:manual
+> vX.Y.Z` sets the version *from* the tag it is about to cut.
 
 > **Never move a published tag.** Retagging does not re-resolve a consumer's
 > `bun.lock` — it pins the old commit SHA, so `bun install --force` reinstalls
@@ -347,7 +401,7 @@ which is pure logic behind the same injectable `GhRunner` seam
 |---|---|---|
 | 1 | The PR carries a milestone whose title is a release tag (`vX.Y.Z`) | `release-gates.yml`, every PR |
 | 2 | The PR's required bump ≤ the milestone's bump, measured from the current release | `release-gates.yml`, every PR; `release:check milestone` at preflight |
-| 3 | The tag matches `package.json` | `release:check version` preflight; `release-tag-check.yml` on tag push |
+| 3 | The tag matches `package.json` | `release:manual vX.Y.Z` sets one from the other; `release:check version` preflight; `release-tag-check.yml` on tag push |
 
 ```sh
 bun run release:check pr <n>              # gates 1 + 2 for one PR

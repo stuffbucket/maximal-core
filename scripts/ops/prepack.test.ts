@@ -12,6 +12,7 @@ import {
   OUT_DIR,
   pinObjection,
   prepack,
+  realRunner,
 } from "./prepack"
 
 // Offline and deterministic: the runner is injected, so nothing here invokes a
@@ -299,5 +300,34 @@ describe("main", () => {
 
   test("an unrelated flag does not select the preflight", () => {
     expect(injected(["--verbose"])).toHaveLength(2)
+  })
+})
+
+describe("realRunner", () => {
+  // The one test in this suite that spawns anything, and it earns it. Bun's
+  // `spawnSync` defaults the child's environment to the snapshot the process
+  // STARTED with, so a variable set at runtime never reaches the child unless
+  // `env` is passed explicitly. `release.ts` hands the rendered CHANGELOG block
+  // to `bumpp`'s execute hook that way, and without the explicit `env` the
+  // release is green with no changelog entry in the commit — the quietest
+  // failure this repo could ship. No network, no node_modules, no dist/: the
+  // child is the interpreter already running these tests.
+  test("a variable set at runtime reaches the child process", () => {
+    const key = "MAXIMAL_PREPACK_ENV_PROBE"
+    const previous = process.env[key]
+    const out = path.join(os.tmpdir(), `prepack-env-probe-${String(process.pid)}`)
+    process.env[key] = "set-after-startup"
+    try {
+      const result = realRunner(process.execPath, [
+        "-e",
+        `require("node:fs").writeFileSync(${JSON.stringify(out)}, String(process.env[${JSON.stringify(key)}]))`,
+      ])
+      expect(result.status).toBe(0)
+      expect(fs.readFileSync(out, "utf8")).toBe("set-after-startup")
+    } finally {
+      fs.rmSync(out, { force: true })
+      if (previous === undefined) delete process.env[key]
+      else process.env[key] = previous
+    }
   })
 })
