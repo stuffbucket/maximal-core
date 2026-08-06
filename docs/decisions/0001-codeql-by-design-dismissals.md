@@ -313,16 +313,99 @@ from zero.
    header in the repo.
 3. **A latent second mechanism on a PUBLISHED surface** — `lib/live/client.ts`
    (`ControlClient`, exported as `@stuffbucket/maximal-core/client`). Its
-   `headers` option is documented as *"Auth headers sent on every request
+   `headers` option was documented as *"Auth headers sent on every request
    (e.g. `{ "x-api-key": "…" }`)"* and is spread into four `fetch` calls —
-   and at one of them passed as a bare identifier in the `headers` position,
-   with no object literal at all. No caller in `src/**`, `tests/**`, or
-   `scripts/**` passes credentials to it today, so nothing leaks now. But it
-   is the exact "record built elsewhere and spread" shape, on an exported
-   SDK, where a downstream consumer attaches a credential with zero lint
-   coverage. This is the one to watch.
+   and at one of them was passed as a bare identifier in the `headers`
+   position, with no object literal at all. No caller in `src/**`, `tests/**`,
+   or `scripts/**` passed credentials to it, so nothing leaked. But it was the
+   exact "record built elsewhere and spread" shape, on an exported SDK, where a
+   downstream consumer attaches a credential with zero lint coverage — the
+   repo's ESLint guard has `files: ["src/**/*.ts"]` and can never see a
+   consumer's call site. **Resolved — see the amendment below.**
 
 Also noted while sweeping, adjacent but out of scope for the attachment
 invariant: `routes/control/settings-endpoints.ts`'s `GET /control/api-keys`
 returns `apiKeyEntries` verbatim, raw `key` values included. That is a
 disclosure surface behind the auth middleware, not an attachment site.
+
+# Amendment (2026-08-05): `ControlClient.headers` is not an auth hook
+
+Sweep item 3 above. `ControlClient`'s `headers` option no longer advertises
+credentials, and no longer accepts them.
+
+## What was established first
+
+- **No caller passes one.** The only two construction sites in the repo are
+  `tests/live/control-client.test.ts` and `scripts/dev/e2e-seam.ts`, and both
+  pass `{ baseUrl }` alone. Nothing in `downstream/` used `./client` at all.
+- **The surface accepts none, and never read one.** `/control` is listed in
+  `allowUnauthenticatedPrefixes` in `server.ts`, and `createAuthMiddleware`'s
+  `shouldBypass` returns `next()` for that prefix *before* `extractRequestApiKey`
+  runs; the control app sets no `requireAuthPrefixes`, so nothing re-arms it. A
+  key sent here was not optional — it was **inert**, the same finding as the
+  `--replace` shutdown POST above. What actually protects the surface is that
+  the control router 404s a non-loopback caller itself, that it listens on an
+  ephemeral port, and the Origin allowlist (ADR-0021).
+- **The documented example was the only intended use.** The option's doc named
+  `{ "x-api-key": "…" }` and nothing else, and the module header justified
+  fetch-over-EventSource as "so it can send auth headers" — a rationale that was
+  never true of a surface that reads no key. The real reason is that the
+  subscription is a POST and EventSource is GET-only.
+
+## Decision: keep the option, delete the credential affordance
+
+`sendRequest()` was considered and rejected, for the three reasons the
+`--replace` amendment already records — wrong credential domain (an *inbound*
+key, not one the proxy holds to authenticate itself upstream), `attachHostAuth`
+cannot express loopback without making the whole loopback space
+credential-bearing, and passing the key as an argument would satisfy the lint
+rule while leaving credential *selection* with the caller — plus one that is
+specific to this file: **the mechanism cannot ship here.** `client.ts` is a
+published, isomorphic binding built by `tsup` into `dist/lib/client.js` for
+browsers and Electron renderers. `send-request.ts` reads `state`, the token
+store, and config; importing it would pull the engine's credential handling
+into a consumer bundle. The single mechanism is engine-internal by
+construction, so "route it through the mechanism" is not an option a published
+client has.
+
+`headers` survives because it has a real non-credential use (tracing and
+correlation ids, content negotiation, a header a dev proxy needs) — but it is
+now typed `NonCredentialHeaders` and enforced in two layers, mirroring how
+`eslint.config.js` describes its own guard:
+
+- **Compile time, for consumers.** Credential-bearing names map to an
+  uninhabited sentinel type, so `{ "x-api-key": key }` is a type error at the
+  call site. Like the ESLint rule, it decides on the *shape* of the key, so it
+  catches literal spellings and cannot catch a `Record<string, string>`
+  assembled elsewhere — `keyof` that is `string`, which matches no literal.
+- **Construction time, for everything else.** The constructor rejects any
+  credential-bearing header name case-insensitively and throws `TypeError`, then
+  **copies** the record. The copy is load-bearing: the caller keeps its
+  reference, so validating in place would let a credential be added afterwards
+  and picked up by every later request. This is the half that covers the spread
+  shape, which is the whole reason the item was on the sweep list.
+
+The `request()` send site that passed `this.headers` as a bare identifier now
+spreads into an object literal, so every send site is a shape a reader can
+inspect.
+
+## What a reviewer should check if this is ever edited
+
+Putting a credential back on `ControlClient` is warranted only if `/control`
+grows a key check a caller must satisfy — i.e. it leaves
+`allowUnauthenticatedPrefixes`, or gains a `requireAuthPrefixes` entry. Until
+then the option is metadata-only, and `baseUrl` is caller-supplied, so a
+credential attached here would ride whatever origin the consumer configured.
+
+Pinned by `tests/live/control-client.test.ts` (every rejected spelling, the
+copy, and that the thrown message names the header without echoing its value)
+and by `downstream/src/client-consumer.ts`, which typechecks the published
+`./client` bindings as a consumer does. That fixture is new: `./client` was the
+only entrypoint with a constructible class and it was uncovered. Covering it
+surfaced one contract fact worth recording — `dist/lib/client.d.ts` types its
+injectable fetch as `typeof fetch`, so it is the single published binding that
+depends on an ambient global. That is unavoidable for a fetch-based SDK (a
+structural stand-in would still need `Response` and `AbortSignal`), so the
+fixture now compiles with `lib: ["ESNext", "DOM"]`; `types: []` is unchanged, so
+a binding that leans on `process`, `Buffer`, or a Bun global still fails there.
+
