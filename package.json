@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "@stuffbucket/maximal-core",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Headless core of maximal: a local proxy that exposes GitHub Copilot as OpenAI- and Anthropic-compatible HTTP endpoints. No UI.",
   "keywords": [
     "proxy",
@@ -81,9 +81,10 @@
     "preflight": "bun scripts/preflight.ts",
     "prepare": "bun scripts/ops/prepare.ts",
     "release:check": "bun scripts/ops/release-gates.ts",
-    "release:manual": "bun scripts/ops/release.ts",
     "release:notes": "bun scripts/ops/release-notes.ts",
     "release:preflight": "bun scripts/ops/prepack.ts --check",
+    "release:prepare": "bun scripts/ops/release.ts prepare",
+    "release:tag": "bun scripts/ops/release.ts tag",
     "rules:check": "bun scripts/ops/check-rulesets.ts",
     "sbom": "bun scripts/sbom.ts",
     "scan:secrets": "trufflehog filesystem . --no-verification --fail --results=verified,unknown,unverified --no-update --exclude-paths .trufflehog-exclude",

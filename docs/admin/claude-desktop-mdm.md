@@ -125,6 +125,12 @@ defaults delete com.anthropic.claudefordesktop coworkEgressAllowedHosts
 
 Run `scripts/install-cowork-egress.sh` for the curated list instead of `*`.
 
+Because revert can only strip the keys maximal wrote, an MDM-tier value that
+existed beforehand is not restored. The proposed fix — snapshot the prior state
+at apply time and replay it on `uninstall --force` — is spec'd in
+[`docs/spec/claude-desktop-config-snapshot.md`](../spec/claude-desktop-config-snapshot.md)
+and not yet implemented.
+
 ## Key reference (subset relevant to this proxy)
 
 | Key | Type | Default | Controls |

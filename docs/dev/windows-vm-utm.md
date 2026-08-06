@@ -147,8 +147,8 @@ clicks in UTM's UI. There's no public API to script those clicks in
   `build:binary`, `verify:artifact`, `e2e:binary` against the
   compiled `bun-windows-x64` artifact, and then `bun test`, on every PR
   — so install-time, artifact-level and unit-level Windows breakage is
-  caught before a tag. 5 cases stay `skipIf`-ed on `win32` (4 in
-  `tests/cli-path.test.ts`, 1 in `tests/secrets.test.ts`). What is still
+  caught before a tag. 1 case stays `skipIf`-ed on `win32`, in
+  `tests/secrets.test.ts`. What is still
   missing is any installer workflow — MSI packaging lives in the parent
   repo. That residue is what this VM is for.
 - **ARM64 emulation of x64 binaries is fast but not native.** The Windows

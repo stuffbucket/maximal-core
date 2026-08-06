@@ -75,14 +75,21 @@ bun run release:check version vX.Y.Z      # milestone, or tag vs package.json.
                                           # A subcommand is required; bare prints usage.
 bun run release:notes v0.2.1  # milestone -> CHANGELOG-shaped Markdown
                               # --release-body for a GitHub Release body
-bun run release:manual vX.Y.Z  # cut the version. Refuses (exit 1, nothing written)
-                               # on a missing tag, a dirty tree, an off-pin Bun, or
-                               # a milestone release:notes would not emit for; then
-                               # bumps, rebuilds dist/ on the pinned Bun, writes the
-                               # CHANGELOG entry itself, commits all three, tags and
-                               # pushes. It stops there: publish-package.yml fires on
-                               # the tag and runs `bun publish`.
-bun run release:manual vX.Y.Z --no-publish   # accepted, does nothing — the default now
+bun run release:prepare vX.Y.Z # phase A. Refuses (exit 1, nothing written) on a
+                               # missing tag, a dirty tree, an off-pin Bun, a tag
+                               # that is not above every tag that exists, an open PR
+                               # in the milestone, or a milestone release:notes would
+                               # not emit for; then bumps, rebuilds dist/ on the
+                               # pinned Bun, writes the CHANGELOG entry, commits all
+                               # three on release/vX.Y.Z, pushes the branch and opens
+                               # the PR. CUTS NO TAG.
+bun run release:tag vX.Y.Z     # phase B, after that PR merges. Fetches main, refuses
+                               # unless the merged package.json is X.Y.Z and this
+                               # checkout is that commit with a clean tree, re-runs
+                               # the tag-order gate, then cuts the annotated tag on
+                               # the merged head and pushes it. That fires
+                               # release-tag-check.yml and publish-package.yml.
+bun run release:prepare vX.Y.Z --no-publish   # accepted, does nothing
 bun run release:preflight     # assert the pinned Bun without cutting anything
 
 # Ops tooling under scripts/ops/ (own tsconfig + test run)

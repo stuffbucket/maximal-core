@@ -22,10 +22,6 @@ import path from "node:path"
 import type { ClientApp } from "./apps/index"
 
 import { getAllApps } from "./apps/registry"
-import {
-  FIRST_LAUNCH_PATH_MARKER_END,
-  FIRST_LAUNCH_PATH_MARKER_START,
-} from "./lib/platform/cli-path"
 import { PATHS } from "./lib/platform/paths"
 
 interface RunUninstallOptions {
@@ -36,10 +32,10 @@ interface RunUninstallOptions {
    *  `--revert-claude` opt-in. */
   force: boolean
   unattended: boolean
-  /** When true, leave the application bundle (`/Applications/maximal.app`)
-   *  on disk while still removing the `~/.local/bin/maximal` symlink and the
-   *  other PATH binaries. Used by the in-app uninstall: the running `.app`
-   *  can't delete itself, so the user drags it to the Trash afterwards. */
+  /** Accepted for compatibility with the shell's in-app uninstall, which
+   *  passes it over IPC. maximal ships no `.app` bundle, so there is no
+   *  application-bundle target left to filter — the flag is currently a
+   *  no-op and every PATH binary is removed either way. */
   keepApp: boolean
 }
 
@@ -76,12 +72,12 @@ export async function runUninstall(opts: RunUninstallOptions): Promise<void> {
 
   // 3. Remove the binary --------------------------------------------
   consola.info("Step 3/5: Remove the binary")
-  removeBinary({ keepApp: opts.keepApp })
+  removeBinary()
 
-  // 4. Revert any residual app integrations + installer PATH block ---
+  // 4. Revert any residual app integrations ------------------------
   // Registry-driven: each app reverts its own (ownership-guarded) config via the
   // contract. With the precondition above every app is already disabled, so this
-  // is a defensive sweep — plus it strips maximal's own first-launch PATH block.
+  // is a defensive sweep.
   consola.info("Step 4/5: Revert app integrations")
   await revertAppIntegrations(enabled)
 
@@ -169,87 +165,36 @@ function removeStartupIntegration(): void {
 // Step 3: remove the binary.
 // ────────────────────────────────────────────────────────────────────
 
-interface InstallTarget {
-  path: string
-  /** Directory targets (the macOS .app bundle is one) need recursive
-   *  removal; single-file binaries don't. */
-  recursive?: boolean
-  /** True for the macOS application bundle (`/Applications/maximal.app`).
-   *  The in-app uninstall (`keepApp`) filters these out so the running
-   *  bundle survives — the user trashes it afterwards. */
-  appBundle?: boolean
-}
-
-interface InstallTargetOptions {
-  /** Skip the application bundle (the running `.app`) — see `keepApp`. */
-  keepApp?: boolean
-}
-
-/** Candidate install locations, in order of likelihood. We delete
- *  every one we find; users may have copies in multiple places (e.g.
- *  `brew install` + a `.dmg` install both leave a binary on disk).
+/** Candidate install locations, in order of likelihood. We delete every
+ *  one we find; a user may have copies in more than one place.
  *
- *  macOS .dmg install path: `/Applications/maximal.app` (the
- *  bundle) plus `~/.local/bin/maximal` (a **symlink** into the bundle
- *  created by the first-launch shim — see lib/platform/cli-path.ts;
- *  pre-v0.4.x installs left a copy there instead, which this also
- *  removes). Brew installs at `/opt/homebrew/bin/maximal`.
- *
- *  With `keepApp`, the `.app` bundle is omitted (the in-app uninstall
- *  can't delete the bundle it's running from), but the PATH symlink and
- *  the other binaries are still removed. */
-export function installTargets(
-  opts: InstallTargetOptions = {},
-): Array<InstallTarget> {
-  const home = os.homedir()
-  if (process.platform === "win32") {
-    return [
-      {
-        path: path.join(
-          process.env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"),
-          "Programs",
-          "maximal",
-          "maximal.exe",
-        ),
-      },
-      // The PowerShell installer's parent dir gets removed when it
-      // becomes empty; we don't recurse into it ourselves to avoid
-      // nuking unrelated files.
-    ]
-  }
-  const targets: Array<InstallTarget> = [
-    { path: path.join(home, ".local", "bin", "maximal") },
-    { path: "/usr/local/bin/maximal" },
-    { path: "/opt/homebrew/bin/maximal" },
-    { path: "/Applications/maximal.app", recursive: true, appBundle: true },
-  ]
-  return opts.keepApp ? targets.filter((t) => !t.appBundle) : targets
+ *  Homebrew is the only packaged install shape maximal has: the formula
+ *  links `maximal` into `/opt/homebrew/bin` on Apple Silicon and
+ *  `/usr/local/bin` on Intel. Everything else runs from a checkout or a
+ *  binary the user placed themselves, neither of which we own. Windows
+ *  has no packaged install path at all, so there is nothing to remove. */
+export function installTargets(): Array<string> {
+  if (process.platform === "win32") return []
+  return ["/usr/local/bin/maximal", "/opt/homebrew/bin/maximal"]
 }
 
-function removeBinary(opts: InstallTargetOptions = {}): void {
+function removeBinary(): void {
   let removed = 0
-  for (const target of installTargets(opts)) {
-    // lstat (not existsSync) so a *broken* symlink — e.g.
-    // ~/.local/bin/maximal pointing at a Maximal.app that's already
-    // been dragged to the Trash — is still detected and unlinked
-    // rather than silently skipped as "not found".
-    let stat: fs.Stats
+  for (const target of installTargets()) {
+    // lstat (not existsSync) so a *broken* symlink — the brew shim still
+    // pointing at a Cellar dir that has already been removed — is detected
+    // and unlinked rather than silently skipped as "not found".
     try {
-      stat = fs.lstatSync(target.path)
+      fs.lstatSync(target)
     } catch {
       continue
     }
     try {
-      fs.rmSync(
-        target.path,
-        target.recursive && !stat.isSymbolicLink() ?
-          { recursive: true }
-        : undefined,
-      )
-      consola.success(`  removed ${target.path}`)
+      fs.rmSync(target)
+      consola.success(`  removed ${target}`)
       removed++
     } catch (err) {
-      consola.warn(`  could not remove ${target.path}`, err)
+      consola.warn(`  could not remove ${target}`, err)
     }
   }
   if (removed === 0) {
@@ -258,7 +203,7 @@ function removeBinary(opts: InstallTargetOptions = {}): void {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Step 4: disable + revert app integrations (registry), strip PATH block.
+// Step 4: disable + revert app integrations (registry).
 // ────────────────────────────────────────────────────────────────────
 
 /** Apps currently routing through the proxy, by the contract's `isEnabled()`.
@@ -269,13 +214,11 @@ export function enabledApps(): Array<ClientApp> {
 }
 
 /**
- * Revert every app's integration via the registry, then strip maximal's own
- * first-launch installer PATH block. `stillEnabled` are the apps that were on
- * at invocation (only non-empty under `--force`): we `disable()` each first so
- * routing is cleaned, not orphaned. Then every app's `uninstall()` runs as an
- * ownership-guarded sweep (idempotent — safe even for already-disabled apps).
- * The PATH block is maximal's own artifact, not an app integration, so it stays
- * here rather than in any app.
+ * Revert every app's integration via the registry. `stillEnabled` are the apps
+ * that were on at invocation (only non-empty under `--force`): we `disable()`
+ * each first so routing is cleaned, not orphaned. Then every app's `uninstall()`
+ * runs as an ownership-guarded sweep (idempotent — safe even for already-
+ * disabled apps).
  */
 export async function revertAppIntegrations(
   stillEnabled: ReadonlyArray<ClientApp>,
@@ -296,57 +239,6 @@ export async function revertAppIntegrations(
       consola.warn(`  could not revert ${app.name}`, err)
     }
   }
-  const installerRc = removeFirstLaunchPathBlock()
-  if (installerRc.length > 0) {
-    consola.success(
-      `  removed installer PATH block from ${installerRc.join(", ")}`,
-    )
-  }
-}
-
-function escapeRegExp(s: string): string {
-  return s.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)
-}
-
-/**
- * Strip the first-launch `# >>> maximal PATH >>>` block from the user's
- * zsh rc files. Marker-scoped — it touches only the block between our
- * markers and leaves everything else intact. Best-effort per file (an
- * unreadable/unwritable rc is skipped). Returns the rc files modified.
- *
- * Without this, uninstall used to leave the installer's PATH line orphaned
- * (pointing at a deleted `~/.local/bin/maximal`).
- */
-export function removeFirstLaunchPathBlock(
-  homeDir: string = os.homedir(),
-): Array<string> {
-  const rcFiles = [
-    path.join(homeDir, ".zshrc"),
-    path.join(homeDir, ".zprofile"),
-  ]
-  const re = new RegExp(
-    `\\n?${escapeRegExp(FIRST_LAUNCH_PATH_MARKER_START)}[\\s\\S]*?${escapeRegExp(
-      FIRST_LAUNCH_PATH_MARKER_END,
-    )}\\n?`,
-    "g",
-  )
-  const modified: Array<string> = []
-  for (const rc of rcFiles) {
-    let existing: string
-    try {
-      existing = fs.readFileSync(rc, "utf8")
-    } catch {
-      continue
-    }
-    if (!existing.includes(FIRST_LAUNCH_PATH_MARKER_START)) continue
-    try {
-      fs.writeFileSync(rc, existing.replace(re, "\n"))
-      modified.push(rc)
-    } catch {
-      /* best effort */
-    }
-  }
-  return modified
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -426,7 +318,7 @@ export const uninstall = defineCommand({
       type: "boolean",
       default: false,
       description:
-        "Leave /Applications/maximal.app in place (still removes the ~/.local/bin/maximal symlink and other PATH binaries). Used by the in-app uninstall, which can't delete the running bundle.",
+        "Accepted for the shell's in-app uninstall, which passes it over IPC. Currently a no-op: maximal ships no application bundle, so there is no bundle to keep and the Homebrew binaries are removed either way.",
     },
   },
   run({ args }) {

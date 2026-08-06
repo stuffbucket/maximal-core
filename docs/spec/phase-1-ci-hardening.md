@@ -109,5 +109,6 @@ Half a day for the lockfile + coverage gate; another half-day for provenance
 
 1. Do we want a "ratchet" workflow that auto-increments coverage thresholds on
    green merges? (Out of scope for this PRD.)
-2. Should `installers.yml` also produce attestations for the `.app.zip` /
-   `.msi` / `install.ps1`? Probably yes; trivial to add as a follow-up.
+2. Should the release artifacts carry attestations too? Probably yes; trivial to
+   add as a follow-up. (The `.app.zip` / `.msi` / `install.ps1` this question
+   originally named are gone — maximal ships no OS installer.)

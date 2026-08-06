@@ -53,7 +53,7 @@ function healthy(): Array<Ruleset> {
           },
         },
       ],
-      bypass_actors: [{ actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always" }],
+      bypass_actors: [],
     },
     {
       id: 2,
@@ -171,28 +171,30 @@ describe("weakenings are findings", () => {
 })
 
 describe("the bypass assertion", () => {
-  test("a removed release bypass is a finding, with the release coupling named", () => {
-    const live = healthy()
-    requirePr(live).bypass_actors = []
-    const finding = evaluate(live).findings[0]
-    expect(finding.assertion).toBe("has an always-bypass actor")
-    expect(finding.detail).toContain("release:manual")
-  })
-
-  test("any always-bypass actor satisfies it, whatever its type", () => {
+  // The direction this used to point in is the whole of the change: `main` once
+  // carried an always-mode admin bypass so the release commit could be pushed
+  // straight to it, and the check asserted the bypass was PRESENT. The release
+  // lands through a PR now, so a bypass actor is a weakening — it would restore
+  // the one commit that reached `main` with no check run against it.
+  test("a bypass added to the PR requirement is a finding, with the reason named", () => {
     const live = healthy()
     requirePr(live).bypass_actors = [
-      { actor_id: 3892691, actor_type: "Integration", bypass_mode: "always" },
+      { actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always" },
     ]
-    expect(evaluate(live).findings).toEqual([])
+    const finding = evaluate(live).findings[0]
+    expect(finding.assertion).toBe("has no bypass actor")
+    expect(finding.detail).toContain("release:prepare")
   })
 
-  test("a pull-request-only bypass mode does not count", () => {
+  // Any actor at all, in any mode: `evaluate` counts the list rather than
+  // inspecting modes for a `none` expectation, because a `pull_request`-mode
+  // bypass still lets somebody merge past the required checks.
+  test("a pull-request-mode bypass counts too", () => {
     const live = healthy()
     requirePr(live).bypass_actors = [
       { actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "pull_request" },
     ]
-    expect(evaluate(live).findings[0].assertion).toBe("has an always-bypass actor")
+    expect(evaluate(live).findings[0].assertion).toBe("has no bypass actor")
   })
 
   test("a bypass added to history protection is a finding", () => {

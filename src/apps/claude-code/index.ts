@@ -85,8 +85,8 @@ export const claudeCodeApp: ClientApp = {
 
   uninstall(): Promise<AppUninstallResult> {
     // Ownership-guarded: removes only the ANTHROPIC_BASE_URL block we wrote,
-    // no-op when absent or foreign. The installer PATH block is maximal's own
-    // artifact (not an app integration), so the uninstaller handles that.
+    // no-op when absent or foreign. Anything maximal wrote outside an app's
+    // own config is the uninstaller's business, not this contract's.
     const reverted: Array<string> = []
     const result = revertProxyBaseUrl()
     if (result.wrote) {

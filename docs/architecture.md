@@ -236,7 +236,8 @@ proven-equivalent). The decision itself is
   `test` / `windows` / `gate` are required status checks, the branch must be
   up to date before it merges (the substitute for a Merge Queue this
   user-owned repo cannot have), and `main` cannot be deleted or force-pushed.
-  The single exemption is the admin bypass `release:manual` needs to push the
-  release commit — remove it and every release is blocked. Verified by
+  There is **no bypass actor on either ruleset** — the release commit goes
+  through a PR like everything else (`release:prepare`, then `release:tag` on the
+  merged head), and a bypass reappearing is drift. Verified by
   `bun run rules:check`; described in
   [`docs/admin/branch-rulesets.md`](admin/branch-rulesets.md).

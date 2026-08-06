@@ -2225,7 +2225,7 @@ var init_dist2 = __esm(() => {
 var HELPER_SUBCOMMAND = "api", LEGACY_HELPER_FLAG = "--apiKeyHelper";
 
 // package.json
-var version = "0.4.3";
+var version = "0.4.4";
 var init_package = () => {};
 
 // src/lib/update/build-info.ts
@@ -33713,125 +33713,11 @@ var init_proxy = __esm(() => {
   init_proxy_from_env();
 });
 
-// src/lib/platform/cli-path.ts
-import fs14 from "fs";
-import os6 from "os";
-import path15 from "path";
-function isAppBundlePath(execPath2) {
-  return /\.app\/Contents\/MacOS\//u.test(execPath2);
-}
-function describeLaunchSource(execPath2 = process.execPath) {
-  if (isAppBundlePath(execPath2))
-    return { path: execPath2, kind: "dmg-app" };
-  if (/\/target\/(?:debug|release)\//u.test(execPath2) || /\/bun$/u.test(execPath2))
-    return { path: execPath2, kind: "dev" };
-  if (/\/(?:homebrew|Cellar)\//u.test(execPath2))
-    return { path: execPath2, kind: "homebrew" };
-  if (execPath2.includes("/.local/bin/"))
-    return { path: execPath2, kind: "user-bin" };
-  return { path: execPath2, kind: "other" };
-}
-function ensureCliSymlink(opts = {}) {
-  const execPath2 = opts.execPath ?? process.execPath;
-  const home = opts.home ?? os6.homedir();
-  const platform3 = opts.platform ?? process.platform;
-  const binDir = path15.join(home, ".local", "bin");
-  const symlinkPath = path15.join(binDir, "maximal");
-  const base2 = {
-    symlinkPath,
-    target: execPath2,
-    linked: false,
-    binDirCreated: false,
-    pathBlockAdded: false
-  };
-  if (platform3 !== "darwin")
-    return { ...base2, skipped: "not-macos" };
-  if (!isAppBundlePath(execPath2))
-    return { ...base2, skipped: "not-app-bundle" };
-  const binDirExisted = fs14.existsSync(binDir);
-  let binDirCreated = false;
-  if (!binDirExisted) {
-    try {
-      fs14.mkdirSync(binDir, { recursive: true });
-      binDirCreated = true;
-    } catch {
-      return base2;
-    }
-  }
-  let existing;
-  try {
-    existing = fs14.lstatSync(symlinkPath);
-  } catch {
-    existing = undefined;
-  }
-  if (existing && !existing.isSymbolicLink()) {
-    return { ...base2, binDirCreated, skipped: "foreign-file-at-target" };
-  }
-  const linked = relinkIfStale(symlinkPath, execPath2, existing !== undefined);
-  const pathBlockAdded = binDirCreated ? addFirstLaunchPathBlock(home) : false;
-  return {
-    symlinkPath,
-    target: execPath2,
-    linked,
-    binDirCreated,
-    pathBlockAdded
-  };
-}
-function relinkIfStale(symlinkPath, target, present) {
-  let currentTarget;
-  if (present) {
-    try {
-      currentTarget = fs14.readlinkSync(symlinkPath);
-    } catch {
-      currentTarget = undefined;
-    }
-  }
-  if (currentTarget === target)
-    return false;
-  try {
-    if (present)
-      fs14.unlinkSync(symlinkPath);
-    fs14.symlinkSync(target, symlinkPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function addFirstLaunchPathBlock(home = os6.homedir()) {
-  const rc = path15.join(home, ".zprofile");
-  let existing;
-  try {
-    existing = fs14.readFileSync(rc, "utf8");
-  } catch {
-    existing = "";
-  }
-  if (existing.includes(FIRST_LAUNCH_PATH_MARKER_START))
-    return false;
-  const needsLeadingNewline = existing.length > 0 && !existing.endsWith(`
-`);
-  const block = [
-    FIRST_LAUNCH_PATH_MARKER_START,
-    PATH_BLOCK_BODY,
-    FIRST_LAUNCH_PATH_MARKER_END,
-    ""
-  ].join(`
-`);
-  try {
-    fs14.writeFileSync(rc, existing + (needsLeadingNewline ? `
-` : "") + block);
-    return true;
-  } catch {
-    return false;
-  }
-}
-var FIRST_LAUNCH_PATH_MARKER_START = "# >>> maximal PATH >>>", FIRST_LAUNCH_PATH_MARKER_END = "# <<< maximal PATH <<<", PATH_BLOCK_BODY = 'export PATH="$HOME/.local/bin:$PATH"';
-var init_cli_path = () => {};
-
 // src/lib/platform/replace-running.ts
 import { spawnSync as spawnSync2 } from "child_process";
-import fs15 from "fs/promises";
+import fs14 from "fs/promises";
 import net2 from "net";
-import path16 from "path";
+import path15 from "path";
 function defaultSleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -33855,7 +33741,7 @@ function defaultProbePort(port2) {
 }
 async function defaultReadPidfile() {
   try {
-    const raw = await fs15.readFile(PIDFILE_PATH, "utf8");
+    const raw = await fs14.readFile(PIDFILE_PATH, "utf8");
     const pid = Number.parseInt(raw.trim(), 10);
     return Number.isInteger(pid) && pid > 0 ? pid : null;
   } catch {
@@ -33987,23 +33873,23 @@ async function killEscalate(pid, deps) {
 }
 async function writePidfile(pid = process.pid) {
   try {
-    await fs15.writeFile(PIDFILE_PATH, String(pid), { mode: 384 });
+    await fs14.writeFile(PIDFILE_PATH, String(pid), { mode: 384 });
   } catch {}
 }
 async function removePidfile() {
   try {
-    await fs15.unlink(PIDFILE_PATH);
+    await fs14.unlink(PIDFILE_PATH);
   } catch {}
 }
 var PIDFILE_PATH;
 var init_replace_running = __esm(() => {
   init_paths();
-  PIDFILE_PATH = path16.join(PATHS.APP_DIR, "maximal.pid");
+  PIDFILE_PATH = path15.join(PATHS.APP_DIR, "maximal.pid");
 });
 
 // src/lib/platform/sqlite.ts
-import fs16 from "fs/promises";
-import path17 from "path";
+import fs15 from "fs/promises";
+import path16 from "path";
 function parseNodeVersion(version4) {
   return version4.split(".", 3).map((part) => {
     const parsed = Number.parseInt(part, 10);
@@ -34053,9 +33939,9 @@ async function openNodeDatabase(dbPath) {
   return new sqlite.DatabaseSync(dbPath);
 }
 async function openSqliteDatabase(dbPath) {
-  const dir = path17.dirname(dbPath);
+  const dir = path16.dirname(dbPath);
   if (dbPath !== ":memory:" && dir !== ".") {
-    await fs16.mkdir(dir, { recursive: true });
+    await fs15.mkdir(dir, { recursive: true });
   }
   return isBunRuntime() ? openBunDatabase(dbPath) : openNodeDatabase(dbPath);
 }
@@ -34129,9 +34015,9 @@ var init_sqlite = __esm(() => {
 });
 
 // src/lib/token-usage/store.ts
-import path18 from "path";
+import path17 from "path";
 function getDbPath() {
-  return process.env[DB_PATH_ENV] ?? path18.join(PATHS.APP_DIR, DEFAULT_DB_FILENAME);
+  return process.env[DB_PATH_ENV] ?? path17.join(PATHS.APP_DIR, DEFAULT_DB_FILENAME);
 }
 function getDb() {
   return tokenUsageDbStore.getDb();
@@ -34853,12 +34739,12 @@ var init_token_usage = __esm(() => {
 });
 
 // src/lib/update/version.ts
-import fs17 from "fs";
-import path19 from "path";
+import fs16 from "fs";
+import path18 from "path";
 function resolveGitFile(candidate) {
   let pointer;
   try {
-    pointer = fs17.readFileSync(candidate, "utf8").trim();
+    pointer = fs16.readFileSync(candidate, "utf8").trim();
   } catch (err) {
     if (err instanceof Error && "code" in err && err.code === "EISDIR") {
       return { worktree: candidate, common: candidate };
@@ -34868,11 +34754,11 @@ function resolveGitFile(candidate) {
   const match = pointer.match(/^gitdir: (\S.*)$/u);
   if (!match)
     return;
-  const worktreeDir = path19.isAbsolute(match[1]) ? match[1] : path19.resolve(path19.dirname(candidate), match[1]);
+  const worktreeDir = path18.isAbsolute(match[1]) ? match[1] : path18.resolve(path18.dirname(candidate), match[1]);
   let commonDir = worktreeDir;
   try {
-    const rel = fs17.readFileSync(path19.join(worktreeDir, "commondir"), "utf8").trim();
-    commonDir = path19.isAbsolute(rel) ? rel : path19.resolve(worktreeDir, rel);
+    const rel = fs16.readFileSync(path18.join(worktreeDir, "commondir"), "utf8").trim();
+    commonDir = path18.isAbsolute(rel) ? rel : path18.resolve(worktreeDir, rel);
   } catch {}
   return { worktree: worktreeDir, common: commonDir };
 }
@@ -34880,17 +34766,17 @@ function findGitDirs() {
   const starts = [
     process.cwd(),
     PATHS.APP_DIR,
-    path19.dirname(new URL(import.meta.url).pathname)
+    path18.dirname(new URL(import.meta.url).pathname)
   ];
   const seen = new Set;
   for (const start of starts) {
     let dir = start;
     while (dir && !seen.has(dir)) {
       seen.add(dir);
-      const resolved = resolveGitFile(path19.join(dir, ".git"));
+      const resolved = resolveGitFile(path18.join(dir, ".git"));
       if (resolved)
         return resolved;
-      const parent = path19.dirname(dir);
+      const parent = path18.dirname(dir);
       if (parent === dir)
         break;
       dir = parent;
@@ -34900,7 +34786,7 @@ function findGitDirs() {
 }
 function resolveRefFromPackedRefs(gitDir, ref) {
   try {
-    const packed = fs17.readFileSync(path19.join(gitDir, "packed-refs"), "utf8");
+    const packed = fs16.readFileSync(path18.join(gitDir, "packed-refs"), "utf8");
     for (const line of packed.split(`
 `)) {
       if (line.startsWith("#") || line.length === 0)
@@ -34920,7 +34806,7 @@ function readGitVersion() {
     return { sha: undefined, branch: undefined };
   let head;
   try {
-    head = fs17.readFileSync(path19.join(dirs.worktree, "HEAD"), "utf8").trim();
+    head = fs16.readFileSync(path18.join(dirs.worktree, "HEAD"), "utf8").trim();
   } catch {
     return { sha: undefined, branch: undefined };
   }
@@ -34934,7 +34820,7 @@ function readGitVersion() {
   let sha;
   for (const dir of [dirs.worktree, dirs.common]) {
     try {
-      const looseRef = fs17.readFileSync(path19.join(dir, ref), "utf8").trim();
+      const looseRef = fs16.readFileSync(path18.join(dir, ref), "utf8").trim();
       if (SHA_RE.test(looseRef)) {
         sha = looseRef;
         break;
@@ -35136,8 +35022,8 @@ var init_auth_recovery = __esm(() => {
 });
 
 // src/lib/auth/secrets.ts
-import fs18 from "fs";
-import path20 from "path";
+import fs17 from "fs";
+import path19 from "path";
 function modeIsOwnerOnly(mode) {
   if (process.platform === "win32")
     return true;
@@ -35150,15 +35036,15 @@ function readSecret(opts) {
     return { value: envVal, source: "env" };
   }
   const dir = opts.dir ?? SECRETS_DIR;
-  const file2 = path20.join(dir, opts.fileName);
+  const file2 = path19.join(dir, opts.fileName);
   let fd;
   try {
-    fd = fs18.openSync(file2, fs18.constants.O_RDONLY | fs18.constants.O_NOFOLLOW);
+    fd = fs17.openSync(file2, fs17.constants.O_RDONLY | fs17.constants.O_NOFOLLOW);
   } catch {
     return { value: undefined, source: "unset" };
   }
   try {
-    const stats = fs18.fstatSync(fd);
+    const stats = fs17.fstatSync(fd);
     if (!stats.isFile()) {
       return {
         value: undefined,
@@ -35174,7 +35060,7 @@ function readSecret(opts) {
     }
     let value;
     try {
-      value = fs18.readFileSync(fd, "utf8").trim();
+      value = fs17.readFileSync(fd, "utf8").trim();
     } catch {
       return {
         value: undefined,
@@ -35188,7 +35074,7 @@ function readSecret(opts) {
     return { value, source: "file" };
   } finally {
     try {
-      fs18.closeSync(fd);
+      fs17.closeSync(fd);
     } catch {}
   }
 }
@@ -35201,29 +35087,29 @@ function loadSecretIntoEnv(opts) {
 }
 function ensureSecretsDir(dir = SECRETS_DIR) {
   try {
-    fs18.mkdirSync(dir, { recursive: true, mode: SAFE_DIR_MODE });
+    fs17.mkdirSync(dir, { recursive: true, mode: SAFE_DIR_MODE });
   } catch {}
 }
 function secretIsFromFile(fileName, value) {
-  const filePath = path20.join(SECRETS_DIR, fileName);
+  const filePath = path19.join(SECRETS_DIR, fileName);
   let fd;
   try {
-    fd = fs18.openSync(filePath, fs18.constants.O_RDONLY | fs18.constants.O_NOFOLLOW);
+    fd = fs17.openSync(filePath, fs17.constants.O_RDONLY | fs17.constants.O_NOFOLLOW);
   } catch {
     return false;
   }
   try {
-    const stats = fs18.fstatSync(fd);
+    const stats = fs17.fstatSync(fd);
     if (!stats.isFile())
       return false;
     if (!modeIsOwnerOnly(stats.mode))
       return false;
-    return fs18.readFileSync(fd, "utf8").trim() === value;
+    return fs17.readFileSync(fd, "utf8").trim() === value;
   } catch {
     return false;
   } finally {
     try {
-      fs18.closeSync(fd);
+      fs17.closeSync(fd);
     } catch {}
   }
 }
@@ -35231,7 +35117,7 @@ var SECRETS_DIR, SAFE_FILE_MODE = 384, SAFE_DIR_MODE = 448, SECRET_DEFS;
 var init_secrets = __esm(() => {
   init_dist();
   init_paths();
-  SECRETS_DIR = path20.join(PATHS.APP_DIR, "secrets");
+  SECRETS_DIR = path19.join(PATHS.APP_DIR, "secrets");
   SECRET_DEFS = [
     { name: "ollama_api_key", envVar: "OLLAMA_API_KEY", fileName: "ollama" },
     {
@@ -35682,15 +35568,15 @@ var init_port = __esm(() => {
 });
 
 // src/lib/start/session-sentinel.ts
-import fs19 from "fs";
-import path21 from "path";
+import fs18 from "fs";
+import path20 from "path";
 function sentinelPath() {
-  return path21.join(PATHS.APP_DIR, SENTINEL_FILENAME);
+  return path20.join(PATHS.APP_DIR, SENTINEL_FILENAME);
 }
 function markSessionRunning() {
   try {
-    fs19.mkdirSync(PATHS.APP_DIR, { recursive: true });
-    fs19.writeFileSync(sentinelPath(), JSON.stringify({
+    fs18.mkdirSync(PATHS.APP_DIR, { recursive: true });
+    fs18.writeFileSync(sentinelPath(), JSON.stringify({
       pid: process.pid,
       started_at: new Date().toISOString()
     }));
@@ -35698,12 +35584,12 @@ function markSessionRunning() {
 }
 function clearSessionRunning() {
   try {
-    fs19.rmSync(sentinelPath(), { force: true });
+    fs18.rmSync(sentinelPath(), { force: true });
   } catch {}
 }
 function staleSessionMarkerPresent() {
   try {
-    return fs19.existsSync(sentinelPath());
+    return fs18.existsSync(sentinelPath());
   } catch {
     return false;
   }
@@ -35926,24 +35812,24 @@ var init_body = __esm(() => {
 });
 
 // node_modules/hono/dist/utils/url.js
-var splitPath = (path22) => {
-  const paths = path22.split("/");
+var splitPath = (path21) => {
+  const paths = path21.split("/");
   if (paths[0] === "") {
     paths.shift();
   }
   return paths;
 }, splitRoutingPath = (routePath) => {
-  const { groups, path: path22 } = extractGroupsFromPath(routePath);
-  const paths = splitPath(path22);
+  const { groups, path: path21 } = extractGroupsFromPath(routePath);
+  const paths = splitPath(path21);
   return replaceGroupMarks(paths, groups);
-}, extractGroupsFromPath = (path22) => {
+}, extractGroupsFromPath = (path21) => {
   const groups = [];
-  path22 = path22.replace(/\{[^}]+\}/g, (match, index) => {
+  path21 = path21.replace(/\{[^}]+\}/g, (match, index) => {
     const mark = `@${index}`;
     groups.push([mark, match]);
     return mark;
   });
-  return { groups, path: path22 };
+  return { groups, path: path21 };
 }, replaceGroupMarks = (paths, groups) => {
   for (let i3 = groups.length - 1;i3 >= 0; i3--) {
     const [mark] = groups[i3];
@@ -35994,8 +35880,8 @@ var splitPath = (path22) => {
       const queryIndex = url2.indexOf("?", i3);
       const hashIndex = url2.indexOf("#", i3);
       const end = queryIndex === -1 ? hashIndex === -1 ? undefined : hashIndex : hashIndex === -1 ? queryIndex : Math.min(queryIndex, hashIndex);
-      const path22 = url2.slice(start, end);
-      return tryDecodeURI(path22.includes("%25") ? path22.replace(/%25/g, "%2525") : path22);
+      const path21 = url2.slice(start, end);
+      return tryDecodeURI(path21.includes("%25") ? path21.replace(/%25/g, "%2525") : path21);
     } else if (charCode === 63 || charCode === 35) {
       break;
     }
@@ -36009,11 +35895,11 @@ var splitPath = (path22) => {
     sub = mergePath(sub, ...rest);
   }
   return `${base2?.[0] === "/" ? "" : "/"}${base2}${sub === "/" ? "" : `${base2?.at(-1) === "/" ? "" : "/"}${sub?.[0] === "/" ? sub.slice(1) : sub}`}`;
-}, checkOptionalParameter = (path22) => {
-  if (path22.charCodeAt(path22.length - 1) !== 63 || !path22.includes(":")) {
+}, checkOptionalParameter = (path21) => {
+  if (path21.charCodeAt(path21.length - 1) !== 63 || !path21.includes(":")) {
     return null;
   }
-  const segments = path22.split("/");
+  const segments = path21.split("/");
   const results = [];
   let basePath = "";
   segments.forEach((segment) => {
@@ -36128,9 +36014,9 @@ var init_request = __esm(() => {
     routeIndex = 0;
     path;
     bodyCache = {};
-    constructor(request, path22 = "/", matchResult = [[]]) {
+    constructor(request, path21 = "/", matchResult = [[]]) {
       this.raw = request;
-      this.path = path22;
+      this.path = path21;
       this.#matchResult = matchResult;
       this.#validatedData = {};
     }
@@ -36490,8 +36376,8 @@ var notFoundHandler = (c5) => {
         return this;
       };
     });
-    this.on = (method, path22, ...handlers) => {
-      for (const p of [path22].flat()) {
+    this.on = (method, path21, ...handlers) => {
+      for (const p of [path21].flat()) {
         this.#path = p;
         for (const m2 of [method].flat()) {
           handlers.map((handler2) => {
@@ -36529,8 +36415,8 @@ var notFoundHandler = (c5) => {
   }
   #notFoundHandler = notFoundHandler;
   errorHandler = errorHandler;
-  route(path22, app) {
-    const subApp = this.basePath(path22);
+  route(path21, app) {
+    const subApp = this.basePath(path21);
     app.routes.map((r3) => {
       let handler2;
       if (app.errorHandler === errorHandler) {
@@ -36543,9 +36429,9 @@ var notFoundHandler = (c5) => {
     });
     return this;
   }
-  basePath(path22) {
+  basePath(path21) {
     const subApp = this.#clone();
-    subApp._basePath = mergePath(this._basePath, path22);
+    subApp._basePath = mergePath(this._basePath, path21);
     return subApp;
   }
   onError = (handler2) => {
@@ -36556,7 +36442,7 @@ var notFoundHandler = (c5) => {
     this.#notFoundHandler = handler2;
     return this;
   };
-  mount(path22, applicationHandler, options) {
+  mount(path21, applicationHandler, options) {
     let replaceRequest;
     let optionHandler;
     if (options) {
@@ -36582,7 +36468,7 @@ var notFoundHandler = (c5) => {
       return [c5.env, executionContext];
     };
     replaceRequest ||= (() => {
-      const mergedPath = mergePath(this._basePath, path22);
+      const mergedPath = mergePath(this._basePath, path21);
       const pathPrefixLength = mergedPath === "/" ? 0 : mergedPath.length;
       return (request) => {
         const url2 = new URL(request.url);
@@ -36597,14 +36483,14 @@ var notFoundHandler = (c5) => {
       }
       await next();
     };
-    this.#addRoute(METHOD_NAME_ALL, mergePath(path22, "*"), handler2);
+    this.#addRoute(METHOD_NAME_ALL, mergePath(path21, "*"), handler2);
     return this;
   }
-  #addRoute(method, path22, handler2) {
+  #addRoute(method, path21, handler2) {
     method = method.toUpperCase();
-    path22 = mergePath(this._basePath, path22);
-    const r3 = { basePath: this._basePath, path: path22, method, handler: handler2 };
-    this.router.add(method, path22, [handler2, r3]);
+    path21 = mergePath(this._basePath, path21);
+    const r3 = { basePath: this._basePath, path: path21, method, handler: handler2 };
+    this.router.add(method, path21, [handler2, r3]);
     this.routes.push(r3);
   }
   #handleError(err, c5) {
@@ -36617,10 +36503,10 @@ var notFoundHandler = (c5) => {
     if (method === "HEAD") {
       return (async () => new Response(null, await this.#dispatch(request, executionCtx, env3, "GET")))();
     }
-    const path22 = this.getPath(request, { env: env3 });
-    const matchResult = this.router.match(method, path22);
+    const path21 = this.getPath(request, { env: env3 });
+    const matchResult = this.router.match(method, path21);
     const c5 = new Context(request, {
-      path: path22,
+      path: path21,
       matchResult,
       env: env3,
       executionCtx,
@@ -36675,15 +36561,15 @@ var init_hono_base = __esm(() => {
 });
 
 // node_modules/hono/dist/router/reg-exp-router/matcher.js
-function match(method, path22) {
+function match(method, path21) {
   const matchers = this.buildAllMatchers();
-  const match2 = (method2, path23) => {
+  const match2 = (method2, path22) => {
     const matcher = matchers[method2] || matchers[METHOD_NAME_ALL];
-    const staticMatch = matcher[2][path23];
+    const staticMatch = matcher[2][path22];
     if (staticMatch) {
       return staticMatch;
     }
-    const match3 = path23.match(matcher[0]);
+    const match3 = path22.match(matcher[0]);
     if (!match3) {
       return [[], emptyParam];
     }
@@ -36691,7 +36577,7 @@ function match(method, path22) {
     return [matcher[1][index], match3];
   };
   this.match = match2;
-  return match2(method, path22);
+  return match2(method, path21);
 }
 var emptyParam;
 var init_matcher = __esm(() => {
@@ -36806,12 +36692,12 @@ var init_node3 = __esm(() => {
 var Trie = class {
   #context = { varIndex: 0 };
   #root = new Node;
-  insert(path22, index, pathErrorCheckOnly) {
+  insert(path21, index, pathErrorCheckOnly) {
     const paramAssoc = [];
     const groups = [];
     for (let i3 = 0;; ) {
       let replaced = false;
-      path22 = path22.replace(/\{[^}]+\}/g, (m2) => {
+      path21 = path21.replace(/\{[^}]+\}/g, (m2) => {
         const mark = `@\\${i3}`;
         groups[i3] = [mark, m2];
         i3++;
@@ -36822,7 +36708,7 @@ var Trie = class {
         break;
       }
     }
-    const tokens = path22.match(/(?::[^\/]+)|(?:\/\*$)|./g) || [];
+    const tokens = path21.match(/(?::[^\/]+)|(?:\/\*$)|./g) || [];
     for (let i3 = groups.length - 1;i3 >= 0; i3--) {
       const [mark] = groups[i3];
       for (let j = tokens.length - 1;j >= 0; j--) {
@@ -36862,8 +36748,8 @@ var init_trie = __esm(() => {
 });
 
 // node_modules/hono/dist/router/reg-exp-router/router.js
-function buildWildcardRegExp(path22) {
-  return wildcardRegExpCache[path22] ??= new RegExp(path22 === "*" ? "" : `^${path22.replace(/\/\*$|([.\\+*[^\]$()])/g, (_3, metaChar) => metaChar ? `\\${metaChar}` : "(?:|/.*)")}$`);
+function buildWildcardRegExp(path21) {
+  return wildcardRegExpCache[path21] ??= new RegExp(path21 === "*" ? "" : `^${path21.replace(/\/\*$|([.\\+*[^\]$()])/g, (_3, metaChar) => metaChar ? `\\${metaChar}` : "(?:|/.*)")}$`);
 }
 function clearWildcardRegExpCache() {
   wildcardRegExpCache = /* @__PURE__ */ Object.create(null);
@@ -36877,17 +36763,17 @@ function buildMatcherFromPreprocessedRoutes(routes) {
   const routesWithStaticPathFlag = routes.map((route) => [!/\*|\/:/.test(route[0]), ...route]).sort(([isStaticA, pathA], [isStaticB, pathB]) => isStaticA ? 1 : isStaticB ? -1 : pathA.length - pathB.length);
   const staticMap = /* @__PURE__ */ Object.create(null);
   for (let i3 = 0, j = -1, len = routesWithStaticPathFlag.length;i3 < len; i3++) {
-    const [pathErrorCheckOnly, path22, handlers] = routesWithStaticPathFlag[i3];
+    const [pathErrorCheckOnly, path21, handlers] = routesWithStaticPathFlag[i3];
     if (pathErrorCheckOnly) {
-      staticMap[path22] = [handlers.map(([h3]) => [h3, /* @__PURE__ */ Object.create(null)]), emptyParam];
+      staticMap[path21] = [handlers.map(([h3]) => [h3, /* @__PURE__ */ Object.create(null)]), emptyParam];
     } else {
       j++;
     }
     let paramAssoc;
     try {
-      paramAssoc = trie.insert(path22, j, pathErrorCheckOnly);
+      paramAssoc = trie.insert(path21, j, pathErrorCheckOnly);
     } catch (e2) {
-      throw e2 === PATH_ERROR ? new UnsupportedPathError(path22) : e2;
+      throw e2 === PATH_ERROR ? new UnsupportedPathError(path21) : e2;
     }
     if (pathErrorCheckOnly) {
       continue;
@@ -36921,12 +36807,12 @@ function buildMatcherFromPreprocessedRoutes(routes) {
   }
   return [regexp, handlerMap, staticMap];
 }
-function findMiddleware(middleware, path22) {
+function findMiddleware(middleware, path21) {
   if (!middleware) {
     return;
   }
   for (const k2 of Object.keys(middleware).sort((a3, b2) => b2.length - a3.length)) {
-    if (buildWildcardRegExp(k2).test(path22)) {
+    if (buildWildcardRegExp(k2).test(path21)) {
       return [...middleware[k2]];
     }
   }
@@ -36940,7 +36826,7 @@ var nullMatcher, wildcardRegExpCache, RegExpRouter = class {
     this.#middleware = { [METHOD_NAME_ALL]: /* @__PURE__ */ Object.create(null) };
     this.#routes = { [METHOD_NAME_ALL]: /* @__PURE__ */ Object.create(null) };
   }
-  add(method, path22, handler2) {
+  add(method, path21, handler2) {
     const middleware = this.#middleware;
     const routes = this.#routes;
     if (!middleware || !routes) {
@@ -36954,18 +36840,18 @@ var nullMatcher, wildcardRegExpCache, RegExpRouter = class {
         });
       });
     }
-    if (path22 === "/*") {
-      path22 = "*";
+    if (path21 === "/*") {
+      path21 = "*";
     }
-    const paramCount = (path22.match(/\/:/g) || []).length;
-    if (/\*$/.test(path22)) {
-      const re = buildWildcardRegExp(path22);
+    const paramCount = (path21.match(/\/:/g) || []).length;
+    if (/\*$/.test(path21)) {
+      const re = buildWildcardRegExp(path21);
       if (method === METHOD_NAME_ALL) {
         Object.keys(middleware).forEach((m2) => {
-          middleware[m2][path22] ||= findMiddleware(middleware[m2], path22) || findMiddleware(middleware[METHOD_NAME_ALL], path22) || [];
+          middleware[m2][path21] ||= findMiddleware(middleware[m2], path21) || findMiddleware(middleware[METHOD_NAME_ALL], path21) || [];
         });
       } else {
-        middleware[method][path22] ||= findMiddleware(middleware[method], path22) || findMiddleware(middleware[METHOD_NAME_ALL], path22) || [];
+        middleware[method][path21] ||= findMiddleware(middleware[method], path21) || findMiddleware(middleware[METHOD_NAME_ALL], path21) || [];
       }
       Object.keys(middleware).forEach((m2) => {
         if (method === METHOD_NAME_ALL || method === m2) {
@@ -36981,15 +36867,15 @@ var nullMatcher, wildcardRegExpCache, RegExpRouter = class {
       });
       return;
     }
-    const paths = checkOptionalParameter(path22) || [path22];
+    const paths = checkOptionalParameter(path21) || [path21];
     for (let i3 = 0, len = paths.length;i3 < len; i3++) {
-      const path23 = paths[i3];
+      const path22 = paths[i3];
       Object.keys(routes).forEach((m2) => {
         if (method === METHOD_NAME_ALL || method === m2) {
-          routes[m2][path23] ||= [
-            ...findMiddleware(middleware[m2], path23) || findMiddleware(middleware[METHOD_NAME_ALL], path23) || []
+          routes[m2][path22] ||= [
+            ...findMiddleware(middleware[m2], path22) || findMiddleware(middleware[METHOD_NAME_ALL], path22) || []
           ];
-          routes[m2][path23].push([handler2, paramCount - len + i3 + 1]);
+          routes[m2][path22].push([handler2, paramCount - len + i3 + 1]);
         }
       });
     }
@@ -37008,12 +36894,12 @@ var nullMatcher, wildcardRegExpCache, RegExpRouter = class {
     const routes = [];
     let hasOwnRoute = method === METHOD_NAME_ALL;
     [this.#middleware, this.#routes].forEach((r3) => {
-      const ownRoute = r3[method] ? Object.keys(r3[method]).map((path22) => [path22, r3[method][path22]]) : [];
+      const ownRoute = r3[method] ? Object.keys(r3[method]).map((path21) => [path21, r3[method][path21]]) : [];
       if (ownRoute.length !== 0) {
         hasOwnRoute ||= true;
         routes.push(...ownRoute);
       } else if (method !== METHOD_NAME_ALL) {
-        routes.push(...Object.keys(r3[METHOD_NAME_ALL]).map((path22) => [path22, r3[METHOD_NAME_ALL][path22]]));
+        routes.push(...Object.keys(r3[METHOD_NAME_ALL]).map((path21) => [path21, r3[METHOD_NAME_ALL][path21]]));
       }
     });
     if (!hasOwnRoute) {
@@ -37047,21 +36933,21 @@ var PreparedRegExpRouter = class {
     matcher[1].forEach((list) => list && list.push(handlerData));
     Object.values(matcher[2]).forEach((list) => list[0].push(handlerData));
   }
-  #addPath(method, path22, handler2, indexes, map2) {
+  #addPath(method, path21, handler2, indexes, map2) {
     const matcher = this.#matchers[method];
     if (!map2) {
-      matcher[2][path22][0].push([handler2, {}]);
+      matcher[2][path21][0].push([handler2, {}]);
     } else {
       indexes.forEach((index) => {
         if (typeof index === "number") {
           matcher[1][index].push([handler2, map2]);
         } else {
-          matcher[2][index || path22][0].push([handler2, map2]);
+          matcher[2][index || path21][0].push([handler2, map2]);
         }
       });
     }
   }
-  add(method, path22, handler2) {
+  add(method, path21, handler2) {
     if (!this.#matchers[method]) {
       const all = this.#matchers[METHOD_NAME_ALL];
       const staticMap = {};
@@ -37074,7 +36960,7 @@ var PreparedRegExpRouter = class {
         staticMap
       ];
     }
-    if (path22 === "/*" || path22 === "*") {
+    if (path21 === "/*" || path21 === "*") {
       const handlerData = [handler2, {}];
       if (method === METHOD_NAME_ALL) {
         for (const m2 in this.#matchers) {
@@ -37085,17 +36971,17 @@ var PreparedRegExpRouter = class {
       }
       return;
     }
-    const data = this.#relocateMap[path22];
+    const data = this.#relocateMap[path21];
     if (!data) {
-      throw new Error(`Path ${path22} is not registered`);
+      throw new Error(`Path ${path21} is not registered`);
     }
     for (const [indexes, map2] of data) {
       if (method === METHOD_NAME_ALL) {
         for (const m2 in this.#matchers) {
-          this.#addPath(m2, path22, handler2, indexes, map2);
+          this.#addPath(m2, path21, handler2, indexes, map2);
         }
       } else {
-        this.#addPath(method, path22, handler2, indexes, map2);
+        this.#addPath(method, path21, handler2, indexes, map2);
       }
     }
   }
@@ -37124,13 +37010,13 @@ var SmartRouter = class {
   constructor(init2) {
     this.#routers = init2.routers;
   }
-  add(method, path22, handler2) {
+  add(method, path21, handler2) {
     if (!this.#routes) {
       throw new Error(MESSAGE_MATCHER_IS_ALREADY_BUILT);
     }
-    this.#routes.push([method, path22, handler2]);
+    this.#routes.push([method, path21, handler2]);
   }
-  match(method, path22) {
+  match(method, path21) {
     if (!this.#routes) {
       throw new Error("Fatal error");
     }
@@ -37145,7 +37031,7 @@ var SmartRouter = class {
         for (let i22 = 0, len2 = routes.length;i22 < len2; i22++) {
           router.add(...routes[i22]);
         }
-        res = router.match(method, path22);
+        res = router.match(method, path21);
       } catch (e2) {
         if (e2 instanceof UnsupportedPathError) {
           continue;
@@ -37201,10 +37087,10 @@ var emptyParams, hasChildren = (children) => {
     }
     this.#patterns = [];
   }
-  insert(method, path22, handler2) {
+  insert(method, path21, handler2) {
     this.#order = ++this.#order;
     let curNode = this;
-    const parts = splitRoutingPath(path22);
+    const parts = splitRoutingPath(path21);
     const possibleKeys = [];
     for (let i3 = 0, len = parts.length;i3 < len; i3++) {
       const p = parts[i3];
@@ -37253,12 +37139,12 @@ var emptyParams, hasChildren = (children) => {
       }
     }
   }
-  search(method, path22) {
+  search(method, path21) {
     const handlerSets = [];
     this.#params = emptyParams;
     const curNode = this;
     let curNodes = [curNode];
-    const parts = splitPath(path22);
+    const parts = splitPath(path21);
     const curNodesQueue = [];
     const len = parts.length;
     let partOffsets = null;
@@ -37300,13 +37186,13 @@ var emptyParams, hasChildren = (children) => {
           if (matcher instanceof RegExp) {
             if (partOffsets === null) {
               partOffsets = new Array(len);
-              let offset = path22[0] === "/" ? 1 : 0;
+              let offset = path21[0] === "/" ? 1 : 0;
               for (let p = 0;p < len; p++) {
                 partOffsets[p] = offset;
                 offset += parts[p].length + 1;
               }
             }
-            const restPathString = path22.substring(partOffsets[i3]);
+            const restPathString = path21.substring(partOffsets[i3]);
             const m2 = matcher.exec(restPathString);
             if (m2) {
               params[name] = m2[0];
@@ -37358,18 +37244,18 @@ var TrieRouter = class {
   constructor() {
     this.#node = new Node2;
   }
-  add(method, path22, handler2) {
-    const results = checkOptionalParameter(path22);
+  add(method, path21, handler2) {
+    const results = checkOptionalParameter(path21);
     if (results) {
       for (let i3 = 0, len = results.length;i3 < len; i3++) {
         this.#node.insert(method, results[i3], handler2);
       }
       return;
     }
-    this.#node.insert(method, path22, handler2);
+    this.#node.insert(method, path21, handler2);
   }
-  match(method, path22) {
-    return this.#node.search(method, path22);
+  match(method, path21) {
+    return this.#node.search(method, path21);
   }
 };
 var init_router4 = __esm(() => {
@@ -37511,8 +37397,8 @@ async function getColorEnabledAsync() {
 var init_color = () => {};
 
 // node_modules/hono/dist/middleware/logger/index.js
-async function log5(fn, prefix2, method, path22, status = 0, elapsed) {
-  const out = prefix2 === "<--" ? `${prefix2} ${method} ${path22}` : `${prefix2} ${method} ${path22} ${await colorStatus(status)} ${elapsed}`;
+async function log5(fn, prefix2, method, path21, status = 0, elapsed) {
+  const out = prefix2 === "<--" ? `${prefix2} ${method} ${path21}` : `${prefix2} ${method} ${path21} ${await colorStatus(status)} ${elapsed}`;
   fn(out);
 }
 var humanize = (times) => {
@@ -37540,11 +37426,11 @@ var humanize = (times) => {
 }, logger = (fn = console.log) => {
   return async function logger2(c5, next) {
     const { method, url: url2 } = c5.req;
-    const path22 = url2.slice(url2.indexOf("/", 8));
-    await log5(fn, "<--", method, path22);
+    const path21 = url2.slice(url2.indexOf("/", 8));
+    await log5(fn, "<--", method, path21);
     const start = Date.now();
     await next();
-    await log5(fn, "-->", method, path22, c5.res.status, time3(start));
+    await log5(fn, "-->", method, path21, c5.res.status, time3(start));
   };
 };
 var init_logger2 = __esm(() => {
@@ -37552,8 +37438,8 @@ var init_logger2 = __esm(() => {
 });
 
 // src/lib/auth/origin-guard.ts
-function pathMatchesPrefix2(path22, prefix2) {
-  return path22 === prefix2 || path22.startsWith(prefix2 + "/");
+function pathMatchesPrefix2(path21, prefix2) {
+  return path21 === prefix2 || path21.startsWith(prefix2 + "/");
 }
 function isAllowedOrigin(origin, boundPort) {
   if (origin === null)
@@ -37568,8 +37454,8 @@ function isAllowedOrigin(origin, boundPort) {
     return false;
   return url2.port === String(boundPort);
 }
-function isCsrfGuardedPath(path22) {
-  return CSRF_GUARDED_PREFIXES.some((prefix2) => pathMatchesPrefix2(path22, prefix2));
+function isCsrfGuardedPath(path21) {
+  return CSRF_GUARDED_PREFIXES.some((prefix2) => pathMatchesPrefix2(path21, prefix2));
 }
 function createOriginGuardMiddleware(options) {
   return async (c5, next) => {
@@ -38583,10 +38469,10 @@ var init_claude_code = __esm(() => {
 
 // src/apps/claude-desktop/config.ts
 import { randomUUID as randomUUID6 } from "crypto";
-import fs20 from "fs";
-import os7 from "os";
-import path22 from "path";
-function gatewayProfile(home = os7.homedir(), baseUrl = "http://127.0.0.1:4141") {
+import fs19 from "fs";
+import os6 from "os";
+import path21 from "path";
+function gatewayProfile(home = os6.homedir(), baseUrl = "http://127.0.0.1:4141") {
   return {
     inferenceProvider: "gateway",
     inferenceGatewayBaseUrl: baseUrl,
@@ -38594,7 +38480,7 @@ function gatewayProfile(home = os7.homedir(), baseUrl = "http://127.0.0.1:4141")
     inferenceGatewayAuthScheme: "bearer",
     disableDeploymentModeChooser: true,
     coworkEgressAllowedHosts: ["*"],
-    allowedWorkspaceFolders: [path22.join(home, "Claude")],
+    allowedWorkspaceFolders: [path21.join(home, "Claude")],
     disableEssentialTelemetry: true,
     disableNonessentialTelemetry: true,
     disableNonessentialServices: false,
@@ -38606,12 +38492,12 @@ function gatewayProfile(home = os7.homedir(), baseUrl = "http://127.0.0.1:4141")
     isClaudeCodeForDesktopEnabled: true
   };
 }
-function getClaude3pDir(home = os7.homedir(), platform3 = process.platform) {
+function getClaude3pDir(home = os6.homedir(), platform3 = process.platform) {
   if (platform3 === "win32") {
-    const localAppData = process.env.LOCALAPPDATA ?? path22.join(home, "AppData", "Local");
-    return path22.join(localAppData, `Claude${USERDATA_3P_SUFFIX}`);
+    const localAppData = process.env.LOCALAPPDATA ?? path21.join(home, "AppData", "Local");
+    return path21.join(localAppData, `Claude${USERDATA_3P_SUFFIX}`);
   }
-  return path22.join(home, "Library", "Application Support", `Claude${USERDATA_3P_SUFFIX}`);
+  return path21.join(home, "Library", "Application Support", `Claude${USERDATA_3P_SUFFIX}`);
 }
 function readMetaFile(file2) {
   const raw2 = readJsonObject(file2);
@@ -38629,7 +38515,7 @@ function profileMatches(existing, values) {
 function readJsonObject(file2) {
   let raw2;
   try {
-    raw2 = fs20.readFileSync(file2, "utf8");
+    raw2 = fs19.readFileSync(file2, "utf8");
   } catch {
     return null;
   }
@@ -38646,16 +38532,16 @@ function readJsonObject(file2) {
 function atomicWriteJson2(file2, value) {
   atomicWriteJson(file2, value, { label: "Claude Desktop config" });
 }
-function applyConfigLibraryProfile(home = os7.homedir(), values = gatewayProfile(home)) {
+function applyConfigLibraryProfile(home = os6.homedir(), values = gatewayProfile(home)) {
   const dir = getClaude3pDir(home);
-  const libDir = path22.join(dir, "configLibrary");
-  const metaPath = path22.join(libDir, "_meta.json");
+  const libDir = path21.join(dir, "configLibrary");
+  const metaPath = path21.join(libDir, "_meta.json");
   const meta3 = readMetaFile(metaPath);
   const profileId = meta3.appliedId || randomUUID6();
-  const profilePath = path22.join(libDir, `${profileId}.json`);
+  const profilePath = path21.join(libDir, `${profileId}.json`);
   const ensuredWorkspaceFolders = ensureWorkspaceFolders(values.allowedWorkspaceFolders);
   const existingProfile = readJsonObject(profilePath);
-  const topPath = path22.join(dir, "claude_desktop_config.json");
+  const topPath = path21.join(dir, "claude_desktop_config.json");
   const top = readJsonObject(topPath) ?? {};
   const alreadyApplied = meta3.appliedId === profileId && profileMatches(existingProfile, values) && top.deploymentMode === "3p";
   if (alreadyApplied) {
@@ -38670,16 +38556,16 @@ function applyConfigLibraryProfile(home = os7.homedir(), values = gatewayProfile
   atomicWriteJson2(topPath, top);
   return { dir, profileId, wrote: true, ensuredWorkspaceFolders };
 }
-function isConfigLibraryApplied(home = os7.homedir(), values = gatewayProfile(home)) {
+function isConfigLibraryApplied(home = os6.homedir(), values = gatewayProfile(home)) {
   const dir = getClaude3pDir(home);
-  const libDir = path22.join(dir, "configLibrary");
-  const meta3 = readJsonObject(path22.join(libDir, "_meta.json"));
+  const libDir = path21.join(dir, "configLibrary");
+  const meta3 = readJsonObject(path21.join(libDir, "_meta.json"));
   if (!meta3?.appliedId)
     return false;
-  const profile = readJsonObject(path22.join(libDir, `${meta3.appliedId}.json`));
+  const profile = readJsonObject(path21.join(libDir, `${meta3.appliedId}.json`));
   if (!profileMatches(profile, values))
     return false;
-  const top = readJsonObject(path22.join(dir, "claude_desktop_config.json"));
+  const top = readJsonObject(path21.join(dir, "claude_desktop_config.json"));
   return top?.deploymentMode === "3p";
 }
 function stripOwnedPreferences(top) {
@@ -38698,21 +38584,21 @@ function stripOwnedPreferences(top) {
   }
   return true;
 }
-function revertConfigLibraryProfile(home = os7.homedir()) {
+function revertConfigLibraryProfile(home = os6.homedir()) {
   const dir = getClaude3pDir(home);
-  const libDir = path22.join(dir, "configLibrary");
-  const metaPath = path22.join(libDir, "_meta.json");
+  const libDir = path21.join(dir, "configLibrary");
+  const metaPath = path21.join(libDir, "_meta.json");
   const meta3 = readJsonObject(metaPath);
   let reverted = false;
   if (meta3?.appliedId) {
     try {
-      fs20.rmSync(path22.join(libDir, `${meta3.appliedId}.json`), { force: true });
+      fs19.rmSync(path21.join(libDir, `${meta3.appliedId}.json`), { force: true });
     } catch {}
     const entries = meta3.entries.filter((e2) => e2.id !== meta3.appliedId);
     atomicWriteJson2(metaPath, { appliedId: "", entries });
     reverted = true;
   }
-  const topPath = path22.join(dir, "claude_desktop_config.json");
+  const topPath = path21.join(dir, "claude_desktop_config.json");
   const top = readJsonObject(topPath);
   if (top) {
     let dirty = false;
@@ -38733,7 +38619,7 @@ function ensureWorkspaceFolders(folders) {
   const created = [];
   for (const folder of folders) {
     try {
-      fs20.mkdirSync(folder, { recursive: true });
+      fs19.mkdirSync(folder, { recursive: true });
       created.push(folder);
     } catch {}
   }
@@ -38765,7 +38651,7 @@ ${pad}</dict>`;
   }
   throw new Error(`unsupported plist value: ${typeof v2}`);
 }
-function generateManagedProfile(home = os7.homedir(), values = gatewayProfile(home), opts = {}) {
+function generateManagedProfile(home = os6.homedir(), values = gatewayProfile(home), opts = {}) {
   const profileUUID = opts.profileUUID ?? randomUUID6();
   const payloadUUID = opts.payloadUUID ?? randomUUID6();
   const scope = opts.scope ?? "User";
@@ -38830,40 +38716,40 @@ var init_config3 = __esm(() => {
 });
 
 // src/apps/claude-desktop/detect.ts
-import fs21 from "fs";
-import os8 from "os";
-import path23 from "path";
-function claudeAppCandidates(platform3 = process.platform, home = os8.homedir()) {
+import fs20 from "fs";
+import os7 from "os";
+import path22 from "path";
+function claudeAppCandidates(platform3 = process.platform, home = os7.homedir()) {
   if (platform3 === "darwin")
     return [CLAUDE_APP_PATH];
   if (platform3 === "win32") {
     const localAppData = windowsLocalAppData(home);
     return [
-      path23.join(localAppData, "AnthropicClaude"),
-      path23.join(localAppData, "Microsoft", "WindowsApps", "Claude.exe"),
-      path23.join(localAppData, "Packages", "Claude_pzs8sxrjxfjjc")
+      path22.join(localAppData, "AnthropicClaude"),
+      path22.join(localAppData, "Microsoft", "WindowsApps", "Claude.exe"),
+      path22.join(localAppData, "Packages", "Claude_pzs8sxrjxfjjc")
     ];
   }
   return [];
 }
 function windowsLocalAppData(home) {
-  return process.env.LOCALAPPDATA ?? path23.join(home, "AppData", "Local");
+  return process.env.LOCALAPPDATA ?? path22.join(home, "AppData", "Local");
 }
 function windowsMsixClaudeInstalled(home) {
-  const packages = path23.join(windowsLocalAppData(home), "Packages");
+  const packages = path22.join(windowsLocalAppData(home), "Packages");
   try {
-    return fs21.readdirSync(packages).some((name) => name.startsWith("Claude_") || name.startsWith("AnthropicPBC.Claude"));
+    return fs20.readdirSync(packages).some((name) => name.startsWith("Claude_") || name.startsWith("AnthropicPBC.Claude"));
   } catch {
     return false;
   }
 }
-function claudeAppInstalled(platform3 = process.platform, home = os8.homedir()) {
+function claudeAppInstalled(platform3 = process.platform, home = os7.homedir()) {
   const candidates = claudeAppCandidates(platform3, home);
   if (candidates.length === 0)
     return true;
   const hasCandidate = candidates.some((p) => {
     try {
-      fs21.statSync(p);
+      fs20.statSync(p);
       return true;
     } catch {
       return false;
@@ -38879,8 +38765,8 @@ var CLAUDE_APP_PATH = "/Applications/Claude.app";
 var init_detect2 = () => {};
 
 // src/apps/claude-desktop/cli.ts
-import fs22 from "fs";
-import path24 from "path";
+import fs21 from "fs";
+import path23 from "path";
 function apply() {
   try {
     const result = applyConfigLibraryProfile();
@@ -38899,10 +38785,10 @@ function apply() {
 }
 function writeManagedProfile() {
   try {
-    fs22.writeFileSync(MANAGED_PROFILE_OUT, generateManagedProfile(), {
+    fs21.writeFileSync(MANAGED_PROFILE_OUT, generateManagedProfile(), {
       mode: 384
     });
-    const abs = path24.resolve(MANAGED_PROFILE_OUT);
+    const abs = path23.resolve(MANAGED_PROFILE_OUT);
     consola.success(`Wrote managed-preferences profile to ${abs}`);
     consola.info(`  Install it (no Anthropic sign-in needed) via either:
 ` + `    sudo profiles install -path ${abs}
@@ -44200,33 +44086,33 @@ var require_URL = __commonJS((exports, module) => {
         else
           return basepath.substring(0, lastslash + 1) + refpath;
       }
-      function remove_dot_segments(path25) {
-        if (!path25)
-          return path25;
+      function remove_dot_segments(path24) {
+        if (!path24)
+          return path24;
         var output = "";
-        while (path25.length > 0) {
-          if (path25 === "." || path25 === "..") {
-            path25 = "";
+        while (path24.length > 0) {
+          if (path24 === "." || path24 === "..") {
+            path24 = "";
             break;
           }
-          var twochars = path25.substring(0, 2);
-          var threechars = path25.substring(0, 3);
-          var fourchars = path25.substring(0, 4);
+          var twochars = path24.substring(0, 2);
+          var threechars = path24.substring(0, 3);
+          var fourchars = path24.substring(0, 4);
           if (threechars === "../") {
-            path25 = path25.substring(3);
+            path24 = path24.substring(3);
           } else if (twochars === "./") {
-            path25 = path25.substring(2);
+            path24 = path24.substring(2);
           } else if (threechars === "/./") {
-            path25 = "/" + path25.substring(3);
-          } else if (twochars === "/." && path25.length === 2) {
-            path25 = "/";
-          } else if (fourchars === "/../" || threechars === "/.." && path25.length === 3) {
-            path25 = "/" + path25.substring(4);
+            path24 = "/" + path24.substring(3);
+          } else if (twochars === "/." && path24.length === 2) {
+            path24 = "/";
+          } else if (fourchars === "/../" || threechars === "/.." && path24.length === 3) {
+            path24 = "/" + path24.substring(4);
             output = output.replace(/\/?[^\/]*$/, "");
           } else {
-            var segment = path25.match(/(\/?([^\/]*))/)[0];
+            var segment = path24.match(/(\/?([^\/]*))/)[0];
             output += segment;
-            path25 = path25.substring(segment.length);
+            path24 = path24.substring(segment.length);
           }
         }
         return output;
@@ -56514,12 +56400,12 @@ class OllamaWebExecutor {
       title
     };
   }
-  async post(path25, body) {
+  async post(path24, body) {
     const controller = new AbortController;
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let response;
     try {
-      response = await fetch(`${this.base}${path25}`, {
+      response = await fetch(`${this.base}${path24}`, {
         method: "POST",
         signal: controller.signal,
         headers: {
@@ -56699,7 +56585,7 @@ __export(exports_debug, {
   debug: () => debug,
   collectSecretStatuses: () => collectSecretStatuses
 });
-import os9 from "os";
+import os8 from "os";
 async function getPackageVersion() {
   const { BUILD_VERSION: BUILD_VERSION2 } = await Promise.resolve().then(() => (init_build_info(), exports_build_info));
   return BUILD_VERSION2;
@@ -56709,8 +56595,8 @@ function getRuntimeInfo() {
   return {
     name: isBun ? "bun" : "node",
     version: isBun ? Bun.version : process.version.slice(1),
-    platform: os9.platform(),
-    arch: os9.arch()
+    platform: os8.platform(),
+    arch: os8.arch()
   };
 }
 async function checkTokenExists() {
@@ -57082,6 +56968,22 @@ var init_settings_types = __esm(() => {
   });
 });
 
+// src/lib/platform/cli-path.ts
+function isAppBundlePath(execPath2) {
+  return /\.app\/Contents\/MacOS\//u.test(execPath2);
+}
+function describeLaunchSource(execPath2 = process.execPath) {
+  if (isAppBundlePath(execPath2))
+    return { path: execPath2, kind: "dmg-app" };
+  if (/\/target\/(?:debug|release)\//u.test(execPath2) || /\/bun$/u.test(execPath2))
+    return { path: execPath2, kind: "dev" };
+  if (/\/(?:homebrew|Cellar)\//u.test(execPath2))
+    return { path: execPath2, kind: "homebrew" };
+  if (execPath2.includes("/.local/bin/"))
+    return { path: execPath2, kind: "user-bin" };
+  return { path: execPath2, kind: "other" };
+}
+
 // src/lib/system/gh-cli.ts
 var exports_gh_cli = {};
 __export(exports_gh_cli, {
@@ -57444,7 +57346,6 @@ var init_settings_endpoints = __esm(() => {
   init_config_schema();
   init_settings_types();
   init_error2();
-  init_cli_path();
   init_state();
   init_build_info();
   init_version();
@@ -70966,11 +70867,11 @@ class OpenAPIGenerator {
     return schema;
   }
   generatePath(route) {
-    const { method, path: path25, request, responses } = route, pathItemConfig = __rest(route, ["method", "path", "request", "responses"]);
+    const { method, path: path24, request, responses } = route, pathItemConfig = __rest(route, ["method", "path", "request", "responses"]);
     const generatedResponses = mapValues(responses, (response) => {
       return this.getResponse(response);
     });
-    const parameters = enhanceMissingParametersError(() => this.getParameters(request), { route: `${method} ${path25}` });
+    const parameters = enhanceMissingParametersError(() => this.getParameters(request), { route: `${method} ${path24}` });
     const requestBody = this.getRequestBody(request === null || request === undefined ? undefined : request.body);
     const routeDoc = {
       [method]: Object.assign(Object.assign(Object.assign(Object.assign({}, pathItemConfig), parameters.length > 0 ? {
@@ -71448,8 +71349,8 @@ function isZod(x2) {
 }
 function addBasePathToDocument(document, basePath) {
   const updatedPaths = {};
-  Object.keys(document.paths).forEach((path25) => {
-    updatedPaths[mergePath(basePath.replaceAll(/:([^\/]+)/g, "{$1}"), path25)] = document.paths[path25];
+  Object.keys(document.paths).forEach((path24) => {
+    updatedPaths[mergePath(basePath.replaceAll(/:([^\/]+)/g, "{$1}"), path24)] = document.paths[path24];
   });
   return {
     ...document,
@@ -71584,8 +71485,8 @@ var init_dist6 = __esm(() => {
       const document = new OpenApiGeneratorV31(this.openAPIRegistry.definitions, generatorConfig).generateDocument(objectConfig);
       return this._basePath ? addBasePathToDocument(document, this._basePath) : document;
     };
-    doc = (path25, configureObject, configureGenerator) => {
-      return this.get(path25, (c5) => {
+    doc = (path24, configureObject, configureGenerator) => {
+      return this.get(path24, (c5) => {
         const objectConfig = typeof configureObject === "function" ? configureObject(c5) : configureObject;
         const generatorConfig = typeof configureGenerator === "function" ? configureGenerator(c5) : configureGenerator;
         try {
@@ -71596,8 +71497,8 @@ var init_dist6 = __esm(() => {
         }
       });
     };
-    doc31 = (path25, configureObject, configureGenerator) => {
-      return this.get(path25, (c5) => {
+    doc31 = (path24, configureObject, configureGenerator) => {
+      return this.get(path24, (c5) => {
         const objectConfig = typeof configureObject === "function" ? configureObject(c5) : configureObject;
         const generatorConfig = typeof configureGenerator === "function" ? configureGenerator(c5) : configureGenerator;
         try {
@@ -71608,9 +71509,9 @@ var init_dist6 = __esm(() => {
         }
       });
     };
-    route(path25, app) {
-      const pathForOpenAPI = path25.replaceAll(/:([^\/]+)/g, "{$1}");
-      super.route(path25, app);
+    route(path24, app) {
+      const pathForOpenAPI = path24.replaceAll(/:([^\/]+)/g, "{$1}");
+      super.route(path24, app);
       if (!(app instanceof OpenAPIHono2))
         return this;
       app.#parentApp ??= this;
@@ -71642,8 +71543,8 @@ var init_dist6 = __esm(() => {
       });
       return this;
     }
-    basePath(path25) {
-      const cloned = super.basePath(path25);
+    basePath(path24) {
+      const cloned = super.basePath(path24);
       const newApp = new OpenAPIHono2({ defaultHook: this.defaultHook });
       newApp.router = cloned.router;
       newApp.routes = cloned.routes;
@@ -71668,12 +71569,12 @@ import {
   readFileSync as readFileSync3,
   statSync as statSync2
 } from "fs";
-import path25 from "path";
+import path24 from "path";
 function defaultPaths() {
   return {
     appDir: PATHS.APP_DIR,
     configPath: PATHS.CONFIG_PATH,
-    dbPath: path25.join(PATHS.APP_DIR, DB_FILENAME),
+    dbPath: path24.join(PATHS.APP_DIR, DB_FILENAME),
     githubTokenPath: PATHS.GITHUB_TOKEN_PATH
   };
 }
@@ -72654,13 +72555,6 @@ async function runServer(options) {
   if (removedShim) {
     consola.info(`Removed legacy Claude Code shim at ${removedShim}`);
   }
-  const link = ensureCliSymlink();
-  if (link.linked) {
-    consola.info(`Linked CLI onto PATH: ${link.symlinkPath} \u2192 ${link.target}`);
-    if (link.pathBlockAdded) {
-      consola.info("Added ~/.local/bin to PATH in ~/.zprofile (open a new terminal to pick it up).");
-    }
-  }
   await cacheVSCodeVersion();
   cacheMacMachineId();
   cacheVsCodeSessionId();
@@ -72749,7 +72643,6 @@ var init_run_server = __esm(() => {
   init_reconcile();
   init_config();
   init_proxy();
-  init_cli_path();
   init_opencode();
   init_paths();
   init_replace_running();
@@ -73204,14 +73097,13 @@ __export(exports_uninstall, {
   uninstall: () => uninstall,
   runUninstall: () => runUninstall,
   revertAppIntegrations: () => revertAppIntegrations,
-  removeFirstLaunchPathBlock: () => removeFirstLaunchPathBlock,
   installTargets: () => installTargets,
   enabledApps: () => enabledApps
 });
 import { spawnSync as spawnSync3 } from "child_process";
-import fs23 from "fs";
-import os10 from "os";
-import path26 from "path";
+import fs22 from "fs";
+import os9 from "os";
+import path25 from "path";
 async function runUninstall(opts) {
   consola.box("maximal uninstall");
   const enabled = enabledApps();
@@ -73226,7 +73118,7 @@ async function runUninstall(opts) {
   consola.info("Step 2/5: Remove startup integration");
   removeStartupIntegration();
   consola.info("Step 3/5: Remove the binary");
-  removeBinary({ keepApp: opts.keepApp });
+  removeBinary();
   consola.info("Step 4/5: Revert app integrations");
   await revertAppIntegrations(enabled);
   consola.info("Step 5/5: Optional cleanup");
@@ -73258,10 +73150,10 @@ function stopProxy() {
 }
 function removeStartupIntegration() {
   if (process.platform === "darwin") {
-    const plist = path26.join(os10.homedir(), "Library", "LaunchAgents", "co.stuffbucket.maximal.plist");
-    if (fs23.existsSync(plist)) {
+    const plist = path25.join(os9.homedir(), "Library", "LaunchAgents", "co.stuffbucket.maximal.plist");
+    if (fs22.existsSync(plist)) {
       try {
-        fs23.rmSync(plist);
+        fs22.rmSync(plist);
         consola.success(`  removed ${plist}`);
       } catch (err) {
         consola.warn(`  could not remove ${plist}`, err);
@@ -73284,38 +73176,25 @@ function removeStartupIntegration() {
   }
   consola.info("  unsupported platform; skipping");
 }
-function installTargets(opts = {}) {
-  const home = os10.homedir();
-  if (process.platform === "win32") {
-    return [
-      {
-        path: path26.join(process.env.LOCALAPPDATA ?? path26.join(home, "AppData", "Local"), "Programs", "maximal", "maximal.exe")
-      }
-    ];
-  }
-  const targets = [
-    { path: path26.join(home, ".local", "bin", "maximal") },
-    { path: "/usr/local/bin/maximal" },
-    { path: "/opt/homebrew/bin/maximal" },
-    { path: "/Applications/maximal.app", recursive: true, appBundle: true }
-  ];
-  return opts.keepApp ? targets.filter((t2) => !t2.appBundle) : targets;
+function installTargets() {
+  if (process.platform === "win32")
+    return [];
+  return ["/usr/local/bin/maximal", "/opt/homebrew/bin/maximal"];
 }
-function removeBinary(opts = {}) {
+function removeBinary() {
   let removed = 0;
-  for (const target of installTargets(opts)) {
-    let stat;
+  for (const target of installTargets()) {
     try {
-      stat = fs23.lstatSync(target.path);
+      fs22.lstatSync(target);
     } catch {
       continue;
     }
     try {
-      fs23.rmSync(target.path, target.recursive && !stat.isSymbolicLink() ? { recursive: true } : undefined);
-      consola.success(`  removed ${target.path}`);
+      fs22.rmSync(target);
+      consola.success(`  removed ${target}`);
       removed++;
     } catch (err) {
-      consola.warn(`  could not remove ${target.path}`, err);
+      consola.warn(`  could not remove ${target}`, err);
     }
   }
   if (removed === 0) {
@@ -73343,40 +73222,9 @@ async function revertAppIntegrations(stillEnabled) {
       consola.warn(`  could not revert ${app.name}`, err);
     }
   }
-  const installerRc = removeFirstLaunchPathBlock();
-  if (installerRc.length > 0) {
-    consola.success(`  removed installer PATH block from ${installerRc.join(", ")}`);
-  }
-}
-function escapeRegExp2(s2) {
-  return s2.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-}
-function removeFirstLaunchPathBlock(homeDir = os10.homedir()) {
-  const rcFiles = [
-    path26.join(homeDir, ".zshrc"),
-    path26.join(homeDir, ".zprofile")
-  ];
-  const re = new RegExp(`\\n?${escapeRegExp2(FIRST_LAUNCH_PATH_MARKER_START)}[\\s\\S]*?${escapeRegExp2(FIRST_LAUNCH_PATH_MARKER_END)}\\n?`, "g");
-  const modified = [];
-  for (const rc of rcFiles) {
-    let existing;
-    try {
-      existing = fs23.readFileSync(rc, "utf8");
-    } catch {
-      continue;
-    }
-    if (!existing.includes(FIRST_LAUNCH_PATH_MARKER_START))
-      continue;
-    try {
-      fs23.writeFileSync(rc, existing.replace(re, `
-`));
-      modified.push(rc);
-    } catch {}
-  }
-  return modified;
 }
 async function maybePurgeSecrets(opts) {
-  const secretsDir = path26.join(PATHS.APP_DIR, "secrets");
+  const secretsDir = path25.join(PATHS.APP_DIR, "secrets");
   const tokenPaths = [PATHS.GITHUB_TOKEN_PATH, PATHS.ACCOUNTS_PATH];
   const willPurge = opts.purge || await confirmPurge(opts);
   if (!willPurge) {
@@ -73384,19 +73232,19 @@ async function maybePurgeSecrets(opts) {
     consola.info(`  \u2139 github tokens kept (${tokenPaths.join(", ")})`);
     return;
   }
-  if (fs23.existsSync(secretsDir)) {
+  if (fs22.existsSync(secretsDir)) {
     try {
-      fs23.rmSync(secretsDir, { recursive: true });
+      fs22.rmSync(secretsDir, { recursive: true });
       consola.success(`  removed ${secretsDir}`);
     } catch (err) {
       consola.warn(`  could not remove ${secretsDir}`, err);
     }
   }
   for (const tokenPath of tokenPaths) {
-    if (!fs23.existsSync(tokenPath))
+    if (!fs22.existsSync(tokenPath))
       continue;
     try {
-      fs23.rmSync(tokenPath);
+      fs22.rmSync(tokenPath);
       consola.success(`  removed ${tokenPath}`);
     } catch (err) {
       consola.warn(`  could not remove ${tokenPath}`, err);
@@ -73414,7 +73262,6 @@ var init_uninstall = __esm(() => {
   init_dist2();
   init_dist();
   init_registry();
-  init_cli_path();
   init_paths();
   uninstall = defineCommand({
     meta: {
@@ -73440,7 +73287,7 @@ var init_uninstall = __esm(() => {
       "keep-app": {
         type: "boolean",
         default: false,
-        description: "Leave /Applications/maximal.app in place (still removes the ~/.local/bin/maximal symlink and other PATH binaries). Used by the in-app uninstall, which can't delete the running bundle."
+        description: "Accepted for the shell's in-app uninstall, which passes it over IPC. Currently a no-op: maximal ships no application bundle, so there is no bundle to keep and the Homebrew binaries are removed either way."
       }
     },
     run({ args }) {

@@ -304,11 +304,9 @@ jobs:
         # product bug on Windows that no other check could have found — see the
         # PR that added this step.
         #
-        # 5 cases stay skipped on win32, each with the reason at its skip site:
-        # 4 in cli-path.test.ts (`ensureCliSymlink` returns `not-macos` before
-        # touching the filesystem, so its symlink body is unreachable on
-        # Windows) and 1 in secrets.test.ts (the "refuses a group/world-readable
-        # secrets file" fixture cannot be constructed without POSIX mode bits).
+        # 1 case stays skipped on win32, with the reason at its skip site:
+        # secrets.test.ts's "refuses a group/world-readable secrets file"
+        # fixture cannot be constructed without POSIX mode bits.
         run: |
           set -euo pipefail
           export PATH="$HOME/.bun/bin:$PATH"
