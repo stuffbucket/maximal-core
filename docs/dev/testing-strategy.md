@@ -692,16 +692,36 @@ this terse: target, date, and the survivors that turned out to matter.
 | `src/lib/auth/request-auth.ts` | 219 | 42 | No vacuous tests. Three provable equivalents (above). The rest are genuinely uncovered surfaces, listed below. |
 | `src/routes/messages/non-stream-translation.ts` | 329 | 172 → 78 | 1 vacuous test (the Zod-schema-only assertion). The bulk was whole unasserted features: `normalizeToolSchema`, the `thinking_budget` clamp, the `tool_choice` map, `handleSystemPrompt`'s array arm, cache-token accounting, the multi-choice stop-reason merge, non-streaming thinking blocks. All now pinned. The remaining 78 are the array-content paths (`mapContent`'s `image`/`document` arms, the tool-result split, the claude-model thinking-block filter) plus `OptionalChaining` mutants that are equivalent under a well-formed upstream response. |
 | `src/routes/messages/utils.ts` | 32 | 3 | Only the `consola.warn` inside the JSON-parse `catch`. Logging, deliberately unasserted. |
+| `src/lib/auth/origin-guard.ts` + `request-auth.ts` | 268 | 41 → 32 | 2026-08-05, 9m50s at `--concurrency 10`. Security-surface-only re-sweep of the two auth modules together. origin-guard held at 1 (the 403 prose `message`, still deliberate). request-auth 40 → 31: the 9 killed are the whole `MAXIMAL_SHELL_KEY` arm — `isShellKey` plus its `decideAuth` call site — which was the only cluster where an attacker-influenced value reaches the line *and* the line decides allow/deny. `requestApiKey === state.shellApiKey` → `!==`, and that same conjunct → `true`, each turn **any** presented key into a valid credential that outranks the enforce flag. Pinned in `tests/security/shell-key-bypass.test.ts`. The 31 left are deliberate: 18 attribution-only, 12 provable equivalents, 1 false survivor (below). |
+
+**A mutant that exits the runner 0 is scored as a survivor.** The command
+runner reads only the exit code, so a mutant that *terminates* the suite
+successfully is indistinguishable from one no test covers.
+`isLoopbackAddress`'s `if (!address) return false` → `return true` is reported
+alive and is not: two tests in `tests/request-auth.test.ts` fail on it when run
+directly. Under that mutant an in-process `app.request` (no socket, so
+`defaultGetRequestIp` yields `null`) passes `/_internal/shutdown`'s loopback
+gate at `src/routes/internal/route.ts:42`, whose handler defaults to
+`process.exit(code)` — the suite stops after 9 files with **exit 0** and no
+summary block, and `test:mutation` looks green. Before triaging any survivor on
+a loopback-, shutdown-, or `process.exit`-adjacent line, apply it by hand and
+check for a summary block, not just the exit code.
 
 **Known-uncovered, not yet pinned** (recorded so the next sweep does not
-re-derive them): the `MAXIMAL_SHELL_KEY` bypass in `request-auth.ts` — no test
-ever sets `state.shellApiKey`, so the positive path is unobserved; the default
-`isEnforcing` resolver (`getConfig().auth?.enforce === true`), which every test
-replaces via the injectable option, so the resolver that actually runs in
-production is untested and would need a config DI seam to reach without
-`mock.module`; `findApiKeyEntry` attribution, whose result reaches
-`recordClient` and is asserted nowhere; and `mapContent`'s `image` and
-`document` arms, including the PDF-placeholder text.
+re-derive them): `findApiKeyEntry` attribution, whose result reaches
+`recordClient` and is asserted nowhere — reachable with an attacker-chosen key,
+but it runs only *after* the allow/deny decision and nothing branches on its
+output, so the 12 mutants on it mis-label a client rather than admit one; and
+`mapContent`'s `image` and `document` arms, including the PDF-placeholder text.
+
+Two entries previously listed here are resolved. The `MAXIMAL_SHELL_KEY` bypass
+is pinned by `tests/security/shell-key-bypass.test.ts`. The default
+`isEnforcing` resolver (`getConfig().auth?.enforce === true`) was **already**
+covered and the note was wrong: `tests/security/cli-client-regression.test.ts`
+drives the real `publicApp`, which passes no `isEnforcing` option, and sets the
+flag through `writeConfig` — no config DI seam needed, and no mutant on that
+line survives.
+
 
 
 ---
