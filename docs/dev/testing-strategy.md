@@ -532,13 +532,38 @@ sites that reach the network stack are matched.
 
 ### How it's configured
 StrykerJS, invoked manually via `bun run mutate`. The config
-(`stryker.conf.json`) is **deliberately narrow**: `testRunner: "command"`
-pointed at a single test file, `mutate` scoped to a single module. A run takes
-~30s–2min. It is **not** wired into `check:fast` or `check:deep` — it is a
-manual, targeted instrument, not a CI gate.
+(`stryker.conf.json`) narrows the **source** scope, not the test command:
 
-Usage pattern: point `mutate` at one pure-logic module, point the command
-runner at that module's test file, run, then read the surviving mutants.
+- `mutate` names the module(s) under test. Override it per run rather than
+  editing the file: `bunx stryker run --mutate 'src/routes/messages/utils.ts'`.
+- `testRunner: "command"` runs **`bun run test:mutation`** — the whole suite
+  minus six files. It is **not** narrowed to the module's own test file, and
+  narrowing it is the one mistake this config used to make. See below.
+- `--concurrency` defaults to 4; 10 is comfortable on a 24-core machine.
+
+Cost, measured on the pin (Bun 1.3.11, `--concurrency 10`): **~2.0–2.5 s per
+mutant**, dominated by the ~15 s suite run divided across workers. 104 mutants
+took 4m24s; 629 took 21m24s. Budget ~1.2 mutants/second/10-workers and scope
+accordingly — a 400-line module is roughly 450 mutants, so ~20 minutes.
+
+**Why the runner is the whole suite.** A command runner narrowed to one test
+file reports every mutant that *only some other file* would have killed as a
+survivor. Those false survivors are indistinguishable from real ones until you
+hand-apply the mutation, and triaging them costs far more than the runtime
+saved. The shipped config used to run a single file; re-running the same target
+against the full suite produced an identical survivor set, which is the good
+case — but nothing about the narrow command guaranteed that.
+
+**Why six files are excluded.** `test:mutation` skips
+`start-run-server`, `start-unauthenticated`, `start-multi-account`,
+`spawned-engine-ports`, `cli-branding`, and `main-cli-global-options`. Those
+bind real ports or spawn real processes (§5.8), and Stryker runs N suites
+concurrently. Measured: with the full suite at concurrency 4,
+`tests/start-run-server.test.ts` failed on **2 of 4** runs; with the six
+excluded, **0 of 10** at concurrency 10. A flaky test under a mutation run
+produces a **false kill**, which is the dangerous direction — it hides a
+survivor rather than inventing one. None of the six exercises pure request-path
+logic, so excluding them costs no real kills.
 
 ### Why we use it
 Line/branch coverage answers "did this line execute?" Mutation testing answers
@@ -550,6 +575,36 @@ the gate, so the bug was invisible. Post-hoc Stryker flagged the exact mutant
 (`if (!hasThinking) → if (true)` *survived*). That surviving mutant is the
 bug's fingerprint; running mutation testing on that module beforehand would
 have caught it.
+
+### The failure shape it finds: a fixture that proves the wrong thing
+
+Every vacuous test this repo has found by mutation had the same structure — a
+fixture chosen so that the assertion passes **for a reason other than the one
+the test name claims**. Three recorded instances, all found in one sweep:
+
+- **`tests/find-endpoint-model.test.ts`** — four test titles named specific
+  mutants ("kills the LogicalOperator mutant", "kills `m.id || false`") and
+  killed none of the seven on `findInModels`' byName lookup. The fixtures set
+  the other fields to `"unrecognised"` on the theory that this stopped the
+  semantic fallback from also finding the model. But
+  `` `claude-${family}-${version}` `` always parses back to the same
+  `{family, version}` tuple, so anything byName matches the fallback matches
+  too. Disabling byName entirely changed no observable output.
+- **`tests/security/origin-guard.test.ts` › "a foreign origin is rejected"** —
+  asserted `isAllowedOrigin("https://evil.example", 4141) === false`. That
+  origin has an *empty* `URL.port`, so it was rejected by the port comparison
+  and never reached the hostname allowlist. Deleting the allowlist check left
+  the test green; so did flipping the unparseable-origin `catch` from
+  `return false` to `return true`, because no fixture was unparseable.
+- **`tests/anthropic-request.test.ts` › "should translate comprehensive
+  Anthropic payload…"** — asserted only that the output satisfied a local Zod
+  schema whose `tools` is `z.array(z.any())` and whose `tool_choice` is
+  `string | object`. It stayed green with every tool mapped to `undefined`,
+  `tool_choice` reduced to `""`, and the system prompt dropped.
+
+The general rule: **a mutant that survives a test naming it is a statement
+about the fixture, not about the code.** Check what else in the function could
+produce the same output before concluding the assertion is doing work.
 
 ### The disposition rule for surviving mutants
 
@@ -570,6 +625,22 @@ have caught it.
    reachable input domain** plus a rationale for keeping the code. "Looks
    equivalent" / "probably fine" is rejected.
 
+Worked bucket-3 examples from `src/lib/auth/request-auth.ts`, kept as the
+reference standard for what "provable" means here:
+
+- `isLoopbackAddress`: `if (!address) return false` → `if (false)`. Equivalent
+  because the only fallthrough is `LOOPBACK_IPS.has(address)`, and
+  `Set.prototype.has` returns `false` for `null`, `undefined`, and `""`. The
+  guard is a readability affordance, not a behavior.
+- `apiKeyAllowed`: `if (requestKey.length === 0) return false` → `if (false)`.
+  Equivalent because the fallthrough is `allowList.includes("")`, and both
+  producers of that list (`normalizeApiKeys` and `getConfiguredApiKeys`) filter
+  on `key.length > 0`, so `""` is not a reachable member.
+- `extractRequestApiKey`: dropping the trailing `.trim()` from
+  `rest.join(" ").trim()`. Equivalent because `rest` comes from
+  `split(/\s+/)` on an already-trimmed string, which yields no empty or
+  whitespace-only elements, so the join can produce no leading/trailing space.
+
 The anti-pattern we are eliminating: accepting a live mutant because "we can't
 write a test to observe it." If a test can't observe it, that is a finding
 *about the code* (bucket 2), not a license to move on.
@@ -582,10 +653,18 @@ several were in fact **killable**, including one reachable via a
 `selectedModel?: Model` parameter the public contract genuinely allows to be
 `undefined`), and the hot-path sweep list is named below.
 
-**Deliberate non-goal:** we do **not** gate CI on a mutation-score threshold.
-It is slow, flaky under concurrency, and a global number invites gaming. The bar
-is the *per-survivor disposition rule above*, applied during review of
-test/logic PRs — not a percentage.
+**Deliberate non-goal:** we do **not** gate CI on a mutation-score threshold,
+and the numbers above are the argument rather than a preference. A useful sweep
+of one 400-line module is ~20 minutes on a 24-core laptop; CI runners are
+smaller. It is also *ratchet-hostile* in a way the `deps:check` and
+`dupes:check` ratchets are not: a survivor count moves when a **test** changes,
+not only when source does, so an unrelated refactor of a fixture re-scores
+modules it did not touch. And the score is not the deliverable — of the 222
+survivors in the sweep recorded below, three were vacuous tests, and finding
+them required reading each survivor, not comparing a percentage. A number that
+takes 20 minutes to produce and still needs the same manual read afterwards
+buys nothing a gate can enforce. The bar remains the *per-survivor disposition
+rule above*, applied during review of test/logic PRs.
 
 ### Which modules to sweep — a criterion, not a hand-list
 The target set is *computable*, not a matter of taste. "Branchy, pure-logic
@@ -600,6 +679,30 @@ target of record is `stryker.conf.json`. Today's standing high-value areas are
 the request-path transforms: request preprocessing, the protocol translation
 layers, model dispatch/selection, the completion handler's model-resolution
 gate, and domain-policy matching.
+
+### Sweep log
+
+Recording what a sweep found is what stops the next one re-deriving it. Keep
+this terse: target, date, and the survivors that turned out to matter.
+
+| Target | Mutants | Survivors before → after | Outcome |
+|---|---|---|---|
+| `src/lib/models/models.ts` | 104 | 7 → 0 | All 7 on the `byName` lookup, all "covered" by four test titles that named them. Fixed in `tests/find-endpoint-model.test.ts`. |
+| `src/lib/auth/origin-guard.ts` | 49 | 5 → 1 | 4 real gaps on `isAllowedOrigin` (foreign host on the bound port, unparseable Origin, the `[::1]` allowlist entry). Fixed in `tests/security/origin-guard.test.ts`. The 1 left is the 403 body's prose `message`, deliberately unpinned — the machine-readable `error.type` is the contract clients branch on, and pinning prose only invites churn. |
+| `src/lib/auth/request-auth.ts` | 219 | 42 | No vacuous tests. Three provable equivalents (above). The rest are genuinely uncovered surfaces, listed below. |
+| `src/routes/messages/non-stream-translation.ts` | 329 | 172 → 78 | 1 vacuous test (the Zod-schema-only assertion). The bulk was whole unasserted features: `normalizeToolSchema`, the `thinking_budget` clamp, the `tool_choice` map, `handleSystemPrompt`'s array arm, cache-token accounting, the multi-choice stop-reason merge, non-streaming thinking blocks. All now pinned. The remaining 78 are the array-content paths (`mapContent`'s `image`/`document` arms, the tool-result split, the claude-model thinking-block filter) plus `OptionalChaining` mutants that are equivalent under a well-formed upstream response. |
+| `src/routes/messages/utils.ts` | 32 | 3 | Only the `consola.warn` inside the JSON-parse `catch`. Logging, deliberately unasserted. |
+
+**Known-uncovered, not yet pinned** (recorded so the next sweep does not
+re-derive them): the `MAXIMAL_SHELL_KEY` bypass in `request-auth.ts` — no test
+ever sets `state.shellApiKey`, so the positive path is unobserved; the default
+`isEnforcing` resolver (`getConfig().auth?.enforce === true`), which every test
+replaces via the injectable option, so the resolver that actually runs in
+production is untested and would need a config DI seam to reach without
+`mock.module`; `findApiKeyEntry` attribution, whose result reaches
+`recordClient` and is asserted nowhere; and `mapContent`'s `image` and
+`document` arms, including the PDF-placeholder text.
+
 
 ---
 

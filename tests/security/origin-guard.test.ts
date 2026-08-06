@@ -37,8 +37,28 @@ describe("isAllowedOrigin", () => {
     expect(isAllowedOrigin(`http://localhost:${PORT}`, PORT)).toBe(true)
     expect(isAllowedOrigin(`http://127.0.0.1:${PORT}`, PORT)).toBe(true)
   })
-  test("a foreign origin is rejected", () => {
+  test("[::1] on the bound port passes — the IPv6 loopback literal", () => {
+    // `URL.hostname` brackets IPv6 literals, so the allowlist entry is the
+    // bracketed form. Nothing exercised this entry before, so deleting it from
+    // LOCALHOST_HOSTNAMES was invisible.
+    expect(isAllowedOrigin(`http://[::1]:${PORT}`, PORT)).toBe(true)
+  })
+  test("a foreign origin is rejected — on the bound port as well as off it", () => {
     expect(isAllowedOrigin("https://evil.example", PORT)).toBe(false)
+    // The load-bearing half, and the half that was missing. `https://evil.example`
+    // has an empty `URL.port`, so it was rejected by the port comparison on the
+    // last line and never reached the hostname allowlist — deleting the
+    // allowlist check entirely left this test green. A cross-origin page served
+    // on the bound port number is the case that separates the two gates.
+    expect(isAllowedOrigin(`http://evil.example:${PORT}`, PORT)).toBe(false)
+  })
+  test("an unparseable/opaque Origin is rejected", () => {
+    // A sandboxed iframe sends the literal string "null", which is not a valid
+    // URL. The `catch` treats it as hostile; nothing asserted that, so flipping
+    // the catch to `return true` — a CSRF bypass for exactly the caller the
+    // guard exists to stop — survived.
+    expect(isAllowedOrigin("null", PORT)).toBe(false)
+    expect(isAllowedOrigin("not a url", PORT)).toBe(false)
   })
   test("the wrong port is rejected (not a blanket localhost allow)", () => {
     expect(isAllowedOrigin(`http://localhost:${PORT + 1}`, PORT)).toBe(false)

@@ -88,6 +88,7 @@
     "sbom": "bun scripts/sbom.ts",
     "scan:secrets": "trufflehog filesystem . --no-verification --fail --results=verified,unknown,unverified --no-update --exclude-paths .trufflehog-exclude",
     "start": "NODE_ENV=production bun run ./src/main.ts",
+    "test:mutation": "bun test $(find tests -name '*.test.ts' | grep -vE 'start-run-server|start-unauthenticated|start-multi-account|spawned-engine-ports|cli-branding|main-cli-global-options')",
     "test:ops": "cd scripts/ops && bun test",
     "typecheck": "tsc",
     "typecheck:downstream": "bun downstream/check.ts",
