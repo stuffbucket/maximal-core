@@ -27,6 +27,13 @@ artifact that the version decides:
 5. If green, commit `.bun-version` and `dist/main.js` together.
 6. Watch the next CI run.
 
+Steps 3-4 are the ones that go wrong, because they depend on your PATH rather
+than on anything the repo can assert. `bun run container:run -- bun run check:deep`
+runs them inside an image whose Bun **is** `.bun-version` and cannot be anything
+else; its tag carries the pin, so bumping the file builds a new image rather
+than reusing the old one. See
+[`docs/dev/container-toolchain.md`](dev/container-toolchain.md).
+
 ## The pin decides `dist/main.js`
 
 `dist/main.js` is committed (`bin.maximal` points at it, so a git-dependency
