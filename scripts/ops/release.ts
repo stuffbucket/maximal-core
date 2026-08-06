@@ -953,8 +953,6 @@ export function prepare(options: PrepareOptions = {}): number {
   return 0
 }
 
-// --- phase B: the tag ---
-
 /** Why phase A must not start on this branch name. */
 export function branchObjection(branch: string, stderr: string): string {
   return (
@@ -968,6 +966,8 @@ export function branchObjection(branch: string, stderr: string): string {
     + `    git log --oneline ${DEFAULT_BASE}..${branch}\n`
   )
 }
+
+// --- phase B: the tag ---
 
 /** `version` out of a `package.json`, or undefined if there is not one to read. */
 export function manifestVersion(source: string): string | undefined {
