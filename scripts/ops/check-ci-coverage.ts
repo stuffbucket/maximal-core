@@ -12,7 +12,7 @@
  * no baseline to bump. `EXCLUDED` is the one hand-written part, and it is a
  * policy like `check-rulesets.ts`'s `EXPECTED`, not a last-reviewed value like
  * `external-drift-baseline.json`: typed, unit-tested, `why` required, and
- * stale entries fail (see below). It is empty today.
+ * stale entries fail (see below). It holds one entry, `preflight`.
  *
  * "RUNS IN CI" = named by a step of a job that is a REQUIRED status check
  * (`CHECK_JOBS` in check-rulesets.ts), not "appears somewhere in a workflow".
@@ -46,12 +46,16 @@ export interface Exclusion {
 }
 
 /**
- * Empty on purpose: everything `check:deep` runs is currently a required CI
- * step. An entry here is a claim that a check does not belong in CI, and it is
+ * An entry here is a claim that a check does not belong in CI, and it is
  * checked in both directions — a step that is excluded but does run, or that
  * `check:deep` no longer runs at all, fails this gate rather than lingering.
  */
-export const EXCLUDED: ReadonlyArray<Exclusion> = []
+export const EXCLUDED: ReadonlyArray<Exclusion> = [
+  {
+    step: "preflight",
+    why: "asserts node_modules exists, which every CI job establishes with `bun install` before it runs anything; in CI it could only ever be a no-op, and a guard that can trip there is a guard someone deletes",
+  },
+]
 
 // --- what check:deep runs ---
 

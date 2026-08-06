@@ -23,10 +23,15 @@ bun test tests/foo.test.ts  # Run a single test file
 
 # Aggregates
 bun run check:fast   # lint:fast + typecheck + lint:all (the per-edit inner loop)
-bun run check:deep   # check:fast + casts:check + bun test + knip + deps:check +
-                     # dupes:check + ci:check + build + typecheck:downstream +
-                     # bindings:check (end-of-task gate; every step of it also
-                     # runs in a required CI job — that is what ci:check asserts)
+bun run check:deep   # preflight + check:fast + casts:check + bun test + knip +
+                     # deps:check + dupes:check + ci:check + build +
+                     # typecheck:downstream + bindings:check (end-of-task gate;
+                     # every step of it also runs in a required CI job — that is
+                     # what ci:check asserts, `preflight` excepted and recorded)
+bun run preflight    # fail if node_modules is missing, before any check that
+                     # would blame something else for it (scripts/preflight.ts).
+                     # Only checks that node_modules exists — not that the
+                     # install is complete or current. Never installs for you.
 bun run deps:check   # dependency-cruiser (scripts/check-deps.ts). All three
                      # `error` rules fail the build. `not-to-test` and
                      # `no-route-imports-from-lib-or-services` are absolute;
