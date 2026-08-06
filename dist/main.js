@@ -17379,6 +17379,43 @@ var init_active_clients = __esm(() => {
   }
 });
 
+// src/lib/auth/auth-types.ts
+function parseAccountType(input) {
+  const result = accountTypeSchema.safeParse(input);
+  if (!result.success) {
+    throw new Error(`Invalid account type "${input}". Must be one of: ${ACCOUNT_TYPES.join(", ")}.`);
+  }
+  return result.data;
+}
+function toCopilotHost(url2) {
+  let parsed;
+  try {
+    parsed = new URL(url2);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:")
+    return null;
+  return parsed.origin;
+}
+function hostForAccountType(accountType) {
+  const url2 = accountType === "individual" ? "https://api.githubcopilot.com" : `https://api.${accountType}.githubcopilot.com`;
+  return url2;
+}
+var ACCOUNT_TYPES, accountTypeSchema, CREDENTIAL_HEALTH;
+var init_auth_types = __esm(() => {
+  init_zod();
+  ACCOUNT_TYPES = ["individual", "business", "enterprise"];
+  accountTypeSchema = exports_external.enum(ACCOUNT_TYPES);
+  CREDENTIAL_HEALTH = {
+    healthy: "healthy",
+    refreshing: "refreshing",
+    needsReauth: "needsReauth",
+    expired: "expired",
+    unknown: "unknown"
+  };
+});
+
 // src/lib/runtime-state/event-bus.ts
 class EventBus {
   handlers = new Map;
@@ -17553,7 +17590,10 @@ import { randomUUID } from "crypto";
 function setGithubToken(token) {
   state.githubToken = token;
 }
-function setCopilotToken(token) {
+function setCopilotToken(token, expiresAtMs) {
+  state.copilotTokenExpiresAtMs = expiresAtMs;
+  refreshHealth.lastSuccessAtMs = Date.now();
+  refreshHealth.consecutiveFailures = 0;
   if (state.copilotToken === token)
     return;
   state.copilotToken = token;
@@ -17569,10 +17609,37 @@ function clearTokenTrio(fields = {
 }) {
   if (fields.github)
     state.githubToken = undefined;
-  if (fields.copilot)
+  if (fields.copilot) {
     state.copilotToken = undefined;
+    state.copilotTokenExpiresAtMs = undefined;
+    resetCopilotRefreshHealth();
+  }
   if (fields.userName)
     state.userName = undefined;
+}
+function copilotRefreshHealth() {
+  return { ...refreshHealth };
+}
+function noteCopilotRefreshFailure(reason, nowMs = Date.now()) {
+  refreshHealth.lastFailureAtMs = nowMs;
+  refreshHealth.lastFailureReason = reason;
+  refreshHealth.consecutiveFailures++;
+}
+function resetCopilotRefreshHealth() {
+  refreshHealth.lastSuccessAtMs = null;
+  refreshHealth.lastFailureAtMs = null;
+  refreshHealth.lastFailureReason = null;
+  refreshHealth.consecutiveFailures = 0;
+}
+function copilotTokenHealth(nowMs = Date.now()) {
+  if (state.copilotToken === undefined)
+    return CREDENTIAL_HEALTH.unknown;
+  if (refreshHealth.consecutiveFailures === 0)
+    return CREDENTIAL_HEALTH.healthy;
+  const expiresAtMs = state.copilotTokenExpiresAtMs;
+  if (expiresAtMs === undefined)
+    return CREDENTIAL_HEALTH.unknown;
+  return nowMs >= expiresAtMs ? CREDENTIAL_HEALTH.expired : CREDENTIAL_HEALTH.refreshing;
 }
 function hasGithubToken() {
   return state.githubToken !== undefined;
@@ -17630,8 +17697,9 @@ function clearNetworkDiagnosis() {
 function getModelsLoadedAtMs() {
   return modelsCache.metrics().loaded_at_ms;
 }
-var modelsCache, copilotTokenCache, state;
+var modelsCache, copilotTokenCache, state, refreshHealth;
 var init_state = __esm(() => {
+  init_auth_types();
   init_settings_events();
   init_cache();
   modelsCache = new SingletonCache({ name: "models" });
@@ -17646,6 +17714,12 @@ var init_state = __esm(() => {
     proxyPort: 4141,
     vsCodeDeviceId: randomUUID(),
     shellApiKey: process.env.MAXIMAL_SHELL_KEY?.trim() || undefined
+  };
+  refreshHealth = {
+    lastSuccessAtMs: null,
+    lastFailureAtMs: null,
+    lastFailureReason: null,
+    consecutiveFailures: 0
   };
 });
 
@@ -29427,35 +29501,46 @@ var init_upstream_error_advice = __esm(() => {
 });
 
 // src/lib/errors/error.ts
+async function forwardAuthFatal(c5, error51) {
+  let outcome = "auth_fatal";
+  try {
+    outcome = await rearmCopilotAuth();
+  } catch (handlerErr) {
+    consola.warn("rearmCopilotAuth threw while forwarding upstream error:", handlerErr);
+  }
+  if (outcome !== "auth_fatal") {
+    return c5.json({
+      error: {
+        message: outcome === "online" ? "Re-authenticated with Copilot after a stale token; please retry the request." : "Reconnecting to Copilot; please retry the request.",
+        type: "server_error"
+      }
+    }, 503);
+  }
+  try {
+    await markAuthDegraded(error51);
+  } catch (handlerErr) {
+    consola.warn("markAuthDegraded failed while forwarding upstream error:", handlerErr);
+  }
+  return c5.json({
+    error: {
+      message: error51.message,
+      type: "auth_fatal",
+      ...error51.remediationUrl ? { remediation_url: error51.remediationUrl } : {}
+    }
+  }, error51.status);
+}
 async function forwardError(c5, error51) {
   consola.error("Error occurred:", error51);
-  if (error51 instanceof CopilotAuthFatalError) {
-    let outcome = "auth_fatal";
-    try {
-      outcome = await rearmCopilotAuth();
-    } catch (handlerErr) {
-      consola.warn("rearmCopilotAuth threw while forwarding upstream error:", handlerErr);
-    }
-    if (outcome !== "auth_fatal") {
-      return c5.json({
-        error: {
-          message: outcome === "online" ? "Re-authenticated with Copilot after a stale token; please retry the request." : "Reconnecting to Copilot; please retry the request.",
-          type: "server_error"
-        }
-      }, 503);
-    }
-    try {
-      await markAuthDegraded(error51);
-    } catch (handlerErr) {
-      consola.warn("markAuthDegraded failed while forwarding upstream error:", handlerErr);
-    }
+  if (error51 instanceof CopilotTokenStaleError) {
     return c5.json({
       error: {
         message: error51.message,
-        type: "auth_fatal",
-        ...error51.remediationUrl ? { remediation_url: error51.remediationUrl } : {}
+        type: "upstream_credential_stale"
       }
-    }, error51.status);
+    }, 503);
+  }
+  if (error51 instanceof CopilotAuthFatalError) {
+    return forwardAuthFatal(c5, error51);
   }
   if (error51 instanceof HTTPError) {
     if (error51.response.status === 429) {
@@ -29489,7 +29574,7 @@ async function forwardError(c5, error51) {
     }
   }, 500);
 }
-var HTTPError, CopilotAuthFatalError;
+var HTTPError, CopilotAuthFatalError, CopilotTokenStaleError;
 var init_error2 = __esm(() => {
   init_dist();
   init_auth_controller();
@@ -29509,6 +29594,13 @@ var init_error2 = __esm(() => {
       super(message);
       this.status = status;
       this.remediationUrl = remediationUrl;
+    }
+  };
+  CopilotTokenStaleError = class CopilotTokenStaleError extends Error {
+    reason;
+    constructor(reason) {
+      super("maximal's GitHub Copilot token expired and the background refresh is failing" + (reason ? ` (${reason})` : "") + ". This is not a problem with this client's credentials \u2014 signing in" + " again here will not help. Requests resume automatically once the" + " refresh succeeds; check maximal's connection to GitHub.");
+      this.reason = reason;
     }
   };
 });
@@ -30528,36 +30620,6 @@ var init_deviceid = __esm(() => {
   init_dist();
   WINDOWS_DEVICE_ID_KEY = String.raw`\SOFTWARE\Microsoft\DeveloperTools`;
   windows64Architectures = new Set(["AMD64", "ARM64", "IA64"]);
-});
-
-// src/lib/auth/auth-types.ts
-function parseAccountType(input) {
-  const result = accountTypeSchema.safeParse(input);
-  if (!result.success) {
-    throw new Error(`Invalid account type "${input}". Must be one of: ${ACCOUNT_TYPES.join(", ")}.`);
-  }
-  return result.data;
-}
-function toCopilotHost(url2) {
-  let parsed;
-  try {
-    parsed = new URL(url2);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== "https:")
-    return null;
-  return parsed.origin;
-}
-function hostForAccountType(accountType) {
-  const url2 = accountType === "individual" ? "https://api.githubcopilot.com" : `https://api.${accountType}.githubcopilot.com`;
-  return url2;
-}
-var ACCOUNT_TYPES, accountTypeSchema;
-var init_auth_types = __esm(() => {
-  init_zod();
-  ACCOUNT_TYPES = ["individual", "business", "enterprise"];
-  accountTypeSchema = exports_external.enum(ACCOUNT_TYPES);
 });
 
 // src/lib/models/compact.ts
@@ -32445,6 +32507,19 @@ var init_get_copilot_token = __esm(() => {
 
 // src/lib/auth/token.ts
 import { setTimeout as delay2 } from "timers/promises";
+function describeRefreshFailure(diagnosis, error51) {
+  if (diagnosis)
+    return formatDiagnosisForLog(diagnosis);
+  return error51 instanceof Error ? error51.message : String(error51);
+}
+function announceIfStale(alreadyAnnounced) {
+  if (alreadyAnnounced || copilotTokenHealth() !== CREDENTIAL_HEALTH.expired) {
+    return alreadyAnnounced;
+  }
+  const { consecutiveFailures, lastFailureReason } = copilotRefreshHealth();
+  log3.error(`Copilot token is now PAST ITS EXPIRY and the refresh is still failing after ${consecutiveFailures} attempt(s) \u2014 requests will be failed locally (503) instead of sent with a dead credential: ${lastFailureReason ?? "unknown"}`);
+  return true;
+}
 async function logRefreshFailure(label, error51) {
   if (!isTransportError(error51)) {
     log3.error(`${label}:`, error51);
@@ -32607,10 +32682,12 @@ var log3, clearActiveNeedsReauth = () => {
   }
   let token;
   let refresh_in;
+  let expiresAtMs;
   try {
     const result = await getCopilotToken2();
     token = result.token;
     refresh_in = result.refresh_in;
+    expiresAtMs = resolveCopilotExpiryMs(result.expires_at, result.refresh_in);
     applyCopilotApiUrl(result.endpoints?.api);
   } catch (error51) {
     if (error51 instanceof CopilotAuthFatalError) {
@@ -32625,7 +32702,7 @@ var log3, clearActiveNeedsReauth = () => {
     }
     throw error51;
   }
-  setCopilotToken(token);
+  setCopilotToken(token, expiresAtMs);
   clearActiveNeedsReauth();
   log3.debug("GitHub Copilot Token fetched successfully!");
   if (state.showToken) {
@@ -32641,9 +32718,17 @@ var log3, clearActiveNeedsReauth = () => {
       copilotRefreshLoopController = null;
     }
   });
-}, REFRESH_POLL_INTERVAL_MS = 15000, EARLY_REFRESH_BUFFER_MS = 60000, RETRY_REFRESH_DELAY_MS = 15000, MIN_REFRESH_DELAY_MS = 1000, maxFatalRefreshRetries = 3, getRefreshDeadlineMs = (refreshIn, nowMs = Date.now()) => nowMs + Math.max(refreshIn * 1000 - EARLY_REFRESH_BUFFER_MS, MIN_REFRESH_DELAY_MS), getRefreshPollDelayMs = (refreshAtMs, nowMs = Date.now()) => Math.min(Math.max(refreshAtMs - nowMs, 0), REFRESH_POLL_INTERVAL_MS), runCopilotRefreshLoop = async (refreshIn, signal) => {
+}, REFRESH_POLL_INTERVAL_MS = 15000, EARLY_REFRESH_BUFFER_MS = 60000, RETRY_REFRESH_DELAY_MS = 15000, MIN_REFRESH_DELAY_MS = 1000, maxFatalRefreshRetries = 3, getRefreshDeadlineMs = (refreshIn, nowMs = Date.now()) => nowMs + Math.max(refreshIn * 1000 - EARLY_REFRESH_BUFFER_MS, MIN_REFRESH_DELAY_MS), MAX_PLAUSIBLE_TOKEN_TTL_MS, REFRESH_TO_EXPIRY_SLACK_MS = 300000, resolveCopilotExpiryMs = (expiresAtSeconds, refreshIn, nowMs = Date.now()) => {
+  const absoluteMs = expiresAtSeconds * 1000;
+  const impliedTtlMs = absoluteMs - nowMs;
+  if (impliedTtlMs > 0 && impliedTtlMs <= MAX_PLAUSIBLE_TOKEN_TTL_MS) {
+    return absoluteMs;
+  }
+  return nowMs + refreshIn * 1000 + REFRESH_TO_EXPIRY_SLACK_MS;
+}, getRefreshPollDelayMs = (refreshAtMs, nowMs = Date.now()) => Math.min(Math.max(refreshAtMs - nowMs, 0), REFRESH_POLL_INTERVAL_MS), runCopilotRefreshLoop = async (refreshIn, signal) => {
   let refreshAtMs = getRefreshDeadlineMs(refreshIn);
   let fatalRetries = 0;
+  let staleAnnounced = false;
   while (!signal.aborted) {
     const nextDelayMs = getRefreshPollDelayMs(refreshAtMs);
     if (nextDelayMs > 0) {
@@ -32658,13 +32743,14 @@ var log3, clearActiveNeedsReauth = () => {
     }
     log3.debug("Refreshing Copilot token");
     try {
-      const { token, refresh_in, endpoints } = await getCopilotToken2();
-      setCopilotToken(token);
+      const { token, refresh_in, expires_at, endpoints } = await getCopilotToken2();
+      setCopilotToken(token, resolveCopilotExpiryMs(expires_at, refresh_in));
       applyCopilotApiUrl(endpoints?.api);
       refreshAtMs = getRefreshDeadlineMs(refresh_in);
       if (fatalRetries > 0)
         clearActiveNeedsReauth();
       fatalRetries = 0;
+      staleAnnounced = false;
       noteAuthSuccess();
       log3.debug("Copilot token refreshed");
       noteConnectivityRecovered();
@@ -32674,9 +32760,11 @@ var log3, clearActiveNeedsReauth = () => {
     } catch (error51) {
       if (error51 instanceof CopilotAuthFatalError) {
         fatalRetries++;
+        noteCopilotRefreshFailure(error51.message);
         if (fatalRetries < maxFatalRefreshRetries) {
           log3.warn(`Copilot rejected the GitHub token on refresh (attempt ${fatalRetries}/${maxFatalRefreshRetries}); retrying in ${RETRY_REFRESH_DELAY_MS / 1000}s before treating it as fatal:`, error51.message);
           refreshAtMs = Date.now() + RETRY_REFRESH_DELAY_MS;
+          staleAnnounced = announceIfStale(staleAnnounced);
           continue;
         }
         log3.warn(`Copilot persistently rejected the GitHub token (${fatalRetries} attempts); degrading without deleting the credential:`, error51.message);
@@ -32685,9 +32773,11 @@ var log3, clearActiveNeedsReauth = () => {
         return;
       }
       const diagnosis = await logRefreshFailure("Failed to refresh Copilot token", error51);
+      noteCopilotRefreshFailure(describeRefreshFailure(diagnosis, error51));
       noteConnectivityFailure(diagnosis);
       refreshAtMs = Date.now() + RETRY_REFRESH_DELAY_MS;
       log3.warn(`Retrying Copilot token refresh in ${RETRY_REFRESH_DELAY_MS / 1000}s`);
+      staleAnnounced = announceIfStale(staleAnnounced);
     }
   }
 }, GITHUB_TOKEN_PATH2;
@@ -32712,6 +32802,7 @@ var init_token = __esm(() => {
   log3 = createTeeLogger("auth");
   getCopilotToken2 = getCopilotToken;
   markAuthDegraded2 = markAuthDegraded;
+  MAX_PLAUSIBLE_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
   GITHUB_TOKEN_PATH2 = PATHS.GITHUB_TOKEN_PATH;
 });
 
@@ -37926,6 +38017,9 @@ var init_copilot_rate_limit = __esm(() => {
 var requireCopilotToken = () => {
   if (!state.copilotToken)
     throw new Error("Copilot token not found");
+  if (copilotTokenHealth() === CREDENTIAL_HEALTH.expired) {
+    throw new CopilotTokenStaleError(copilotRefreshHealth().lastFailureReason);
+  }
   return state.copilotToken;
 }, buildCopilotHeaders = (callState, options) => {
   const headers = {
@@ -37960,6 +38054,7 @@ var requireCopilotToken = () => {
 var init_upstream_request = __esm(() => {
   init_dist();
   init_mod();
+  init_auth_types();
   init_api_config();
   init_copilot_rate_limit();
   init_error2();
@@ -56675,12 +56770,20 @@ var init_debug = __esm(() => {
 });
 
 // src/lib/config/settings-types.ts
-var TokenStatus, RateLimitStatus, WebSearchStatus, CopilotServiceStatus, DiagnosticsResponse, UpdateStatusResponse, ModelCapabilityFlags, ModelSummary, ModelsListResponse, ApiErrorBody, UpstreamRejection, NetworkDiagnosisSignal, AccountTypeWire, AuthStatus, AccountSummary, AccountsListResponse, ApiKeyEntry, ApiKeysListResponse, ApiKeyCreateRequest, ApiKeyUpdateRequest, AppInstall, AppInstallHint, AppEntry, AppsListResponse, ClaudeCodeToggleRequest, ClaudeDesktopToggleRequest;
+var TokenStatus, CopilotRefreshStatus, RateLimitStatus, WebSearchStatus, CopilotServiceStatus, DiagnosticsResponse, UpdateStatusResponse, ModelCapabilityFlags, ModelSummary, ModelsListResponse, ApiErrorBody, UpstreamRejection, NetworkDiagnosisSignal, AccountTypeWire, AuthStatus, AccountSummary, AccountsListResponse, ApiKeyEntry, ApiKeysListResponse, ApiKeyCreateRequest, ApiKeyUpdateRequest, AppInstall, AppInstallHint, AppEntry, AppsListResponse, ClaudeCodeToggleRequest, ClaudeDesktopToggleRequest;
 var init_settings_types = __esm(() => {
   init_zod();
   TokenStatus = exports_external.object({
     github_token_present: exports_external.boolean(),
     copilot_token_present: exports_external.boolean()
+  });
+  CopilotRefreshStatus = exports_external.object({
+    health: exports_external.enum(["healthy", "refreshing", "expired", "unknown"]),
+    token_expires_at: exports_external.string().nullable(),
+    last_success_at: exports_external.string().nullable(),
+    last_failure_at: exports_external.string().nullable(),
+    last_failure_reason: exports_external.string().nullable(),
+    consecutive_failures: exports_external.number().int()
   });
   RateLimitStatus = exports_external.object({
     interval_seconds: exports_external.number().nullable(),
@@ -56709,6 +56812,7 @@ var init_settings_types = __esm(() => {
     account_type: exports_external.string(),
     models_cached: exports_external.number().int(),
     tokens: TokenStatus,
+    copilot_refresh: CopilotRefreshStatus.optional(),
     rate_limit: RateLimitStatus,
     web_search: WebSearchStatus,
     copilot_service: CopilotServiceStatus.optional()
@@ -57171,6 +57275,17 @@ function registerAppToggles(app) {
     }
   });
 }
+function buildCopilotRefreshStatus() {
+  const health = copilotRefreshHealth();
+  return {
+    health: copilotTokenHealth(),
+    token_expires_at: isoOrNull(state.copilotTokenExpiresAtMs),
+    last_success_at: isoOrNull(health.lastSuccessAtMs),
+    last_failure_at: isoOrNull(health.lastFailureAtMs),
+    last_failure_reason: health.lastFailureReason,
+    consecutive_failures: health.consecutiveFailures
+  };
+}
 function buildDiagnostics() {
   const git = getGitVersion();
   const launch = describeLaunchSource();
@@ -57190,6 +57305,7 @@ function buildDiagnostics() {
       github_token_present: tokens.github,
       copilot_token_present: tokens.copilot
     },
+    copilot_refresh: buildCopilotRefreshStatus(),
     rate_limit: {
       interval_seconds: state.rateLimitSeconds ?? null,
       last_request_at: state.lastRequestTimestamp ? new Date(state.lastRequestTimestamp).toISOString() : null,
@@ -57219,7 +57335,7 @@ function registerSettingsEndpoints(app) {
   registerAppToggles(app);
   registerDiagnostics(app);
 }
-var VALIDATION, enforceBodySchema, ghUseBodySchema;
+var VALIDATION, enforceBodySchema, ghUseBodySchema, isoOrNull = (ms) => ms === null || ms === undefined ? null : new Date(ms).toISOString();
 var init_settings_endpoints = __esm(() => {
   init_zod();
   init_registry();
