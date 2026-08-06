@@ -1,7 +1,7 @@
 # Research: winget support for Maximal
 
 > **Scope:** the `maximal` desktop app, which ships the MSI. `maximal-core`
-> builds no installer and has no `installers.yml` — every workflow path below
+> builds no installer and has no MSI job — every workflow path below
 > refers to the parent repo.
 
 **Bottom line:** yes, this is easy. We already ship the only thing
@@ -25,7 +25,7 @@ wiring. **Code signing is not required.**
   with `/q` — we already qualify.
 - The installer URL must be a stable, public download. GitHub release
   assets work — that's where our MSI already lands per
-  `.github/workflows/installers.yml`.
+  `.github/workflows/release.yml`.
 
 ## Things winget does **not** require
 
@@ -42,7 +42,7 @@ wiring. **Code signing is not required.**
 ## What we already have that fits
 
 - **MSI artifact.** `windows-msi` job in
-  `.github/workflows/installers.yml` produces
+  `.github/workflows/release.yml` produces
   `maximal-<version>-windows-x64.msi` on every release.
 - **Stable identity in the MSI.**
   `build/windows/maximal.wxs` declares:
@@ -122,7 +122,7 @@ generated manifest at release time. Option (b) is what
 | ------------------------------------ | ----------- | ----------------------------------------------------------------------- |
 | First manual submission              | 1–2 hours   | `wingetcreate new`, point at the latest release MSI, submit PR          |
 | Pin or extract ProductCode           | 15–30 min   | Either swap WiX `Id="*"` for a stable GUID + bump strategy, or let komac scrape it from the MSI each release |
-| Wire auto-update into release CI     | 1–2 hours   | Add `winget-releaser` to `.github/workflows/installers.yml` (or new workflow) keyed on release publication |
+| Wire auto-update into release CI     | 1–2 hours   | Add `winget-releaser` to `.github/workflows/release.yml` (or new workflow) keyed on release publication |
 | Add screenshot + Tags / PackageUrl   | 15 min      | One-time polish on the defaultLocale manifest                           |
 
 **Total:** half a day to ship + automate.
@@ -148,7 +148,7 @@ generated manifest at release time. Option (b) is what
 
 ## Open question
 
-- **PATH side effect.** `maximal.wxs:104` writes the install dir to
+- **PATH side effect.** `maximal.wxs:89` writes the install dir to
   the `PATH` env var. winget is fine with this, but worth confirming
   the entry survives upgrade (the WiX `MajorUpgrade` should preserve
   it). If it doesn't, `winget upgrade` will repeatedly nuke + restore

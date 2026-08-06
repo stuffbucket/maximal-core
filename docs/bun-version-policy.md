@@ -2,9 +2,9 @@
 
 Pinned in `.bun-version` — read by `bun install`, by Bun's own version manager,
 and at runtime by every CI workflow that needs Bun: `ci.yml`, `tooling-ci.yml`,
-`watch-external-drift.yml`, `randomized-test-order.yml`, `release-gates.yml`,
-`release-tag-check.yml`, and `release-artifacts.yml` each `cat .bun-version`
-into `setup-bun`. No workflow — and no doc — holds a copy of the version
+`watch-external-drift.yml`, `watch-branch-rules.yml`, `randomized-test-order.yml`,
+`release-gates.yml`, `release-tag-check.yml`, and `release-artifacts.yml` each
+`cat .bun-version` into `setup-bun`. No workflow holds a copy of the version
 literal, so dev/CI drift is not representable — which is the point: drift is
 what got us a 22-test failure on a Bun `latest` regression once.
 
@@ -45,8 +45,9 @@ Bun a developer happened to have.
 `dist/lib` is not affected: `build:lib` is tsup, which bundles with esbuild, a
 pinned dependency in `package.json`. Bun is only the process runner there, and
 its version provably does not move those bytes. That asymmetry is why
-`bindings:check` was green for `dist/lib` across two years of dev-machine drift
-and went red the moment `dist/main.js` came under the same gate.
+`bindings:check` stayed green for `dist/lib` under dev-machine Bun drift from
+the day it landed (maximal-core#24) and went red the moment `dist/main.js` came
+under the same gate (maximal-core#31).
 
 `bun run bindings:check` enforces this from both sides: it compares the
 committed bundle against a fresh build, and when the running Bun is not the

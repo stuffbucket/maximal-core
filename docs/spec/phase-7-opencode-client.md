@@ -50,7 +50,7 @@ not a per-request branch. New helper `getRequestMode(c)` returns
    useful for non-opencode clients reusing opencode's token.
 3. Otherwise → `"default"`.
 
-Every branch in `src/lib/api-config.ts` that today reads
+Every branch in `src/lib/config/api-config.ts` that today reads
 `isOpencodeOauthApp()` (~10 sites) accepts the result of `getRequestMode`
 instead. Branches that depend on outbound token type (where `gho_` is the
 relevant signal) read it from `state.copilotToken` prefix.

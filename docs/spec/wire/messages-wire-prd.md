@@ -20,7 +20,7 @@ The `:provider` form forwards to a configured passthrough provider
 
 ## Request contract
 
-Body is an `AnthropicMessagesPayload` (`src/lib/anthropic-types.ts:3-31`):
+Body is an `AnthropicMessagesPayload` (`src/lib/models/anthropic-types.ts:3-31`):
 
 - **Required:** `model`, `max_tokens`, `messages[]`.
 - **Optional:** `system` (string or text blocks), `tools[]`,
@@ -193,7 +193,7 @@ forwarded verbatim.
    2023-06-01`, `anthropic-beta: token-counting-2024-11-01`) for an exact
    count; on any 4xx/5xx fall through to estimation.
 3. **Else** estimate locally: translate to OpenAI shape, run the
-   `o200k_base` tokenizer (`src/lib/tokenizer.ts`), add a tool
+   `o200k_base` tokenizer (`src/lib/models/tokenizer.ts`), add a tool
    system-prompt allowance (346 tokens for Claude, 120 for grok, skipped
    for `mcp__`/single-`Skill` tools), then multiply by **1.15** for
    Claude (`getClaudeTokenMultiplier()`).

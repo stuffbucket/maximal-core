@@ -47,9 +47,13 @@ related_files:
 > - **Layer 2's `tests/helpers/` allowlist via `no-restricted-syntax`.** What
 >   shipped instead is `eslint.config.js`'s `mockModuleLeakGuard` (scoped to
 >   `tests/**`), which bans only the *fire-and-forget* forms — `void
->   mock.module(…)` and a bare `mock.module(…)` statement — and requires an
->   **awaited** install plus an awaited `afterAll` restore. Awaited `mock.module`
->   is therefore permitted anywhere, not gated to a helpers allowlist.
+>   mock.module(…)` and a bare `mock.module(…)` statement — plus non-function
+>   stubs, the `MOCK_MODULE_DENY` ids, and a live-namespace restore factory. It
+>   requires an **awaited** install; it enforces nothing at all about an
+>   `afterAll` restore — no selector inspects one, which is why
+>   `docs/dev/testing-strategy.md` §5.1 is headed "*partly* lint-enforced".
+>   Awaited `mock.module` is therefore permitted anywhere, not gated to a
+>   helpers allowlist.
 > - **Layer 3's `eslint-disable no-restricted-syntax` comment template.** Moot —
 >   there is no `no-restricted-syntax` gate to disable; awaited usage needs no
 >   opt-out. The wrapper *discipline* the template carried still applies (above).

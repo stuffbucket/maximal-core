@@ -703,14 +703,17 @@ concurrent jobs**.
 12. **`bun run build`**.
 
 **Job `windows`** (`windows-latest`) — the `bun-windows-x64` release leg, run
-before a tag exists: `bun install`, then `build:binary`, `verify:artifact`, and
-`e2e:binary` against the compiled artifact. It exists because Windows used to be
+before a tag exists: a runner-arch assertion, `bun install`, then
+`build:binary`, `verify:artifact`, and `e2e:binary` against the compiled
+artifact, and finally `bun test`. It exists because Windows used to be
 exercised only by `release-artifacts.yml` on a tag push, which is how v0.4.2
 shipped with no binaries — an inline `prepare` one-liner that Bun's Windows shell
 rejects failed `bun install` outright, after the tag was already immutable.
-**`bun test` is deliberately absent from this job**: 22 of the suite's tests
-assert POSIX specifics (mode 0600, symlinks, `~/.local/share`) and do not pass on
-Windows. Do not read a green `windows` job as "the suite passes on Windows".
+**`bun test` runs last in this job**, deliberately after the release leg so a
+unit failure cannot short-circuit ahead of a build/verify/e2e failure. It was
+absent until the 22 POSIX assumptions in `tests/**` that failed there were
+fixed; 5 cases stay `skipIf`-ed on `win32` (4 in `tests/cli-path.test.ts`, 1 in
+`tests/secrets.test.ts`), each with the reason at its skip site.
 
 Security workflows (CodeQL, trufflehog) run alongside, `release-gates.yml`
 checks a PR's milestone and bump, and `randomized-test-order.yml` runs nightly
