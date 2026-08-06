@@ -36,15 +36,30 @@ var readyLineV0Schema = z.object({ port, pid: z.number().int() }).transform((lin
 var anyReadyLineSchema = z.union([readyLineSchema, readyLineV0Schema]);
 
 // src/lib/live/supervisor.ts
+function withOutput(message, output) {
+  const trimmed = output?.trim();
+  return trimmed ? `${message}
+${trimmed}` : message;
+}
 var SidecarReadyTimeoutError = class extends Error {
-  constructor(timeoutMs) {
-    super(`Sidecar did not emit a ready-line within ${timeoutMs}ms`);
+  constructor(timeoutMs, output) {
+    super(
+      withOutput(
+        `Sidecar did not emit a ready-line within ${timeoutMs}ms`,
+        output
+      )
+    );
     this.name = "SidecarReadyTimeoutError";
   }
 };
 var SidecarExitedError = class extends Error {
-  constructor() {
-    super("Sidecar stdout closed before it emitted a ready-line");
+  constructor(output) {
+    super(
+      withOutput(
+        "Sidecar stdout closed before it emitted a ready-line",
+        output
+      )
+    );
     this.name = "SidecarExitedError";
   }
 };

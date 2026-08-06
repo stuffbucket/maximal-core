@@ -177,6 +177,33 @@ describe("awaitReadyLine", () => {
   })
 })
 
+describe("boot-failure errors carry what the sidecar emitted", () => {
+  // A failed boot is usually seen once, in a CI log, by someone who cannot
+  // re-run it. Naming only the symptom makes that log undiagnosable, and the
+  // cause is on stderr — which this module never sees, so a supervisor that
+  // owns the pipes passes it in.
+  test("the output is appended to the message", () => {
+    expect(
+      new SidecarExitedError("Sidecar output (1 lines):\n  stderr  EADDRINUSE")
+        .message,
+    ).toBe(
+      "Sidecar stdout closed before it emitted a ready-line\nSidecar output (1 lines):\n  stderr  EADDRINUSE",
+    )
+    expect(
+      new SidecarReadyTimeoutError(30_000, "still binding\n").message,
+    ).toBe("Sidecar did not emit a ready-line within 30000ms\nstill binding")
+  })
+
+  test("a host with nothing to add gets the bare message", () => {
+    expect(new SidecarExitedError().message).toBe(
+      "Sidecar stdout closed before it emitted a ready-line",
+    )
+    expect(new SidecarReadyTimeoutError(20, "   ").message).toBe(
+      "Sidecar did not emit a ready-line within 20ms",
+    )
+  })
+})
+
 describe("awaitReadyLine — stream ownership", () => {
   test("leaves the stream open: a `for await` exit would kill the sidecar", async () => {
     // Regression. Exiting a `for await` calls iterator.return(), which destroys a
