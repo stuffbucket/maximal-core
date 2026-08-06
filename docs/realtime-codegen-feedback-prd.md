@@ -12,7 +12,7 @@ A development loop where an LLM (or human) writing code receives expert-reviewer
 
 - Replacing human review on PRs.
 - Achieving zero false positives — dataflow tools have inherent FP rates on dynamic JS; the goal is signal density, not purity.
-- Deno or alternate-runtime support. Targets Vite + Bun + TypeScript.
+- Deno or alternate-runtime support. Targets Bun + Hono + TypeScript — this repo builds with `bun build` / `tsup` and tests with `bun test`; there is no Vite and no vitest to hang tooling off.
 
 ## Success Criteria
 
@@ -20,7 +20,7 @@ A development loop where an LLM (or human) writing code receives expert-reviewer
 - Test feedback on changed file <3s.
 - Dead-code, duplication, and structural violations surfaced before the next commit.
 - Security/dataflow signal available pre-PR (not blocking the inner loop).
-- One unified error surface (Vite overlay + LSP diagnostics), not ten terminals.
+- One unified error surface (LSP diagnostics plus a single watcher's output), not ten terminals. There is no browser dev-server overlay to route into — the target is a headless Bun process.
 
 ## Feedback Layers
 
@@ -36,7 +36,7 @@ A development loop where an LLM (or human) writing code receives expert-reviewer
 
 | Tool | Role |
 |---|---|
-| `vite-plugin-checker` | Unifies TS + ESLint into the browser overlay |
+| `tsc --watch` + `bun run lint`, behind one watcher | Unifies TS + ESLint into a single diagnostic channel. (`vite-plugin-checker` is the usual answer here, but it's Vite-only and this repo has no Vite.) |
 | ESLint with `@typescript-eslint` logic rules | `no-floating-promises`, `no-misused-promises`, `no-unnecessary-condition`, `switch-exhaustiveness-check`, `no-base-to-string`, `await-thenable` |
 | `dependency-cruiser` or `eslint-plugin-boundaries` | Architectural layer rules (e.g. UI ↛ server) as errors |
 
@@ -44,7 +44,7 @@ A development loop where an LLM (or human) writing code receives expert-reviewer
 
 | Tool | Role |
 |---|---|
-| `vitest --watch` | Affected-only reruns, colocated tests |
+| `bun test --watch` | Reruns on change; scoped by path filter (`bun test tests/foo.test.ts`) since Bun has no affected-only mode |
 | `zod` / `valibot` at boundaries | Wrong-shape responses fail loudly at the boundary, not three calls deep |
 | `ts-pattern` | Exhaustive matching on discriminated unions, enforced by types |
 
@@ -66,23 +66,23 @@ A development loop where an LLM (or human) writing code receives expert-reviewer
 
 ## Connective Tissue
 
-- **Unified error sink**: all diagnostics route to Vite's overlay and the LSP channel. No tool gets its own terminal pane.
-- **Incremental everything**: `tsc --incremental`, Turbo/Nx cache, vitest affected-only, oxlint per-file. Anything that can't stay <2s on single-file change drops out of the inner loop.
+- **Unified error sink**: all diagnostics route to the LSP channel and one watcher's output. No tool gets its own terminal pane.
+- **Incremental everything**: `tsc --incremental`, `bun test` scoped to changed paths, oxlint per-file. Anything that can't stay <2s on single-file change drops out of the inner loop.
 - **Strict tsconfig + path aliases + `CLAUDE.md`**: the model's mental model matches what the tools enforce, raising first-try pass rate.
 
 ## Minimum Viable Bundle
 
-If only two additions are made to a stock Vite/Bun/TS repo:
+If only two additions are made to a stock Bun/Hono/TS repo:
 
-1. **`oxlint` + `vite-plugin-checker`** — sub-second inner loop with all errors in one overlay.
+1. **`oxlint` + one `tsc --watch` / ESLint watcher** — sub-second inner loop with all errors in one channel.
 2. **`zod` parses at every external boundary** — turns a large class of "looks right, fails at runtime" bugs into immediate, localized failures.
 
 ## Recommended Bundle (full)
 
 ```
 L1 (LSP):       tsc strict++ · oxlint · ts-reset
-L2 (save):      vite-plugin-checker · ESLint logic rules · dependency-cruiser
-L3 (test):      vitest --watch · zod boundaries · ts-pattern
+L2 (save):      tsc --watch · ESLint logic rules · dependency-cruiser
+L3 (test):      bun test --watch · zod boundaries · ts-pattern
 L4 (pause):     knip · jscpd · ast-grep rules
 L5 (background) CodeQL · fast-check · Stryker (diff-scoped)
 ```
@@ -91,14 +91,14 @@ L5 (background) CodeQL · fast-check · Stryker (diff-scoped)
 
 - **False positives** in L5 (CodeQL, Stryker) can train the model — and the human — to ignore signal. Keep L5 advisory, never blocking.
 - **Tool sprawl**: the value comes from the unified surface, not the tool count. Adding a tool that ships its own UI is a regression.
-- **Lint rule drift**: ESLint configs can grow until full-repo lint exceeds the inner-loop budget. Keep ESLint scoped to logic rules; let oxlint/Biome handle mechanics.
-- **CodeQL latency**: not viable inline; treat as a PR gate that posts back into the overlay asynchronously.
+- **Lint rule drift**: ESLint configs can grow until full-repo lint exceeds the inner-loop budget. Keep ESLint scoped to logic rules; let oxlint handle mechanics.
+- **CodeQL latency**: not viable inline; treat as a PR gate that posts back into the editor's diagnostics asynchronously.
 
 ## Open Questions
 
-- Biome vs. oxlint for L1 — Biome has broader rule coverage; oxlint is faster. Pick after benchmarking on this repo.
-- Whether `dependency-cruiser` rules belong in CI only or also as an LSP diagnostic via its ESLint adapter.
-- Whether to wire CodeQL results back into the Vite overlay via a custom plugin, or leave them as GitHub PR annotations.
+- ~~Biome vs. oxlint for L1~~ — **settled**: `lint:fast` is oxlint (mechanics), `lint:all` is ESLint (logic rules). Biome is not a dependency and isn't being evaluated.
+- `dependency-cruiser` placement is **half settled**: it already runs as `deps:check` inside `check:deep`. Still open is whether to also surface it as an LSP diagnostic via its ESLint adapter.
+- Whether to wire CodeQL results back into the editor's diagnostics via a custom LSP shim, or leave them as GitHub PR annotations.
 
 ## Out of Scope (for now)
 

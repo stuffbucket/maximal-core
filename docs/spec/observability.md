@@ -18,9 +18,9 @@ imminent.
 - Cheap path: stand up SigNoz + OTel Collector via docker-compose,
   instrument the proxy with the OTel SDK, point Claude Desktop at the
   same collector. Single half-day of work for a useful dashboard.
-- The existing `/usage-viewer` page is "useful in theory but not in
-  practice" — this stack subsumes what it does, but doesn't require
-  removing it.
+- The mounted usage surfaces (`/usage`, `/token-usage`) are "useful in
+  theory but not in practice" — this stack subsumes what they do, but
+  doesn't require removing them.
 - Deferred (not scheduled) because there's no pain right now. The
   cleanup-PRD work (M1–M6) already answers the cold-debugging cases
   via `maximal debug` and `/_debug/state`. Observability is the
@@ -77,7 +77,8 @@ state?" in one command. What it still can't answer:
 - **Replacing the daily log.** Logs stay; logs are the source of
   truth for compliance / forensics. Bridging logs into the
   observability stack is a separate (deferred) item.
-- **Replacing `/usage-viewer`.** Leave it; link out from README.
+- **Replacing `/usage` / `/token-usage`.** Leave them; link out from
+  README.
 
 ## Scope: in this milestone
 
@@ -86,8 +87,9 @@ mergeable, ordered to make each commit individually demoable.
 
 ### O1. `feat(observability): docker-compose for SigNoz + OTel Collector`
 
-**Change:** add a `signoz` profile to `docker-compose.yml` (or a
-sibling `docker-compose.observability.yml`) that brings up:
+**Change:** add a `signoz` profile in a sibling
+`docker-compose.observability.yml` (the repo has no `docker-compose.yml`
+to extend today) that brings up:
 
 - SigNoz frontend + query-service (one container each)
 - ClickHouse (their default config)
@@ -174,7 +176,7 @@ auto-instrumentation.
 
 **Estimate:** ~250 LOC across `src/lib/otel.ts` (init), `src/server.ts`
 (middleware), `src/routes/messages/handler.ts` (root span attrs),
-`src/routes/messages/web-tools-{agent,stream}.ts` (web-tools spans).
+`src/routes/messages/web-tools/{agent,stream}.ts` (web-tools spans).
 Plus tests for the metric-emission paths.
 
 ### O3. `feat(observability): default dashboards`
@@ -216,7 +218,7 @@ export.
 | Tail sampling in the collector (drop boring traces, keep slow / error) | Default sampling is fine at single-user volume; complexity isn't paid for yet | Storage growth becomes a problem (>1 GB/day) or trace volume drowns out signal |
 | Alerting / notification routing | Personal stack, no on-call rotation | Multiple operators using the same proxy |
 | Bridging the daily log into Loki / SigNoz logs | Logs are already structured and grep-friendly; double-storing is cost without payoff | Log search across days becomes a routine task |
-| Replacing `/usage-viewer` | The dashboard subsumes its function, but removing the existing endpoint is a separate decision | Confirmed nobody uses `/usage-viewer` |
+| Replacing `/usage` / `/token-usage` | The dashboard subsumes their function, but removing the mounted endpoints is a separate decision | Confirmed nobody calls `/usage` or `/token-usage` |
 | Trace context propagation from Claude Code (the CLI, not Desktop) | CLI doesn't currently emit OTel; would need to instrument it ourselves | Claude Code adds OTel support upstream |
 | Multi-host setup (collector on a different machine) | Single-machine is the point | Proxy moves to a shared host |
 | Switching backend (Tempo + Mimir + Loki + Grafana) | SigNoz is the simpler MIT path | If SigNoz becomes neglected or licensing changes |

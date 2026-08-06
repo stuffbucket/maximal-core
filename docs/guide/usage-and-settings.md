@@ -58,7 +58,7 @@ If an app already has its own base URL or key helper set, maximal won't clobber 
 
 Mint a stable, named key for anything you want to keep pointed at maximal for the long run.
 
-Every time maximal restarts, its auto-generated endpoint key rotates. That's fine for quick tests, but it'll break a long-running tool the next time you restart. A named key here stays put across restarts — give it a name you'll recognize later.
+maximal mints an auto-generated "Default" endpoint key the first time it needs one and then persists it to your config, so it does not rotate on restart. It's still the shared fallback rather than yours: a named key here is separately revocable, recognizable in the list, and unaffected by anything that resets the default. Give it a name you'll recognize later.
 
 One security note: maximal accepts *all* local requests with no client auth until enforcement is turned on (`auth.enforce`). Adding a key does not flip that by itself — the key list and the enforcement switch are separate. That's convenient on a trusted machine; turn enforcement on if you want maximal to require a key.
 

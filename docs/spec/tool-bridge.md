@@ -2,10 +2,10 @@
 
 Status: Draft, 2026-05-01.
 Owner: bstucker.
-Scope: Generalizes `web-tools.md` from a hardcoded `web_search` /
-`web_fetch` interceptor into a config-driven bridge that resolves any
-Anthropic *server-side* tool call by delegating to a configured MCP
-server.
+Scope: Generalizes `docs/spec/archive/web-tools.md` from a hardcoded
+`web_search` / `web_fetch` interceptor into a config-driven bridge that
+resolves any Anthropic *server-side* tool call by delegating to a
+configured MCP server.
 
 ## TL;DR
 
@@ -17,13 +17,14 @@ server.
   blocks in the response stream.
 - New Anthropic server tools (or new MCP backends) are wired via
   config alone. No proxy code changes.
-- `web-tools.md`'s hardcoded mappings are restated as the v1 default
-  config; nothing in this spec contradicts that one — it generalizes
-  the executor layer.
+- `docs/spec/archive/web-tools.md`'s hardcoded mappings are restated as
+  the v1 default config; nothing in this spec contradicts that one — it
+  generalizes the executor layer.
 
 ## Why this generalization
 
-`web-tools.md` solves *today's* problem (web_search, web_fetch). But:
+`docs/spec/archive/web-tools.md` solves *today's* problem (web_search,
+web_fetch). But:
 
 - Anthropic ships new versioned server tools every few months
   (`web_search_20260209`, `web_fetch_20260209`, future
@@ -156,7 +157,8 @@ bridge_entries:
       blocked_domains: { from: tool_decl.blocked_domains }
 ```
 
-The two `bridge_entries` above re-express `web-tools.md`'s mappings in
+The two `bridge_entries` above re-express
+`docs/spec/archive/web-tools.md`'s mappings in
 this config form. v1 of the proxy ships with this YAML as the
 factory default, so the user-visible behavior is unchanged unless the
 operator overrides it.
@@ -256,7 +258,8 @@ On each Anthropic request:
    Both are evaluated *before* the MCP call to keep
    policy in the proxy and not in any individual MCP server.
 
-Streaming detail: per `web-tools.md`, Anthropic's server-tool result
+Streaming detail: per `docs/spec/archive/web-tools.md`, Anthropic's
+server-tool result
 blocks are emitted whole. The interceptor pauses upstream
 forwarding only for the brief window between
 `server_tool_use.content_block_stop` and emitting the result
@@ -306,16 +309,20 @@ The proxy validates the whole config before serving:
 
 Validation failures are loud: log and refuse to start.
 
-## Backward compatibility with `web-tools.md`
+## Backward compatibility with `docs/spec/archive/web-tools.md`
 
-The spec in `web-tools.md` becomes the **factory default** YAML for
+The spec in `docs/spec/archive/web-tools.md` becomes the **factory
+default** YAML for
 this bridge. A user who configures nothing gets identical behavior
 to a hardcoded interceptor. A user who configures *just* a custom
 MCP server (e.g. swap Brave for Tavily) only writes the
 `mcp_servers` block; `bridge_entries` are inherited from the default.
 
-The `src/routes/messages/web-tools-interceptor.ts`
-referenced in `web-tools.md` becomes a thin adapter that loads the
+The single `src/routes/messages/web-tools-interceptor.ts` file that
+`docs/spec/archive/web-tools.md` proposed was never built that way —
+the shipped surface is the `src/routes/messages/web-tools/` directory
+(`rewriter.ts` on the request side, `stream.ts` on the response side).
+Under this spec that surface becomes a thin adapter that loads the
 YAML and instantiates the generic interceptor.
 
 ## Implementation outline

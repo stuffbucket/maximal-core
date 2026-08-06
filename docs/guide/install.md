@@ -9,7 +9,7 @@ This page covers getting maximal onto your machine. Once it's installed, head to
 You'll need:
 
 - **A GitHub Copilot plan.** maximal runs your tools on the models in your existing Copilot subscription, so you need an active plan. GitHub Enterprise works too.
-- **A Mac with Apple Silicon** (M1 or newer) for the app. Windows is coming soon.
+- **A Mac with Apple Silicon** (M1 or newer) or a **Windows x64** machine for the app.
 
 That's it. You don't need any Anthropic or OpenAI API keys.
 
@@ -35,8 +35,12 @@ Something not working? See [Troubleshooting](./troubleshooting.md).
 
 ### Windows and other platforms
 
-- **Windows** — support is on the way. The app already speaks Windows in a few places, but there's no packaged installer yet. Check the [releases page](https://github.com/stuffbucket/maximal/releases) for the latest.
-- **Linux and everything else** — grab a release binary from the [releases page](https://github.com/stuffbucket/maximal/releases), or run from source with [Bun](https://bun.sh). Clone the repo and start it:
+- **Windows** — shipping. Every release carries a `-setup.exe` installer, an
+  `.msi`, a portable `.zip`, and an `install.ps1`, all `windows-x64`. Grab one
+  from the [releases page](https://github.com/stuffbucket/maximal/releases).
+- **Linux and everything else** — no binary is built for these; the release
+  targets are macOS Apple Silicon and Windows x64 only. Run from source with
+  [Bun](https://bun.sh). Clone the repo and start it:
 
   ```sh
   git clone https://github.com/stuffbucket/maximal

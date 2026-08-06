@@ -4,7 +4,7 @@ What managed-preferences keys Claude Desktop reads, where they live,
 and which ones matter for using this proxy as a third-party inference
 gateway.
 
-Last verified: 2026-07-03.
+Last verified: 2026-08-05.
 
 ## Why this matters here
 
@@ -84,10 +84,14 @@ Two files, two write strategies (`applyConfigLibraryProfile`):
 
 `maximal app claude-desktop --disable` (or `maximal uninstall --force`) reverts
 via `revertConfigLibraryProfile`, which deletes the profile file, clears
-`_meta.json`'s `appliedId`, and removes `deploymentMode`.
+`_meta.json`'s `appliedId`, removes `deploymentMode`, and strips the
+`preferences` keys maximal owns.
 
-**Known gap:** revert does **not** strip `preferences.coworkWebSearchEnabled`
-— that sub-key survives a disable. Fixing it is a `src/` change, not a doc one.
+The owned set is `OWNED_PREFERENCES` in `src/apps/claude-desktop/config.ts` —
+today just `coworkWebSearchEnabled`. Apply spreads that object in and revert
+strips exactly its keys, so the two cannot drift: adding a preference there
+automatically makes revert clean it up. If nothing of the user's own remains,
+`preferences` is deleted rather than left as an empty object.
 
 ### Why `deploymentMode` is in the profile
 
@@ -207,12 +211,15 @@ what the gateway returns.
 ### Disable WebSearch connector (alternative to egress allowlist)
 
 If you want the proxy to be the sole web-tools path (no Cowork-side
-connectors competing), keep this off:
+connectors competing), this has to be turned **off by hand** — note that
+`--enable` sets it to `true` (it is in `OWNED_PREFERENCES`), so it comes
+back on the next enable and a `--disable` strips the key rather than
+setting it to `false`:
 
 ```sh
 # (lives in claude_desktop_config.json, not the MDM domain)
-# Already set to false earlier in this project.
 cat ~/Library/Application\ Support/Claude/claude_desktop_config.json
+# then set "preferences": { "coworkWebSearchEnabled": false }
 ```
 
 ## What developer-mode users typically need to set
