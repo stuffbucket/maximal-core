@@ -10,8 +10,10 @@ links:
   spec: docs/spec/single-window-redesign.md
   server: src/server.ts
   request_auth: src/lib/auth/request-auth.ts
-  settings_routes: src/routes/settings
+  origin_guard: src/lib/auth/origin-guard.ts
+  control_routes: src/routes/control
   internal_route: src/routes/internal/route.ts
+  current_behaviour: docs/spec/wire/auth-transport-wire-prd.md
 ---
 
 # Control-surface hardening (Origin allowlist + mandatory settings-api auth)
@@ -102,13 +104,38 @@ narrowed **global** `cors()` must all leave those routes reachable.
   `tests/security/cli-client-regression.test.ts` (no-Origin `Bearer` on `/v1/*`
   still 200). `origin-guard.ts` mutation score 88%.
 
+**Amendment (2026-08-05) — what the core split changed.** The paragraph above
+records the state at landing; three of its specifics no longer hold. Verified
+against source and a running engine:
+
+- The guard is port-exact against **`state.controlPort`**, not `state.boundPort`
+  (which no longer exists). `src/server.ts` passes `() => state.controlPort` to
+  both `createOriginGuardMiddleware` and `buildCorsOptions`, on **both**
+  listeners. Consequence: a page served from the *public* port is not an allowed
+  origin either.
+- `CSRF_GUARDED_PREFIXES` gained **`/control`** — the JSON-RPC surface that
+  replaced `/settings/api` and `/ws`.
+- **§6.2 is inert.** `/settings/api` was removed with the UI cluster, so
+  `MANDATORY_AUTH_PREFIX` and `createAuthMiddleware`'s `alwaysEnforcePrefixes` /
+  `requireAuthPrefixes` options survive but are wired by nothing;
+  `src/server.ts` passes neither. `/control` is instead in
+  `allowUnauthenticatedPrefixes` and is protected by the loopback-only bind, the
+  router's own peer-IP 404, and the Origin guard.
+- `state.shellApiKey` (`MAXIMAL_SHELL_KEY`) still bypasses the enforce flag in
+  `decideAuth`, but core never sets it — it is a desktop-shell affordance.
+
+Current behaviour is documented in
+[`docs/spec/wire/auth-transport-wire-prd.md`](../spec/wire/auth-transport-wire-prd.md).
+
 **Pending (later tracks):**
 
-- **Minted WS session token (§6.5)** — depends on the WS transport track; today the
-  Settings UI still authenticates via `state.shellApiKey`. The `shellApiKey`-vs-token
-  question (ADR-0003) is unresolved.
-- **Destructive ops native/IPC-only (§6.4)** — `accounts/remove` + `api-keys/enforce`
-  are Origin-gated + auth-mandatory now, but not yet IPC-only.
+- **Minted WS session token (§6.5)** — superseded in shape: there is no WS
+  transport and no Settings UI in core (see ADR-0019 and the control-plane
+  section of `docs/architecture.md`). The `shellApiKey`-vs-token question
+  (ADR-0003) is moot here and belongs to whatever tier serves a UI.
+- **Destructive ops native/IPC-only (§6.4)** — `accounts/remove` and the
+  api-keys actions are Origin-gated and loopback-gated on `/control`, but not
+  IPC-only.
 
 ## Migration
 
