@@ -81,7 +81,15 @@ bundle:
 
 ```
 $ /path/to/1.3.11/bin/bun pm pack     # tarball dist/main.js → ffdee378… (1.3.14)
+$ /tmp/bun1311/bin/bun run build      # dist/main.js → a 1.3.14 bundle
 ```
+
+`bun run build` is exposed the same way, and that one is **step 3 above** (and
+the by-hand release path in the runbook's § 4): the nested `bun build` inside
+the npm script re-resolves `bun` from PATH, so the rebuild that blesses a new
+pin gets built by whatever Bun is on PATH instead. `bindings:check` caught it as
+stale. Put the pinned Bun first on your PATH; invoking it by absolute path is
+not enough.
 
 That is the same trap `check-bindings.ts` solved with `process.execPath`, and it
 is why `prepack` is [`scripts/ops/prepack.ts`](../scripts/ops/prepack.ts) rather
