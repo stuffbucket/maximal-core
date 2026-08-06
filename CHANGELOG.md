@@ -39,6 +39,32 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:manual vX.Y.Z` inserts the generated block here -->
 
+## [0.4.2](https://github.com/stuffbucket/maximal-core/compare/v0.4.1...v0.4.2) (2026-08-06)
+
+
+### Bug Fixes
+
+* **lint:** widen tokenAttachmentGuard to the shapes credentials actually use ([#38](https://github.com/stuffbucket/maximal-core/issues/38)) ([8ee9460](https://github.com/stuffbucket/maximal-core/commit/8ee94602b02cecb1adbea52df611b78cfa127788))
+* **release:** generate and insert the CHANGELOG entry inside the release commit ([#44](https://github.com/stuffbucket/maximal-core/issues/44)) ([6700aa5](https://github.com/stuffbucket/maximal-core/commit/6700aa56d0462b070046002df1b78d6f08d93e4c))
+* **security:** stop sending the inbound API key on the --replace shutdown POST ([#42](https://github.com/stuffbucket/maximal-core/issues/42)) ([9c510d0](https://github.com/stuffbucket/maximal-core/commit/9c510d08b8021d8550e064afde902434566ca897))
+* **stream:** make the SSE frame reads behind the trusted-chunk casts total ([#40](https://github.com/stuffbucket/maximal-core/issues/40)) ([ca14720](https://github.com/stuffbucket/maximal-core/commit/ca1472089fc6d6d0e9bafee3a53f611d706017ac))
+* **tests:** restore mock.module from a pre-install snapshot, not the live namespace ([#43](https://github.com/stuffbucket/maximal-core/issues/43)) ([e6488b6](https://github.com/stuffbucket/maximal-core/commit/e6488b6e87de52ca54c336af318a5636b7c32658))
+
+
+### Continuous Integration
+
+* nightly randomized-order test run ([#39](https://github.com/stuffbucket/maximal-core/issues/39)) ([ee33fea](https://github.com/stuffbucket/maximal-core/commit/ee33feafa06753e602b3f920abf8bbb65d71372f))
+
+
+### Documentation
+
+* release:manual now takes the tag ([#45](https://github.com/stuffbucket/maximal-core/issues/45)) ([8abfde6](https://github.com/stuffbucket/maximal-core/commit/8abfde6766c5795b71c1f0bd1928371573776431))
+
+
+### Tests
+
+* record module evaluation order and mock.module installs behind MAXIMAL_TEST_TRACE ([#41](https://github.com/stuffbucket/maximal-core/issues/41)) ([b0a3fbd](https://github.com/stuffbucket/maximal-core/commit/b0a3fbd6fa0365b2cf1c10d5b56c169866241629))
+
 ## [0.4.1](https://github.com/stuffbucket/maximal-core/compare/v0.4.0...v0.4.1) (2026-08-05)
 
 
