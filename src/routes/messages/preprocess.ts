@@ -5,6 +5,7 @@ import type {
   AnthropicMessagesPayload,
   AnthropicTextBlock,
   AnthropicToolResultBlock,
+  AnthropicToolResultContentBlock,
   AnthropicUserContentBlock,
 } from "~/lib/models/anthropic-types"
 import type { Model } from "~/services/copilot/get-models"
@@ -125,6 +126,21 @@ export const getCompactType = (
   return 0
 }
 
+/**
+ * A tool_result's content as blocks.
+ *
+ * `content` is OPTIONAL on a `tool_result` in the Anthropic Messages spec — an
+ * absent one is an empty result, and clients do send it. Every merge below
+ * spread `tr.content` directly, so that spec-legal block threw "Spread syntax
+ * requires ...iterable not be null or undefined" mid-preprocessing, which the
+ * route reported to the client as a 500. Absent (or any non-array,
+ * non-string) content is the empty block list.
+ */
+const resultBlocks = (
+  tr: AnthropicToolResultBlock,
+): Array<AnthropicToolResultContentBlock> =>
+  Array.isArray(tr.content) ? tr.content : []
+
 const mergeContentWithText = (
   tr: AnthropicToolResultBlock,
   textBlock: AnthropicTextBlock,
@@ -138,7 +154,7 @@ const mergeContentWithText = (
   }
   return {
     ...tr,
-    content: [...tr.content, textBlock],
+    content: [...resultBlocks(tr), textBlock],
   }
 }
 
@@ -154,7 +170,7 @@ const mergeContentWithTexts = (
   if (hasToolRef(tr)) {
     return tr
   }
-  return { ...tr, content: [...tr.content, ...textBlocks] }
+  return { ...tr, content: [...resultBlocks(tr), ...textBlocks] }
 }
 
 const mergeContentWithAttachments = (
@@ -170,7 +186,7 @@ const mergeContentWithAttachments = (
 
   return {
     ...tr,
-    content: [...tr.content, ...attachments],
+    content: [...resultBlocks(tr), ...attachments],
   }
 }
 
@@ -263,15 +279,16 @@ const startsWithPdfFileRead = (
     return toolResult.content.startsWith(PDF_FILE_READ_PREFIX)
   }
 
-  if (toolResult.content.some((block) => block.type === "document")) {
+  const blocks = resultBlocks(toolResult)
+  if (blocks.some((block) => block.type === "document")) {
     return false
   }
 
-  if (toolResult.content.length === 0) {
+  if (blocks.length === 0) {
     return false
   }
 
-  const firstBlock = toolResult.content[0]
+  const firstBlock = blocks[0]
   if (firstBlock.type !== "text") {
     return false
   }

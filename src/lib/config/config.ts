@@ -216,16 +216,35 @@ const defaultConfig: AppConfig = {
 
 let cachedConfig: AppConfig | null = null
 
+/**
+ * Seed `config.json` with the defaults when there isn't a usable one already.
+ *
+ * Best-effort, and it must stay that way: `readConfigFromDisk` calls this
+ * OUTSIDE its own `try`, and boot calls that before the port is bound. A
+ * config file that is readable but not writable (deliberately chmod'd, or left
+ * owned by root after one `sudo` run) fails the access check, takes the create
+ * branch, and — if the failure escaped — killed the process with a raw errno
+ * while the perfectly readable file went unopened. Seeding is a convenience;
+ * failing to seed is not a reason to refuse to read.
+ */
 function ensureConfigFile(): void {
   try {
     fs.accessSync(PATHS.CONFIG_PATH, fs.constants.R_OK | fs.constants.W_OK)
   } catch {
-    fs.mkdirSync(PATHS.APP_DIR, { recursive: true })
-    fs.writeFileSync(
-      PATHS.CONFIG_PATH,
-      `${JSON.stringify(defaultConfig, null, 2)}\n`,
-      "utf8",
-    )
+    try {
+      fs.mkdirSync(PATHS.APP_DIR, { recursive: true })
+      fs.writeFileSync(
+        PATHS.CONFIG_PATH,
+        `${JSON.stringify(defaultConfig, null, 2)}\n`,
+        "utf8",
+      )
+    } catch (error) {
+      consola.warn(
+        `Couldn't create ${PATHS.CONFIG_PATH}; continuing with whatever is on disk`,
+        error,
+      )
+      return
+    }
     try {
       fs.chmodSync(PATHS.CONFIG_PATH, 0o600)
     } catch {

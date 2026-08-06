@@ -85,6 +85,35 @@ interface MetaFile {
   entries: Array<{ id: string; name: string }>
 }
 
+/**
+ * `configLibrary/_meta.json` as a `MetaFile`, checked rather than cast.
+ *
+ * The file belongs to Claude Desktop, so nothing here produced it and nothing
+ * guarantees its shape. Reading it with `as MetaFile` meant a file without
+ * `entries` — a hand-edit, a truncated write, or a schema change in the app —
+ * reached `meta.entries.some(...)` and threw *after* the profile had already
+ * been written, leaving a half-applied config that neither worked nor reverted.
+ * An unusable field degrades to its empty value, which is the same state a
+ * missing file already produces.
+ */
+function readMetaFile(file: string): MetaFile {
+  const raw = readJsonObject(file)
+  const entries = raw?.entries
+  return {
+    appliedId: typeof raw?.appliedId === "string" ? raw.appliedId : "",
+    entries:
+      Array.isArray(entries) ?
+        entries.filter(
+          (e): e is { id: string; name: string } =>
+            typeof e === "object"
+            && e !== null
+            && typeof (e as { id?: unknown }).id === "string"
+            && typeof (e as { name?: unknown }).name === "string",
+        )
+      : [],
+  }
+}
+
 function profileMatches(
   existing: Record<string, unknown> | null,
   values: GatewayProfileValues,
@@ -149,10 +178,7 @@ export function applyConfigLibraryProfile(
   const libDir = path.join(dir, "configLibrary")
   const metaPath = path.join(libDir, "_meta.json")
 
-  const meta = (readJsonObject(metaPath) as MetaFile | null) ?? {
-    appliedId: "",
-    entries: [],
-  }
+  const meta = readMetaFile(metaPath)
 
   const profileId = meta.appliedId || randomUUID()
   const profilePath = path.join(libDir, `${profileId}.json`)
