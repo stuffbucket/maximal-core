@@ -6,7 +6,7 @@ import {
   markAuthDegraded as defaultMarkAuthDegraded,
   noteAuthSuccess,
 } from "~/lib/auth/auth-controller"
-import { toCopilotHost } from "~/lib/auth/auth-types"
+import { CREDENTIAL_HEALTH, toCopilotHost } from "~/lib/auth/auth-types"
 import { currentGitHubHost } from "~/lib/auth/github-host"
 import {
   addAccountToDefaultRegistry,
@@ -36,6 +36,9 @@ import { isHeadless, openUrl } from "~/lib/platform/open-url"
 import { PATHS } from "~/lib/platform/paths"
 import {
   clearNetworkDiagnosis,
+  copilotRefreshHealth,
+  copilotTokenHealth,
+  noteCopilotRefreshFailure,
   setCopilotToken,
   setGithubToken,
   setNetworkDiagnosis,
@@ -165,10 +168,12 @@ export const setupCopilotToken = async (opts?: {
 
   let token: string
   let refresh_in: number
+  let expiresAtMs: number
   try {
     const result = await getCopilotToken()
     token = result.token
     refresh_in = result.refresh_in
+    expiresAtMs = resolveCopilotExpiryMs(result.expires_at, result.refresh_in)
     applyCopilotApiUrl(result.endpoints?.api)
   } catch (error) {
     if (error instanceof CopilotAuthFatalError) {
@@ -197,7 +202,7 @@ export const setupCopilotToken = async (opts?: {
     }
     throw error
   }
-  setCopilotToken(token)
+  setCopilotToken(token, expiresAtMs)
   clearActiveNeedsReauth()
 
   log.debug("GitHub Copilot Token fetched successfully!")
@@ -243,6 +248,39 @@ export const getRefreshDeadlineMs = (
   nowMs
   + Math.max(refreshIn * 1000 - EARLY_REFRESH_BUFFER_MS, MIN_REFRESH_DELAY_MS)
 
+/** Longest bearer lifetime we'll believe from an absolute `expires_at`. The
+ *  minted Copilot bearer lives ~30 min; anything beyond a day means the value
+ *  is stale, bogus, or being read against a badly skewed local clock. */
+const MAX_PLAUSIBLE_TOKEN_TTL_MS = 24 * 60 * 60 * 1000
+
+/** Observed gap between `refresh_in` and the real expiry (~1500s refresh_in on
+ *  a ~1800s token). Used only by the relative fallback below. */
+const REFRESH_TO_EXPIRY_SLACK_MS = 300_000
+
+/**
+ * When the bearer just minted actually stops working, in local epoch ms.
+ *
+ * `expires_at` is the upstream's own statement about the credential, so it is
+ * preferred — but it is absolute, and the rest of this loop deliberately works
+ * in RELATIVE time so a skewed local clock can't distort it. So the absolute
+ * value is only trusted when it implies a plausible remaining lifetime; a
+ * missing/zeroed `expires_at` (the schema defaults it to 0), one already in the
+ * past, or one implausibly far out falls back to a `refresh_in`-derived
+ * estimate, which is skew-immune by construction.
+ */
+export const resolveCopilotExpiryMs = (
+  expiresAtSeconds: number,
+  refreshIn: number,
+  nowMs: number = Date.now(),
+): number => {
+  const absoluteMs = expiresAtSeconds * 1000
+  const impliedTtlMs = absoluteMs - nowMs
+  if (impliedTtlMs > 0 && impliedTtlMs <= MAX_PLAUSIBLE_TOKEN_TTL_MS) {
+    return absoluteMs
+  }
+  return nowMs + refreshIn * 1000 + REFRESH_TO_EXPIRY_SLACK_MS
+}
+
 // Use short wall-clock chunks so the next wake after sleep notices elapsed time
 // quickly, without relying on the server's absolute expires_at matching local time.
 export const getRefreshPollDelayMs = (
@@ -258,6 +296,10 @@ const runCopilotRefreshLoop = async (
   // Count consecutive auth-fatal rejections so a transient 401/403 gets a few
   // bounded retries before we escalate. Reset on any successful refresh.
   let fatalRetries = 0
+  // Whether THIS failure streak has already logged the moment the held bearer
+  // went past its expiry. Loop-local so it can't outlive the loop, and so the
+  // decisive line is written exactly once per streak rather than every 15s.
+  let staleAnnounced = false
 
   while (!signal.aborted) {
     const nextDelayMs = getRefreshPollDelayMs(refreshAtMs)
@@ -280,12 +322,14 @@ const runCopilotRefreshLoop = async (
     log.debug("Refreshing Copilot token")
 
     try {
-      const { token, refresh_in, endpoints } = await getCopilotToken()
-      setCopilotToken(token)
+      const { token, refresh_in, expires_at, endpoints } =
+        await getCopilotToken()
+      setCopilotToken(token, resolveCopilotExpiryMs(expires_at, refresh_in))
       applyCopilotApiUrl(endpoints?.api)
       refreshAtMs = getRefreshDeadlineMs(refresh_in)
       if (fatalRetries > 0) clearActiveNeedsReauth()
       fatalRetries = 0
+      staleAnnounced = false
       // A successful refresh proves the credential still works — refresh the
       // grace window so a stale in-flight 401 (or a first request right after
       // wake) doesn't tear the session down, and so the window isn't left
@@ -302,6 +346,10 @@ const runCopilotRefreshLoop = async (
     } catch (error) {
       if (error instanceof CopilotAuthFatalError) {
         fatalRetries++
+        // Record it before the retry branch: an auth-fatal IS a refresh
+        // failure, and the diagnostics surface must show the streak while the
+        // bounded retries are still running, not only after they escalate.
+        noteCopilotRefreshFailure(error.message)
         if (fatalRetries < maxFatalRefreshRetries) {
           // Probably transient. Retry on the normal cadence before treating
           // the credential as bad — never tear down a session on one 401.
@@ -310,6 +358,7 @@ const runCopilotRefreshLoop = async (
             error.message,
           )
           refreshAtMs = Date.now() + RETRY_REFRESH_DELAY_MS
+          staleAnnounced = announceIfStale(staleAnnounced)
           continue
         }
         // Persistent rejection across retries — the GitHub token genuinely
@@ -332,13 +381,52 @@ const runCopilotRefreshLoop = async (
         "Failed to refresh Copilot token",
         error,
       )
+      // The retry below is deliberately unbounded — the failures this branch
+      // sees (transport blip, a 5xx, a local read that fails once) are the ones
+      // that self-heal, and giving up would strand a session that a later
+      // attempt would have recovered. What was missing is not a limit but an
+      // ESCALATION: record the failure so the streak is readable, and announce
+      // the moment the bearer we still hold goes past its own expiry (#9 — that
+      // moment previously produced no log line at all).
+      noteCopilotRefreshFailure(describeRefreshFailure(diagnosis, error))
       noteConnectivityFailure(diagnosis)
       refreshAtMs = Date.now() + RETRY_REFRESH_DELAY_MS
       log.warn(
         `Retrying Copilot token refresh in ${RETRY_REFRESH_DELAY_MS / 1000}s`,
       )
+      staleAnnounced = announceIfStale(staleAnnounced)
     }
   }
+}
+
+/** A short, already-safe description of a refresh failure for the health
+ *  record: the typed network diagnosis when we have one, otherwise the error's
+ *  own message. Never a raw response body. */
+function describeRefreshFailure(
+  diagnosis: NetworkDiagnosis | null,
+  error: unknown,
+): string {
+  if (diagnosis) return formatDiagnosisForLog(diagnosis)
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Log the transition into "the bearer we are still handing out is dead" — once
+ * per failure streak. This is the line the incident in #9 never produced: the
+ * loop logged each individual retry, so a refresh that had been failing for
+ * three minutes and one that had failed once looked the same, and nothing
+ * marked the point where the held credential stopped being usable. Returns the
+ * new value of the caller's already-announced flag.
+ */
+function announceIfStale(alreadyAnnounced: boolean): boolean {
+  if (alreadyAnnounced || copilotTokenHealth() !== CREDENTIAL_HEALTH.expired) {
+    return alreadyAnnounced
+  }
+  const { consecutiveFailures, lastFailureReason } = copilotRefreshHealth()
+  log.error(
+    `Copilot token is now PAST ITS EXPIRY and the refresh is still failing after ${consecutiveFailures} attempt(s) — requests will be failed locally (503) instead of sent with a dead credential: ${lastFailureReason ?? "unknown"}`,
+  )
+  return true
 }
 
 /**
