@@ -1018,10 +1018,14 @@ export function mergedManifestObjection(
 }
 
 /**
+ * GitHub's squash-merge subject suffix, anchored to the END of the line only.
+ * `feat: x (#1) and more` is not a suffix and is not stripped.
+ */
+export const SQUASH_PR_SUFFIX = /\s+\(#\d+\)$/u
+
+/**
  * Why the merged head is not the release commit, and therefore must not be
- * tagged.
- *
- * THE HOLE THIS CLOSES. `mergedManifestObjection` above asks what the tip's
+ * tagged. `mergedManifestObjection` above asks what the tip's
  * `package.json` says; it cannot ask whether the tip IS the release. An ordinary
  * PR does not bump the version, so anything merged between the release PR
  * landing and this command running leaves the manifest reading X.Y.Z while the
@@ -1041,6 +1045,17 @@ export function mergedManifestObjection(
  * repo already runs on — squash-merge turns the PR title into the subject,
  * `release-gates.ts` exempts the release PR by matching it, and the tag
  * annotation is it — so nothing new has to be believed for this to hold.
+ *
+ * AND THAT SAME SQUASH APPENDS ` (#N)`. GitHub's squash merge uses the PR title
+ * as the subject and adds the PR number to it, so the commit this is looking at
+ * is `chore: release v0.4.4 (#84)` and never the bare
+ * `releaseCommitSubject(tag)`. Comparing the two verbatim refuses EVERY genuine
+ * release — which is what this function did when it was first written, because
+ * its rehearsal drove a fake `git` whose subjects had no suffix. `main`'s own
+ * history is the counter-example: `dc725c9 chore: release v0.4.4 (#84)`. So the
+ * suffix is stripped before the comparison, and only the suffix — an ordinary
+ * PR that merged on top carries its own title underneath one, and still
+ * refuses.
  */
 export function notTheReleaseCommitObjection(
   tag: string,
@@ -1050,7 +1065,7 @@ export function notTheReleaseCommitObjection(
   base: string,
 ): string | undefined {
   const expected = releaseCommitSubject(tag)
-  if (subject.trim() === expected) return undefined
+  if (subject.trim().replace(SQUASH_PR_SUFFIX, "") === expected) return undefined
   return (
     `release: REFUSING — ${remote}/${base} is at \`${merged.slice(0, 12)}\`, whose subject is\n`
     + `\n`

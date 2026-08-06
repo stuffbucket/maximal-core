@@ -92,9 +92,19 @@ interface Refs {
   head?: string
   /** The `package.json` `git show <merged>:package.json` answers with. */
   manifest?: string
-  /** The merged commit's subject. Defaults to the release commit's. */
+  /**
+   * The merged commit's subject. Defaults to what a REAL squash merge of the
+   * release PR produces — `chore: release v0.4.2 (#4242)`, suffix and all.
+   * The bare `releaseCommitSubject(TAG)` is not the default on purpose: this
+   * check shipped refusing every genuine release precisely because its
+   * rehearsal never saw the suffix, so the default here has to be the shape
+   * `main` actually carries (`dc725c9 chore: release v0.4.4 (#84)`).
+   */
   subject?: string
 }
+
+/** The subject a squash merge of the release PR leaves on the base branch. */
+const SQUASHED_RELEASE_SUBJECT = `${releaseCommitSubject(TAG)} (#4242)`
 
 /**
  * A `git` that answers `status` with `porcelain`, the two tag reads gate 4 makes
@@ -123,7 +133,7 @@ function gitStub(
         : verb === "ls-remote" ? (tags.remote ?? []).map((t) => `deadbeef\trefs/tags/${t}`).join("\n")
         : verb === "rev-parse" ? `${args[1] === "HEAD" ? refs.head ?? merged : merged}\n`
         : verb === "show" ? refs.manifest ?? MANIFEST
-        : verb === "log" ? `${refs.subject ?? releaseCommitSubject(TAG)}\n`
+        : verb === "log" ? `${refs.subject ?? SQUASHED_RELEASE_SUBJECT}\n`
         : ""
       return { status: statuses[verb] ?? 0, stdout, stderr: "" }
     },
@@ -1395,6 +1405,39 @@ describe("manifestVersion and its objections", () => {
     expect(ok(releaseCommitSubject("v0.4.1"))).toContain("REFUSING")
     expect(ok("feat(control): diagnostics endpoint (#91)")).toContain("REFUSING")
     expect(ok("")).toContain("REFUSING")
+  })
+
+  // THE CASE THAT MADE THIS SHIP BROKEN. Every release lands by squash merge,
+  // which appends ` (#N)` to the PR title, so the ONLY subject this function
+  // will ever meet in production carries a suffix — `main`'s own history reads
+  // `dc725c9 chore: release v0.4.4 (#84)`. Compared verbatim it refuses the
+  // genuine article and nothing else, which is worse than not checking: the
+  // release is blocked and the message says the tip is not the release commit
+  // when it is. Anchored to the end, so a suffix in the MIDDLE is still a
+  // different commit.
+  test("a real squash merge's ` (#N)` suffix passes, and only as a suffix", () => {
+    const ok = (subject: string): string | undefined =>
+      notTheReleaseCommitObjection(TAG, subject, MERGED_SHA, "origin", "main")
+    expect(ok(`${releaseCommitSubject(TAG)} (#84)`)).toBeUndefined()
+    expect(ok(`${releaseCommitSubject(TAG)} (#4242)`)).toBeUndefined()
+    expect(ok(`${releaseCommitSubject(TAG)} (#84)\n`)).toBeUndefined()
+    // Another version's release, squashed, is still the wrong commit.
+    expect(ok(`${releaseCommitSubject("v0.4.1")} (#84)`)).toContain("REFUSING")
+    // Not a trailing suffix — a different subject that happens to contain one.
+    expect(ok(`${releaseCommitSubject(TAG)} (#84) and then some`)).toContain("REFUSING")
+    // Not a PR number.
+    expect(ok(`${releaseCommitSubject(TAG)} (#abc)`)).toContain("REFUSING")
+    // The suffix alone is not a release commit.
+    expect(ok("(#84)")).toContain("REFUSING")
+  })
+
+  // The message quotes the subject VERBATIM, suffix included, so a releaser can
+  // match it against `git log` output rather than a normalised form of it.
+  test("the refusal quotes the tip's subject as git printed it", () => {
+    const objection =
+      notTheReleaseCommitObjection(TAG, "fix(auth): stop proxying an expired bearer (#86)", MERGED_SHA, "origin", "main")
+      ?? ""
+    expect(objection).toContain("fix(auth): stop proxying an expired bearer (#86)")
   })
 
   // Actionable, not just correct: it has to say what the tip IS, what was
