@@ -24,6 +24,38 @@ declare const TokenStatus: z.ZodObject<{
     copilot_token_present: z.ZodBoolean;
 }, z.core.$strip>;
 type TokenStatus = z.infer<typeof TokenStatus>;
+/**
+ * Health of the Copilot bearer and of the background refresh loop that renews
+ * it — GET `/control/diagnostics`.
+ *
+ * This exists because there was no state between "healthy" and "every request
+ * fails with 403" (#9): the refresh loop retried a transport failure every 15s
+ * indefinitely and recorded nothing, so a refresh that had been broken for
+ * minutes was indistinguishable from one that had never failed.
+ *
+ * `health` uses #15's `AccountHealth` vocabulary. `needsReauth` is NOT reachable
+ * here on purpose — only an auth-fatal rejection may claim a credential is
+ * invalid, and that verdict is written on the account record by
+ * `markAuthDegraded`. An offline or upstream failure only ever reaches
+ * `refreshing` or `expired`.
+ *
+ * No token value, and `last_failure_reason` is a typed network diagnosis or an
+ * error message — never an upstream body.
+ */
+declare const CopilotRefreshStatus: z.ZodObject<{
+    health: z.ZodEnum<{
+        healthy: "healthy";
+        refreshing: "refreshing";
+        expired: "expired";
+        unknown: "unknown";
+    }>;
+    token_expires_at: z.ZodNullable<z.ZodString>;
+    last_success_at: z.ZodNullable<z.ZodString>;
+    last_failure_at: z.ZodNullable<z.ZodString>;
+    last_failure_reason: z.ZodNullable<z.ZodString>;
+    consecutive_failures: z.ZodNumber;
+}, z.core.$strip>;
+type CopilotRefreshStatus = z.infer<typeof CopilotRefreshStatus>;
 /** The proxy throttles via a fixed minimum interval between
  *  requests, not a "tokens remaining / resets-at" bucket. The
  *  contract surfaces what actually exists. */
@@ -76,6 +108,19 @@ declare const DiagnosticsResponse: z.ZodObject<{
         github_token_present: z.ZodBoolean;
         copilot_token_present: z.ZodBoolean;
     }, z.core.$strip>;
+    copilot_refresh: z.ZodOptional<z.ZodObject<{
+        health: z.ZodEnum<{
+            healthy: "healthy";
+            refreshing: "refreshing";
+            expired: "expired";
+            unknown: "unknown";
+        }>;
+        token_expires_at: z.ZodNullable<z.ZodString>;
+        last_success_at: z.ZodNullable<z.ZodString>;
+        last_failure_at: z.ZodNullable<z.ZodString>;
+        last_failure_reason: z.ZodNullable<z.ZodString>;
+        consecutive_failures: z.ZodNumber;
+    }, z.core.$strip>>;
     rate_limit: z.ZodObject<{
         interval_seconds: z.ZodNullable<z.ZodNumber>;
         last_request_at: z.ZodNullable<z.ZodString>;
@@ -392,8 +437,8 @@ declare const AppInstall: z.ZodObject<{
     path: z.ZodString;
     version: z.ZodNullable<z.ZodString>;
     source: z.ZodEnum<{
-        homebrew: "homebrew";
         unknown: "unknown";
+        homebrew: "homebrew";
         path: "path";
         "npm-global": "npm-global";
         "local-bin": "local-bin";
@@ -428,8 +473,8 @@ declare const AppEntry: z.ZodObject<{
         path: z.ZodString;
         version: z.ZodNullable<z.ZodString>;
         source: z.ZodEnum<{
-            homebrew: "homebrew";
             unknown: "unknown";
+            homebrew: "homebrew";
             path: "path";
             "npm-global": "npm-global";
             "local-bin": "local-bin";
@@ -468,8 +513,8 @@ declare const AppsListResponse: z.ZodObject<{
             path: z.ZodString;
             version: z.ZodNullable<z.ZodString>;
             source: z.ZodEnum<{
-                homebrew: "homebrew";
                 unknown: "unknown";
+                homebrew: "homebrew";
                 path: "path";
                 "npm-global": "npm-global";
                 "local-bin": "local-bin";
@@ -496,4 +541,4 @@ declare const ClaudeDesktopToggleRequest: z.ZodObject<{
 }, z.core.$strip>;
 type ClaudeDesktopToggleRequest = z.infer<typeof ClaudeDesktopToggleRequest>;
 
-export { AccountSummary, AccountTypeWire, AccountsListResponse, ApiErrorBody, ApiKeyCreateRequest, ApiKeyEntry, ApiKeyUpdateRequest, ApiKeysListResponse, AppEntry, AppInstall, AppInstallHint, AppsListResponse, AuthStatus, ClaudeCodeToggleRequest, ClaudeDesktopToggleRequest, CopilotServiceStatus, DiagnosticsResponse, ModelCapabilityFlags, ModelSummary, ModelsListResponse, NetworkDiagnosisSignal, RateLimitStatus, TokenStatus, UpdateStatusResponse, UpstreamRejection, WebSearchStatus };
+export { AccountSummary, AccountTypeWire, AccountsListResponse, ApiErrorBody, ApiKeyCreateRequest, ApiKeyEntry, ApiKeyUpdateRequest, ApiKeysListResponse, AppEntry, AppInstall, AppInstallHint, AppsListResponse, AuthStatus, ClaudeCodeToggleRequest, ClaudeDesktopToggleRequest, CopilotRefreshStatus, CopilotServiceStatus, DiagnosticsResponse, ModelCapabilityFlags, ModelSummary, ModelsListResponse, NetworkDiagnosisSignal, RateLimitStatus, TokenStatus, UpdateStatusResponse, UpstreamRejection, WebSearchStatus };

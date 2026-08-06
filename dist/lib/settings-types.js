@@ -4,6 +4,17 @@ var TokenStatus = z.object({
   github_token_present: z.boolean(),
   copilot_token_present: z.boolean()
 });
+var CopilotRefreshStatus = z.object({
+  /** `healthy` · `refreshing` (failing, bearer still live) · `expired` (bearer
+   *  past its stated expiry AND refresh failing) · `unknown` (no bearer). */
+  health: z.enum(["healthy", "refreshing", "expired", "unknown"]),
+  /** ISO expiry of the bearer held, or null when it has none (`gho_`). */
+  token_expires_at: z.string().nullable(),
+  last_success_at: z.string().nullable(),
+  last_failure_at: z.string().nullable(),
+  last_failure_reason: z.string().nullable(),
+  consecutive_failures: z.number().int()
+});
 var RateLimitStatus = z.object({
   /** Minimum seconds between requests, or null when unconfigured. */
   interval_seconds: z.number().nullable(),
@@ -45,6 +56,10 @@ var DiagnosticsResponse = z.object({
   account_type: z.string(),
   models_cached: z.number().int(),
   tokens: TokenStatus,
+  /** Copilot bearer + refresh-loop health. Optional across versions, like
+   *  `copilot_service`: a sidecar predating #9 omits it, so a newer UI talking
+   *  to an older running proxy must tolerate its absence. */
+  copilot_refresh: CopilotRefreshStatus.optional(),
   rate_limit: RateLimitStatus,
   web_search: WebSearchStatus,
   /** Resolved Copilot service configuration. Optional across versions: a
@@ -263,6 +278,7 @@ export {
   AuthStatus,
   ClaudeCodeToggleRequest,
   ClaudeDesktopToggleRequest,
+  CopilotRefreshStatus,
   CopilotServiceStatus,
   DiagnosticsResponse,
   ModelCapabilityFlags,

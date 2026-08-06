@@ -36,6 +36,48 @@ export function parseAccountType(input: string): AccountType {
   return result.data
 }
 
+/**
+ * Health of a credential, as a closed vocabulary.
+ *
+ * These names are #15's `AccountHealth` (`'healthy' | 'refreshing' |
+ * 'needsReauth' | 'expired' | 'unknown'`), adopted here rather than coined
+ * afresh so the #9 fix does not have to be renamed when the transactional
+ * multi-account work lands. #9 derives only the subset it can observe from the
+ * Copilot refresh loop:
+ *
+ *  - `healthy`    — last mint/refresh succeeded.
+ *  - `refreshing` — a refresh is failing but the bearer we hold is still within
+ *                   its own lifetime. This is exactly the intermediate state #9
+ *                   reports as missing: recoverable, requests keep flowing.
+ *  - `expired`    — the bearer is past the expiry UPSTREAM gave us and the
+ *                   refresh that should have replaced it is failing.
+ *  - `unknown`    — no bearer, or one with no expiry (a `gho_` token used
+ *                   directly, which has no refresh loop).
+ *
+ * `needsReauth` is deliberately NOT derived here. Per #15 ("offline/upstream
+ * failures must never mark credentials invalid"), only an auth-fatal rejection
+ * may claim a credential is bad, and that verdict already has an owner:
+ * `markAuthDegraded` writing `needsReauth` onto the account record. A transport
+ * failure must never be able to produce it. `expired` makes no such claim — it
+ * is the credential's own stated lifetime having elapsed, which is a fact about
+ * the token, not an inference from the network error.
+ */
+export const CREDENTIAL_HEALTH = {
+  healthy: "healthy",
+  refreshing: "refreshing",
+  needsReauth: "needsReauth",
+  expired: "expired",
+  unknown: "unknown",
+} as const
+
+export type CredentialHealth =
+  (typeof CREDENTIAL_HEALTH)[keyof typeof CREDENTIAL_HEALTH]
+
+/** The subset of {@link CREDENTIAL_HEALTH} the Copilot refresh loop can
+ *  observe on its own — everything except `needsReauth`, which only an
+ *  auth-fatal rejection may set (see the note above). */
+export type CopilotTokenHealth = Exclude<CredentialHealth, "needsReauth">
+
 declare const copilotHostBrand: unique symbol
 /** A validated https Copilot API origin (scheme + host, no path/trailing
  *  slash). Construct only via `toCopilotHost` or `hostForAccountType`. */
