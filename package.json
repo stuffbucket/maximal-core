@@ -74,7 +74,7 @@
     "measure:baseline": "bun scripts/dev/measure-baseline.ts",
     "mutate": "stryker run",
     "prepack": "bun scripts/ops/prepack.ts",
-    "prepare": "git rev-parse --git-path hooks > /dev/null 2>&1 || exit 0; bun x simple-git-hooks; ls \"$(git rev-parse --git-path hooks)/pre-commit\" > /dev/null",
+    "prepare": "bun scripts/ops/prepare.ts",
     "release:check": "bun scripts/ops/release-gates.ts",
     "release:manual": "bun scripts/ops/release.ts",
     "release:notes": "bun scripts/ops/release-notes.ts",
