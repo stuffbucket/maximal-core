@@ -126,7 +126,7 @@ Bun version delta can change test outcomes.
 
 ## 4. Test isolation & safety
 
-Two global safeguards are registered via `bunfig.toml`'s `[test] preload`
+Three global safeguards are registered via `bunfig.toml`'s `[test] preload`
 (`tests/test-setup.ts`), applied before any module loads:
 
 1. **Credential isolation.** `COPILOT_API_HOME` is redirected to a throwaway
@@ -138,6 +138,14 @@ Two global safeguards are registered via `bunfig.toml`'s `[test] preload`
 2. **Consola level reset.** `consola.level` is reset to Info (3) before every
    test, because some tests raise verbosity and don't restore it, leaking
    flooding debug output into later tests.
+3. **`process.exit` is made to throw.** Nothing may kill the runner. Product
+   code calls it in seven modules — the `/_internal/shutdown` handler, port
+   acquisition, config load, shutdown — all reachable in-process, and a real
+   call truncates the run *at exit 0*: no summary, no failure, and a green
+   verdict for a suite that never ran. Throwing keeps the run alive and turns
+   the attempt into an ordinary test failure. Code that needs a testable exit
+   injects it, as `createInternalRoutes({ exit })` does. §6 records the mutant
+   this was found by.
 
 The preload also registers the **outermost `afterEach(() => mock.restore())`**
 (`tests/test-setup.ts`): a defense-in-depth net that restores every `spyOn` spy
@@ -538,7 +546,10 @@ StrykerJS, invoked manually via `bun run mutate`. The config
   editing the file: `bunx stryker run --mutate 'src/routes/messages/utils.ts'`.
 - `testRunner: "command"` runs **`bun run test:mutation`** — the whole suite
   minus six files. It is **not** narrowed to the module's own test file, and
-  narrowing it is the one mistake this config used to make. See below.
+  narrowing it is the one mistake this config used to make. See below. The
+  command is a script (`scripts/dev/run-mutation-tests.ts`) because a command
+  runner scores a mutant from the child's exit code alone; the script withholds
+  that code until bun has proven the run finished (sweep log).
 - `--concurrency` defaults to 4; 10 is comfortable on a 24-core machine.
 
 Cost, measured on the pin (Bun 1.3.11, `--concurrency 10`): **~2.0–2.5 s per
@@ -722,6 +733,42 @@ drives the real `publicApp`, which passes no `isEnforcing` option, and sets the
 flag through `writeConfig` — no config DI seam needed, and no mutant on that
 line survives.
 
+
+**A mis-scored mutant the `request-auth.ts` sweep found in the runner itself
+(fixed).** `isLoopbackAddress`'s `if (!address) return false` → `return true`
+was scored **survived**. It is not: under it an in-process `app.request` has a
+null peer IP, so it passes the loopback gate on `/_internal/shutdown`, whose
+handler exits the process. The suite died after 9 of 132 files **with exit code
+0 and no summary**, and a command runner — which scores a mutant from the exit
+code alone — read 0 as a pass. A mutant that kills the test process was
+recorded as one the tests fail to catch, on the security surface where it
+matters most.
+
+Two mechanisms now enforce the triage rule *"require evidence the suite
+completed; do not trust the exit code on its own"*:
+
+- **`scripts/dev/run-mutation-tests.ts`** is what `bun run test:mutation` runs.
+  It passes bun's exit code through **only** if bun wrote its
+  `Ran <n> tests across <n> files.` summary to stderr — a line a dead process
+  cannot have written. So a failing suite is still a kill and a clean suite is
+  still a survivor; the script adds no verdict of its own and can invent
+  neither. A run without the summary is inconclusive, not a pass: it exits 97
+  and appends the mutant id to `reports/mutation/incomplete-runs.log`. Stryker's
+  command runner reaches `MutantRunStatus.Error` only from a spawn failure, so
+  a child cannot report "inconclusive" and that exit is scored as a kill — the
+  ledger is how a sweep declares which of its kills were not earned.
+- **`tests/test-setup.ts` makes `process.exit` throw** for the whole suite. That
+  removes the mechanism, so the branch above is an alarm rather than a routine
+  path: the same mutant now fails `isLoopbackAddress > rejects everything else`
+  and `createAuthMiddleware loopback exemption > missing peer IP is treated as
+  non-loopback`, and is killed by assertions instead of by a crash. It also
+  closes the same hole in the plain `bun test` gate, where a truncated run at
+  exit 0 likewise looked like a pass.
+
+Unmutated, `/_internal/shutdown` is **not** reachable from an in-process test:
+`defaultGetRequestIp` reads `Request.ip`, which `app.request` never sets, so the
+handler 404s (and auth 401s ahead of it) — and the clean suite now passes with
+the `process.exit` guard armed, which is the direct evidence.
 
 
 ---
