@@ -2225,149 +2225,8 @@ var init_dist2 = __esm(() => {
 var HELPER_SUBCOMMAND = "api", LEGACY_HELPER_FLAG = "--apiKeyHelper";
 
 // package.json
-var package_default;
-var init_package = __esm(() => {
-  package_default = {
-    $schema: "https://json.schemastore.org/package.json",
-    name: "@stuffbucket/maximal-core",
-    version: "0.4.3",
-    description: "Headless core of maximal: a local proxy that exposes GitHub Copilot as OpenAI- and Anthropic-compatible HTTP endpoints. No UI.",
-    keywords: [
-      "proxy",
-      "github-copilot",
-      "openai-compatible",
-      "anthropic-compatible"
-    ],
-    homepage: "https://github.com/stuffbucket/maximal-core",
-    bugs: "https://github.com/stuffbucket/maximal-core/issues",
-    repository: {
-      type: "git",
-      url: "https://github.com/stuffbucket/maximal-core"
-    },
-    license: "MIT",
-    author: "stuffbucket",
-    type: "module",
-    exports: {
-      "./client": {
-        types: "./dist/lib/client.d.ts",
-        import: "./dist/lib/client.js"
-      },
-      "./contract": {
-        types: "./dist/lib/contract.d.ts",
-        import: "./dist/lib/contract.js"
-      },
-      "./control-contract": {
-        types: "./dist/lib/control-contract.d.ts",
-        import: "./dist/lib/control-contract.js"
-      },
-      "./package.json": "./package.json",
-      "./settings-types": {
-        types: "./dist/lib/settings-types.d.ts",
-        import: "./dist/lib/settings-types.js"
-      },
-      "./supervisor": {
-        types: "./dist/lib/supervisor.d.ts",
-        import: "./dist/lib/supervisor.js"
-      }
-    },
-    bin: {
-      maximal: "./dist/main.js"
-    },
-    files: [
-      "dist",
-      "src",
-      "tsconfig.json"
-    ],
-    scripts: {
-      "bindings:check": "bun scripts/ops/check-bindings.ts",
-      build: "bun build src/main.ts --target=bun --outdir dist",
-      "build:binary": "bun scripts/dev/build-binary.ts",
-      "build:lib": "tsup",
-      casts: "bun run scripts/find-casts.ts",
-      "casts:check": "bun run scripts/find-casts.ts --check",
-      "check:deep": "bun run check:fast && bun run casts:check && bun test && bun run knip && bun run deps:check && bun run build && bun run typecheck:downstream && bun run bindings:check",
-      "check:fast": "bun run lint:fast && bun run typecheck && bun run lint:all",
-      "check:ops": "bun run typecheck:ops && bun run test:ops",
-      "deps:check": "bun scripts/check-deps.ts",
-      dev: "bun run --watch ./src/main.ts",
-      "dev:stale-check": "bun scripts/dev/verify-build.ts",
-      e2e: "bun run e2e:seam && bun run e2e:feed && bun run e2e:lifecycle && bun run e2e:replace",
-      "e2e:binary": "bun scripts/dev/e2e-binary.ts",
-      "e2e:feed": "bun scripts/dev/e2e-feed.ts",
-      "e2e:lifecycle": "bun scripts/dev/e2e-lifecycle.ts",
-      "e2e:replace": "bun scripts/dev/e2e-replace.ts",
-      "e2e:seam": "bun scripts/dev/e2e-seam.ts",
-      knip: "knip-bun",
-      lint: "eslint --cache",
-      "lint:all": "eslint --cache .",
-      "lint:fast": "oxlint",
-      "measure:baseline": "bun scripts/dev/measure-baseline.ts",
-      mutate: "stryker run",
-      prepack: "bun scripts/ops/prepack.ts",
-      prepare: "bun scripts/ops/prepare.ts",
-      "release:check": "bun scripts/ops/release-gates.ts",
-      "release:manual": "bun scripts/ops/release.ts",
-      "release:notes": "bun scripts/ops/release-notes.ts",
-      "release:preflight": "bun scripts/ops/prepack.ts --check",
-      "rules:check": "bun scripts/ops/check-rulesets.ts",
-      sbom: "bun scripts/sbom.ts",
-      "scan:secrets": "trufflehog filesystem . --no-verification --fail --results=verified,unknown,unverified --no-update --exclude-paths .trufflehog-exclude",
-      start: "NODE_ENV=production bun run ./src/main.ts",
-      "test:ops": "cd scripts/ops && bun test",
-      typecheck: "tsc",
-      "typecheck:downstream": "bun downstream/check.ts",
-      "typecheck:ops": "tsc -p scripts/ops/tsconfig.json",
-      "verify:artifact": "bun scripts/dev/verify-artifact.ts",
-      "watch:drift": "bun scripts/ops/watch-external-drift.ts"
-    },
-    "simple-git-hooks": {
-      "pre-commit": "bunx lint-staged"
-    },
-    "lint-staged": {
-      "!dist/**": [
-        "bun run lint --fix",
-        "bash scripts/secret-scan.sh"
-      ]
-    },
-    dependencies: {
-      "@hono/zod-openapi": "^1.5.0",
-      citty: "^0.1.6",
-      clipboardy: "^5.0.0",
-      consola: "^3.4.2",
-      "fetch-event-stream": "^0.1.5",
-      "gpt-tokenizer": "^3.0.1",
-      hono: "^4.12.0",
-      "proxy-from-env": "^1.1.0",
-      srvx: "^0.11.15",
-      "tiny-invariant": "^1.3.3",
-      turndown: "^7.2.4",
-      undici: "^7.16.0",
-      winreg: "^1.2.5",
-      zod: "^4.1.11"
-    },
-    devDependencies: {
-      "@echristian/eslint-config": "^0.0.54",
-      "@stryker-mutator/core": "^9.6.1",
-      "@types/bun": "^1.2.23",
-      "@types/proxy-from-env": "^1.0.4",
-      "@types/turndown": "^5.0.6",
-      "@types/winreg": "^1.2.36",
-      bumpp: "^10.2.3",
-      "dependency-cruiser": "^17.4.0",
-      eslint: "^9.37.0",
-      knip: "^5.64.1",
-      "lint-staged": "^16.2.3",
-      oxlint: "^1.63.0",
-      "prettier-plugin-packagejson": "^2.5.19",
-      "simple-git-hooks": "^2.13.1",
-      tsup: "^8.5.1",
-      typescript: "^5.9.3"
-    },
-    engines: {
-      node: ">=22.13.0"
-    }
-  };
-});
+var version = "0.4.3";
+var init_package = () => {};
 
 // src/lib/update/build-info.ts
 var exports_build_info = {};
@@ -2380,7 +2239,7 @@ __export(exports_build_info, {
 var BUILD_VERSION, BUILD_GIT_SHA, BUILD_GIT_BRANCH, BUILD_CHANNEL;
 var init_build_info = __esm(() => {
   init_package();
-  BUILD_VERSION = typeof __MAXIMAL_VERSION__ === "string" && __MAXIMAL_VERSION__.length > 0 ? __MAXIMAL_VERSION__ : package_default.version;
+  BUILD_VERSION = typeof __MAXIMAL_VERSION__ === "string" && __MAXIMAL_VERSION__.length > 0 ? __MAXIMAL_VERSION__ : version;
   BUILD_GIT_SHA = typeof __MAXIMAL_GIT_SHA__ === "string" && __MAXIMAL_GIT_SHA__.length > 0 ? __MAXIMAL_GIT_SHA__ : undefined;
   BUILD_GIT_BRANCH = typeof __MAXIMAL_GIT_BRANCH__ === "string" && __MAXIMAL_GIT_BRANCH__.length > 0 ? __MAXIMAL_GIT_BRANCH__ : undefined;
   BUILD_CHANNEL = typeof __MAXIMAL_CHANNEL__ === "string" && __MAXIMAL_CHANNEL__.length > 0 ? __MAXIMAL_CHANNEL__ : "stable";
@@ -3476,10 +3335,10 @@ function fixedBase64(bodyLength, padding) {
 function fixedBase64url(length) {
   return new RegExp(`^[A-Za-z0-9_-]{${length}}$`);
 }
-var cuid, cuid2, ulid, xid, ksuid, nanoid, duration, extendedDuration, guid, uuid = (version) => {
-  if (!version)
+var cuid, cuid2, ulid, xid, ksuid, nanoid, duration, extendedDuration, guid, uuid = (version2) => {
+  if (!version2)
     return /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/;
-  return new RegExp(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`);
+  return new RegExp(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version2}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`);
 }, uuid4, uuid6, uuid7, email, html5Email, rfc5322Email, unicodeEmail, idnEmail, browserEmail, _emoji = `^(\\p{Extended_Pictographic}|\\p{Emoji_Component})+$`, ipv4, ipv6, mac = (delimiter) => {
   const escapedDelim = escapeRegex(delimiter ?? ":");
   return new RegExp(`^(?:[0-9A-F]{2}${escapedDelim}){5}[0-9A-F]{2}$|^(?:[0-9a-f]{2}${escapedDelim}){5}[0-9a-f]{2}$`);
@@ -4136,9 +3995,9 @@ class Doc {
 }
 
 // node_modules/zod/v4/core/versions.js
-var version;
+var version2;
 var init_versions = __esm(() => {
-  version = {
+  version2 = {
     major: 4,
     minor: 4,
     patch: 3
@@ -4560,7 +4419,7 @@ var init_schemas = __esm(() => {
     inst ?? (inst = {});
     inst._zod.def = def;
     inst._zod.bag = inst._zod.bag || {};
-    inst._zod.version = version;
+    inst._zod.version = version2;
     const checks = [...inst._zod.def.checks ?? []];
     if (inst._zod.traits.has("$ZodCheck")) {
       checks.unshift(inst);
@@ -14311,7 +14170,7 @@ var init_json_schema = () => {};
 // node_modules/zod/v4/core/index.js
 var exports_core2 = {};
 __export(exports_core2, {
-  version: () => version,
+  version: () => version2,
   util: () => exports_util,
   treeifyError: () => treeifyError,
   toJSONSchema: () => toJSONSchema,
@@ -16631,10 +16490,10 @@ function fromJSONSchema(schema, params) {
   } catch {
     throw new Error("fromJSONSchema input is not valid JSON (possibly cyclic); use $defs/$ref for recursive schemas");
   }
-  const version2 = detectVersion(normalized, params?.defaultTarget);
+  const version3 = detectVersion(normalized, params?.defaultTarget);
   const defs = normalized.$defs || normalized.definitions || {};
   const ctx = {
-    version: version2,
+    version: version3,
     defs,
     refs: new Map,
     processing: new Set,
@@ -20433,29 +20292,29 @@ var require_semver = __commonJS((exports, module) => {
   var { compareIdentifiers } = require_identifiers();
 
   class SemVer {
-    constructor(version2, options) {
+    constructor(version3, options) {
       options = parseOptions(options);
-      if (version2 instanceof SemVer) {
-        if (version2.loose === !!options.loose && version2.includePrerelease === !!options.includePrerelease) {
-          return version2;
+      if (version3 instanceof SemVer) {
+        if (version3.loose === !!options.loose && version3.includePrerelease === !!options.includePrerelease) {
+          return version3;
         } else {
-          version2 = version2.version;
+          version3 = version3.version;
         }
-      } else if (typeof version2 !== "string") {
-        throw new TypeError(`Invalid version. Must be a string. Got type "${typeof version2}".`);
+      } else if (typeof version3 !== "string") {
+        throw new TypeError(`Invalid version. Must be a string. Got type "${typeof version3}".`);
       }
-      if (version2.length > MAX_LENGTH) {
+      if (version3.length > MAX_LENGTH) {
         throw new TypeError(`version is longer than ${MAX_LENGTH} characters`);
       }
-      debug("SemVer", version2, options);
+      debug("SemVer", version3, options);
       this.options = options;
       this.loose = !!options.loose;
       this.includePrerelease = !!options.includePrerelease;
-      const m2 = version2.trim().match(options.loose ? re[t2.LOOSE] : re[t2.FULL]);
+      const m2 = version3.trim().match(options.loose ? re[t2.LOOSE] : re[t2.FULL]);
       if (!m2) {
-        throw new TypeError(`Invalid Version: ${version2}`);
+        throw new TypeError(`Invalid Version: ${version3}`);
       }
-      this.raw = version2;
+      this.raw = version3;
       this.major = +m2[1];
       this.minor = +m2[2];
       this.patch = +m2[3];
@@ -20696,12 +20555,12 @@ var require_semver = __commonJS((exports, module) => {
 // node_modules/semver/functions/parse.js
 var require_parse2 = __commonJS((exports, module) => {
   var SemVer = require_semver();
-  var parse5 = (version2, options, throwErrors = false) => {
-    if (version2 instanceof SemVer) {
-      return version2;
+  var parse5 = (version3, options, throwErrors = false) => {
+    if (version3 instanceof SemVer) {
+      return version3;
     }
     try {
-      return new SemVer(version2, options);
+      return new SemVer(version3, options);
     } catch (er) {
       if (!throwErrors) {
         return null;
@@ -20715,8 +20574,8 @@ var require_parse2 = __commonJS((exports, module) => {
 // node_modules/semver/functions/valid.js
 var require_valid = __commonJS((exports, module) => {
   var parse5 = require_parse2();
-  var valid = (version2, options) => {
-    const v2 = parse5(version2, options);
+  var valid = (version3, options) => {
+    const v2 = parse5(version3, options);
     return v2 ? v2.version : null;
   };
   module.exports = valid;
@@ -20725,8 +20584,8 @@ var require_valid = __commonJS((exports, module) => {
 // node_modules/semver/functions/clean.js
 var require_clean = __commonJS((exports, module) => {
   var parse5 = require_parse2();
-  var clean = (version2, options) => {
-    const s2 = parse5(version2.trim().replace(/^[=v]+/, ""), options);
+  var clean = (version3, options) => {
+    const s2 = parse5(version3.trim().replace(/^[=v]+/, ""), options);
     return s2 ? s2.version : null;
   };
   module.exports = clean;
@@ -20735,14 +20594,14 @@ var require_clean = __commonJS((exports, module) => {
 // node_modules/semver/functions/inc.js
 var require_inc = __commonJS((exports, module) => {
   var SemVer = require_semver();
-  var inc = (version2, release, options, identifier, identifierBase) => {
+  var inc = (version3, release, options, identifier, identifierBase) => {
     if (typeof options === "string") {
       identifierBase = identifier;
       identifier = options;
       options = undefined;
     }
     try {
-      return new SemVer(version2 instanceof SemVer ? version2.version : version2, options).inc(release, identifier, identifierBase).version;
+      return new SemVer(version3 instanceof SemVer ? version3.version : version3, options).inc(release, identifier, identifierBase).version;
     } catch (er) {
       return null;
     }
@@ -20753,9 +20612,9 @@ var require_inc = __commonJS((exports, module) => {
 // node_modules/semver/functions/diff.js
 var require_diff = __commonJS((exports, module) => {
   var parse5 = require_parse2();
-  var diff = (version1, version2) => {
+  var diff = (version1, version22) => {
     const v1 = parse5(version1, null, true);
-    const v2 = parse5(version2, null, true);
+    const v2 = parse5(version22, null, true);
     const comparison = v1.compare(v2);
     if (comparison === 0) {
       return null;
@@ -20815,8 +20674,8 @@ var require_patch = __commonJS((exports, module) => {
 // node_modules/semver/functions/prerelease.js
 var require_prerelease = __commonJS((exports, module) => {
   var parse5 = require_parse2();
-  var prerelease = (version2, options) => {
-    const parsed = parse5(version2, options);
+  var prerelease = (version3, options) => {
+    const parsed = parse5(version3, options);
     return parsed && parsed.prerelease.length ? parsed.prerelease : null;
   };
   module.exports = prerelease;
@@ -20962,24 +20821,24 @@ var require_coerce = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var parse5 = require_parse2();
   var { safeRe: re, t: t2 } = require_re();
-  var coerce = (version2, options) => {
-    if (version2 instanceof SemVer) {
-      return version2;
+  var coerce = (version3, options) => {
+    if (version3 instanceof SemVer) {
+      return version3;
     }
-    if (typeof version2 === "number") {
-      version2 = String(version2);
+    if (typeof version3 === "number") {
+      version3 = String(version3);
     }
-    if (typeof version2 !== "string") {
+    if (typeof version3 !== "string") {
       return null;
     }
     options = options || {};
     let match = null;
     if (!options.rtl) {
-      match = version2.match(options.includePrerelease ? re[t2.COERCEFULL] : re[t2.COERCE]);
+      match = version3.match(options.includePrerelease ? re[t2.COERCEFULL] : re[t2.COERCE]);
     } else {
       const coerceRtlRegex = options.includePrerelease ? re[t2.COERCERTLFULL] : re[t2.COERCERTL];
       let next;
-      while ((next = coerceRtlRegex.exec(version2)) && (!match || match.index + match[0].length !== version2.length)) {
+      while ((next = coerceRtlRegex.exec(version3)) && (!match || match.index + match[0].length !== version3.length)) {
         if (!match || next.index + next[0].length !== match.index + match[0].length) {
           match = next;
         }
@@ -21157,19 +21016,19 @@ var require_range = __commonJS((exports, module) => {
         });
       });
     }
-    test(version2) {
-      if (!version2) {
+    test(version3) {
+      if (!version3) {
         return false;
       }
-      if (typeof version2 === "string") {
+      if (typeof version3 === "string") {
         try {
-          version2 = new SemVer(version2, this.options);
+          version3 = new SemVer(version3, this.options);
         } catch (er) {
           return false;
         }
       }
       for (let i2 = 0;i2 < this.set.length; i2++) {
-        if (testSet(this.set[i2], version2, this.options)) {
+        if (testSet(this.set[i2], version3, this.options)) {
           return true;
         }
       }
@@ -21384,13 +21243,13 @@ var require_range = __commonJS((exports, module) => {
     }
     return `${from} ${to}`.trim();
   };
-  var testSet = (set2, version2, options) => {
+  var testSet = (set2, version3, options) => {
     for (let i2 = 0;i2 < set2.length; i2++) {
-      if (!set2[i2].test(version2)) {
+      if (!set2[i2].test(version3)) {
         return false;
       }
     }
-    if (version2.prerelease.length && !options.includePrerelease) {
+    if (version3.prerelease.length && !options.includePrerelease) {
       for (let i2 = 0;i2 < set2.length; i2++) {
         debug(set2[i2].semver);
         if (set2[i2].semver === Comparator.ANY) {
@@ -21398,7 +21257,7 @@ var require_range = __commonJS((exports, module) => {
         }
         if (set2[i2].semver.prerelease.length > 0) {
           const allowed = set2[i2].semver;
-          if (allowed.major === version2.major && allowed.minor === version2.minor && allowed.patch === version2.patch) {
+          if (allowed.major === version3.major && allowed.minor === version3.minor && allowed.patch === version3.patch) {
             return true;
           }
         }
@@ -21457,19 +21316,19 @@ var require_comparator = __commonJS((exports, module) => {
     toString() {
       return this.value;
     }
-    test(version2) {
-      debug("Comparator.test", version2, this.options.loose);
-      if (this.semver === ANY || version2 === ANY) {
+    test(version3) {
+      debug("Comparator.test", version3, this.options.loose);
+      if (this.semver === ANY || version3 === ANY) {
         return true;
       }
-      if (typeof version2 === "string") {
+      if (typeof version3 === "string") {
         try {
-          version2 = new SemVer(version2, this.options);
+          version3 = new SemVer(version3, this.options);
         } catch (er) {
           return false;
         }
       }
-      return cmp(version2, this.operator, this.semver, this.options);
+      return cmp(version3, this.operator, this.semver, this.options);
     }
     intersects(comp, options) {
       if (!(comp instanceof Comparator)) {
@@ -21523,13 +21382,13 @@ var require_comparator = __commonJS((exports, module) => {
 // node_modules/semver/functions/satisfies.js
 var require_satisfies = __commonJS((exports, module) => {
   var Range = require_range();
-  var satisfies = (version2, range, options) => {
+  var satisfies = (version3, range, options) => {
     try {
       range = new Range(range, options);
     } catch (er) {
       return false;
     }
-    return range.test(version2);
+    return range.test(version3);
   };
   module.exports = satisfies;
 });
@@ -21671,8 +21530,8 @@ var require_outside = __commonJS((exports, module) => {
   var lt = require_lt();
   var lte = require_lte();
   var gte = require_gte();
-  var outside = (version2, range, hilo, options) => {
-    version2 = new SemVer(version2, options);
+  var outside = (version3, range, hilo, options) => {
+    version3 = new SemVer(version3, options);
     range = new Range(range, options);
     let gtfn, ltefn, ltfn, comp, ecomp;
     switch (hilo) {
@@ -21693,7 +21552,7 @@ var require_outside = __commonJS((exports, module) => {
       default:
         throw new TypeError('Must provide a hilo val of "<" or ">"');
     }
-    if (satisfies(version2, range, options)) {
+    if (satisfies(version3, range, options)) {
       return false;
     }
     for (let i2 = 0;i2 < range.set.length; ++i2) {
@@ -21715,9 +21574,9 @@ var require_outside = __commonJS((exports, module) => {
       if (high.operator === comp || high.operator === ecomp) {
         return false;
       }
-      if ((!low.operator || low.operator === comp) && ltefn(version2, low.semver)) {
+      if ((!low.operator || low.operator === comp) && ltefn(version3, low.semver)) {
         return false;
-      } else if (low.operator === ecomp && ltfn(version2, low.semver)) {
+      } else if (low.operator === ecomp && ltfn(version3, low.semver)) {
         return false;
       }
     }
@@ -21729,14 +21588,14 @@ var require_outside = __commonJS((exports, module) => {
 // node_modules/semver/ranges/gtr.js
 var require_gtr = __commonJS((exports, module) => {
   var outside = require_outside();
-  var gtr = (version2, range, options) => outside(version2, range, ">", options);
+  var gtr = (version3, range, options) => outside(version3, range, ">", options);
   module.exports = gtr;
 });
 
 // node_modules/semver/ranges/ltr.js
 var require_ltr = __commonJS((exports, module) => {
   var outside = require_outside();
-  var ltr = (version2, range, options) => outside(version2, range, "<", options);
+  var ltr = (version3, range, options) => outside(version3, range, "<", options);
   module.exports = ltr;
 });
 
@@ -21760,12 +21619,12 @@ var require_simplify = __commonJS((exports, module) => {
     let first = null;
     let prev = null;
     const v2 = versions2.sort((a2, b2) => compare(a2, b2, options));
-    for (const version2 of v2) {
-      const included = satisfies(version2, range, options);
+    for (const version3 of v2) {
+      const included = satisfies(version3, range, options);
       if (included) {
-        prev = version2;
+        prev = version3;
         if (!first) {
-          first = version2;
+          first = version3;
         }
       } else {
         if (prev) {
@@ -22057,38 +21916,38 @@ function macOSVersion() {
   if (!isMacOS) {
     return;
   }
-  if (!version2) {
+  if (!version3) {
     const file2 = fs6.readFileSync("/System/Library/CoreServices/SystemVersion.plist", "utf8");
     const matches = parseVersion(file2);
     if (!matches) {
       return;
     }
-    version2 = clean(matches);
+    version3 = clean(matches);
   }
-  return version2;
+  return version3;
 }
-function isMacOSVersionGreaterThanOrEqualTo(version3) {
+function isMacOSVersionGreaterThanOrEqualTo(version4) {
   if (!isMacOS) {
     return false;
   }
-  version3 = version3.replace("10.16", "11");
-  return import_semver.default.gte(macOSVersion(), clean(version3));
+  version4 = version4.replace("10.16", "11");
+  return import_semver.default.gte(macOSVersion(), clean(version4));
 }
-function assertMacOSVersionGreaterThanOrEqualTo(version3) {
-  version3 = version3.replace("10.16", "11");
-  if (!isMacOSVersionGreaterThanOrEqualTo(version3)) {
-    throw new Error(`Requires macOS ${version3} or later`);
+function assertMacOSVersionGreaterThanOrEqualTo(version4) {
+  version4 = version4.replace("10.16", "11");
+  if (!isMacOSVersionGreaterThanOrEqualTo(version4)) {
+    throw new Error(`Requires macOS ${version4} or later`);
   }
 }
-var import_semver, isMacOS, version2, clean = (version3) => {
-  const { length } = version3.split(".");
+var import_semver, isMacOS, version3, clean = (version4) => {
+  const { length } = version4.split(".");
   if (length === 1) {
-    return `${version3}.0.0`;
+    return `${version4}.0.0`;
   }
   if (length === 2) {
-    return `${version3}.0`;
+    return `${version4}.0`;
   }
-  return version3;
+  return version4;
 }, parseVersion = (plist) => {
   const matches = /<key>ProductVersion<\/key>\s*<string>([\d.]+)<\/string>/.exec(plist);
   if (!matches) {
@@ -30723,8 +30582,8 @@ async function resolveOpencodeVersion() {
     const npmRootPath = await getGlobalNpmRoot();
     const opencodePackagePath = path11.join(npmRootPath, "opencode-ai", "package.json");
     const packageJson = await readFile(opencodePackagePath, "utf8");
-    const { version: version3 } = OpencodePackageSchema.parse(JSON.parse(packageJson));
-    opencodeVersionCache = version3;
+    const { version: version4 } = OpencodePackageSchema.parse(JSON.parse(packageJson));
+    opencodeVersionCache = version4;
   } catch (error51) {
     consola.warn(`Failed to resolve opencode version`, error51);
   }
@@ -30835,9 +30694,9 @@ var isOpencodeOauthApp = () => {
   "content-type": "application/json",
   accept: "application/json"
 }), getOpencodeVersion = () => {
-  const version3 = getCachedOpencodeVersion();
-  if (version3) {
-    return "opencode/" + version3;
+  const version4 = getCachedOpencodeVersion();
+  if (version4) {
+    return "opencode/" + version4;
   }
   return OPENCODE_VERSION;
 }, OPENCODE_SEMVER = "1.17.20", OPENCODE_VERSION, OPENCODE_LLM_USER_AGENT, COPILOT_VERSION = "0.46.0", EDITOR_PLUGIN_VERSION, USER_AGENT, CLAUDE_AGENT_USER_AGENT = "vscode_claude_code/2.1.209 (external, sdk-ts, agent-sdk/0.2.112)", API_VERSION = "2025-10-01", copilotBaseUrl = (state2) => {
@@ -34029,14 +33888,14 @@ var init_replace_running = __esm(() => {
 // src/lib/platform/sqlite.ts
 import fs16 from "fs/promises";
 import path17 from "path";
-function parseNodeVersion(version3) {
-  return version3.split(".", 3).map((part) => {
+function parseNodeVersion(version4) {
+  return version4.split(".", 3).map((part) => {
     const parsed = Number.parseInt(part, 10);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
   });
 }
-function isNodeSqliteSupportedVersion(version3) {
-  const current2 = parseNodeVersion(version3);
+function isNodeSqliteSupportedVersion(version4) {
+  const current2 = parseNodeVersion(version4);
   const minimum = parseNodeVersion(MINIMUM_NODE_SQLITE_VERSION);
   for (const [index, minimumPart] of minimum.entries()) {
     const currentPart = current2[index] ?? 0;
@@ -34115,8 +33974,8 @@ function getUserVersion(db) {
   const row = db.prepare("PRAGMA user_version").get();
   return typeof row?.user_version === "number" ? row.user_version : 0;
 }
-function setUserVersion(db, version3) {
-  db.exec(`PRAGMA user_version = ${Math.floor(version3)}`);
+function setUserVersion(db, version4) {
+  db.exec(`PRAGMA user_version = ${Math.floor(version4)}`);
 }
 function runMigrations(db, migrations) {
   let current2 = getUserVersion(db);
@@ -37806,11 +37665,11 @@ var init_stream2 = () => {};
 
 // node_modules/hono/dist/helper/streaming/utils.js
 var isOldBunVersion = () => {
-  const version3 = typeof Bun !== "undefined" ? Bun.version : undefined;
-  if (version3 === undefined) {
+  const version4 = typeof Bun !== "undefined" ? Bun.version : undefined;
+  if (version4 === undefined) {
     return false;
   }
-  const result = version3.startsWith("1.1") || version3.startsWith("1.0") || version3.startsWith("0.");
+  const result = version4.startsWith("1.1") || version4.startsWith("1.0") || version4.startsWith("0.");
   isOldBunVersion = () => result;
   return result;
 };
@@ -39434,9 +39293,9 @@ function isNewerVersion(a3, b2) {
   }
   return false;
 }
-function normalizeCurrent(version3) {
-  const devAt = version3.indexOf("-dev+");
-  return devAt === -1 ? version3 : version3.slice(0, devAt);
+function normalizeCurrent(version4) {
+  const devAt = version4.indexOf("-dev+");
+  return devAt === -1 ? version4 : version4.slice(0, devAt);
 }
 function parseManifestVersion(body, channel = UPDATE_CHANNEL) {
   let parsed;
@@ -39446,10 +39305,10 @@ function parseManifestVersion(body, channel = UPDATE_CHANNEL) {
     return null;
   }
   const entry = parsed?.channels?.[channel];
-  const version3 = entry?.version;
-  if (typeof version3 !== "string")
+  const version4 = entry?.version;
+  if (typeof version4 !== "string")
     return null;
-  const match2 = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$/u.exec(version3.trim());
+  const match2 = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$/u.exec(version4.trim());
   return match2 ? match2[1] : null;
 }
 async function getUpdateStatus(force = false) {
@@ -55215,9 +55074,9 @@ var require_DOMImplementation = __commonJS((exports, module) => {
     xhtml: { "": true, "1.0": true, "2.0": true }
   };
   DOMImplementation.prototype = {
-    hasFeature: function hasFeature(feature, version3) {
+    hasFeature: function hasFeature(feature, version4) {
       var f3 = supportedFeatures[(feature || "").toLowerCase()];
-      return f3 && f3[version3 || ""] || false;
+      return f3 && f3[version4 || ""] || false;
     },
     createDocumentType: function createDocumentType(qualifiedName, publicId, systemId) {
       if (!xml.isValidQName(qualifiedName))
@@ -56776,7 +56635,7 @@ function collectSecretStatuses(config2, env3 = process.env) {
   }, env3));
 }
 async function getDebugInfo() {
-  const [version3, tokenExists] = await Promise.all([
+  const [version4, tokenExists] = await Promise.all([
     getPackageVersion(),
     checkTokenExists()
   ]);
@@ -56787,7 +56646,7 @@ async function getDebugInfo() {
     config2 = {};
   }
   return {
-    version: version3,
+    version: version4,
     git: getGitVersion(),
     runtime: getRuntimeInfo(),
     paths: {
@@ -57127,19 +56986,19 @@ async function readGhAccounts(run2) {
   return accounts;
 }
 async function detectGhCli(run2 = defaultRunner) {
-  const version3 = await run2(["--version"]).catch(() => ({
+  const version4 = await run2(["--version"]).catch(() => ({
     stdout: "",
     stderr: "",
     code: 1,
     notFound: true
   }));
-  if (version3.notFound) {
+  if (version4.notFound) {
     return { installed: false, version: null, accounts: [] };
   }
   const accounts = await readGhAccounts(run2).catch(() => []);
   return {
     installed: true,
-    version: parseVersion2(version3.stdout),
+    version: parseVersion2(version4.stdout),
     accounts
   };
 }
