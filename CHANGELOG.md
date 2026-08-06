@@ -5,7 +5,8 @@ the tag being cut, and inserted at the anchor below by the release itself:
 
 ```sh
 bun run release:notes v0.2.1     # preview the block
-bun run release:manual v0.2.1    # generate it, insert it, and cut the release
+bun run release:prepare v0.2.1   # generate it, insert it, and open the release PR
+bun run release:tag v0.2.1       # once that PR has merged
 ```
 
 Whatever is assigned to the milestone is what ships, so the contents of a
