@@ -17,6 +17,18 @@
  *   2. Nothing asserted a clean working tree, so an unrelated in-flight edit
  *      could be swept into the release commit and shipped under the tag.
  *
+ * A third thing was missing, and it is the same thing a third time: the
+ * CHANGELOG entry. The runbook used to say "generate the block with
+ * `release:notes vX.Y.Z` and paste it into `CHANGELOG.md`" and then, in the very
+ * next step, "run `release:manual`" — whose FIRST action is the clean-tree guard
+ * above, which refuses any tracked modification, the freshly pasted changelog
+ * included. Step 3 guaranteed step 4 would refuse. v0.4.1 was cut around it by
+ * committing the changelog separately first, which is why its history carries
+ * two commits where every release before it carries one. So this file writes the
+ * entry itself: the tag is an argument to it, `release-notes.ts` is a sibling,
+ * and `CHANGELOG.md` carries an insertion anchor put there for exactly this.
+ * The guard keeps its zero exemptions — see WHERE THE CHANGELOG IS WRITTEN.
+ *
  * WHY A WRAPPER RATHER THAN JUST `bumpp -x`. `bumpp`'s execute hook is the right
  * PLACE for the rebuild — it runs after `updateFiles` and before `gitCommit`
  * (`versionBump()` in `bumpp/dist/shared/*.mjs`), which is the only window where
@@ -80,6 +92,66 @@
  *     than after. (Ignored files are not listed by `git status --porcelain` at
  *     all, so nothing under an untouched `dist/` shows up here.)
  *
+ * WHY THE TAG IS AN ARGUMENT NOW (`release:manual vX.Y.Z`). The changelog block
+ * is generated from the GitHub milestone whose title IS the tag, so the notes
+ * cannot be fetched — and a bad milestone cannot be refused — until the version
+ * is known. Letting `bumpp` prompt for it would push both after the bump. The
+ * milestone model already decides the tag in advance (`release:check milestone
+ * vX.Y.Z`, `release:notes vX.Y.Z`), so naming it once more here takes nothing
+ * away, and the version reaches `bumpp` as `--release X.Y.Z`, which makes gate 3
+ * — "the tag matches `package.json`" — true by construction rather than by a
+ * preflight anyone can skip. That is the failure `v0.1.1` shipped.
+ *
+ * WHERE THE CHANGELOG IS WRITTEN, AND WHY IT IS NOT AN EXEMPTION. The block is
+ * FETCHED, VALIDATED AND RENDERED before `bumpp` — so a milestone that
+ * `release:notes` would refuse to emit for (missing, empty, an unparseable PR
+ * title, an unmerged PR) refuses the whole release at exit 1, with the tree
+ * still exactly as the guard found it. It is WRITTEN inside `bumpp`'s execute
+ * hook, beside the rebuild, for the same reason the rebuild is there: that is
+ * the only window where the commit has not happened yet, and `git commit --all`
+ * is about to sweep the working tree into it. The hook therefore produces
+ * everything the release commit carries beyond the version bump itself.
+ *
+ * Two consequences worth stating, because both are the point:
+ *
+ *   - The guard is untouched and still has NO exemptions. `CHANGELOG.md` is
+ *     dirty for the same reason `dist/` is: this script dirtied it, after the
+ *     guard, deliberately. The guard only ever asked "did the tree match HEAD
+ *     when we started".
+ *   - Nothing is written on any refusal path, and nothing is written before the
+ *     `bumpp` confirmation prompt. Declining that prompt (`process.exit(1)` in
+ *     `bumpp`'s CLI) or hitting Ctrl-C leaves the tree clean, so the next
+ *     attempt is not blocked by the leftovers of the last one — which is the
+ *     failure mode of pasting the block by hand, mechanised.
+ *
+ * The rendered block reaches the hook through the environment
+ * (`MAXIMAL_RELEASE_CHANGELOG_BLOCK`), because the hook is a separate process
+ * `bumpp` spawns with the ambient environment. A temp file would work too and
+ * costs an untracked artefact in the one flow that reports untracked files. With
+ * the variable unset — a by-hand `release.ts --rebuild` — the hook rebuilds and
+ * stages `dist/` and touches no markdown, exactly as it did before.
+ *
+ * THAT HANDOVER DEPENDS ON `realRunner` PASSING `env` EXPLICITLY, and it did not
+ * until this change. Bun's `spawnSync` defaults the child's environment to the
+ * SNAPSHOT the process started with, not to the current `process.env`, so a
+ * variable set at runtime is dropped without a word. Measured, Bun 1.3.11:
+ *
+ *     process.env.PROBE = "set-by-parent"
+ *     spawnSync(bun, ["-e", …])                        → PROBE undefined
+ *     spawnSync(bun, ["-e", …], { env: process.env })  → PROBE set-by-parent
+ *
+ * Caught in a scratch clone, where the first end-to-end release came out green
+ * with no changelog entry in the commit. `prepack.ts`'s `realRunner` now names
+ * `env`, and `prepack.test.ts` pins it — it is the one test in that suite that
+ * spawns anything, because the failure it prevents is silent and green.
+ *
+ * AN ENTRY THAT IS ALREADY THERE IS LEFT ALONE. If `CHANGELOG.md` already has a
+ * `## X.Y.Z` heading for the version being cut — a re-run, or a human who pasted
+ * it — the changelog step is skipped in full, including the `gh` reads. It is
+ * reported, not refused: the entry the release needs exists, and rewriting
+ * somebody's hand-edited block (or appending a second one) is the only outcome
+ * worse than leaving it.
+ *
  * THE REBUILD USES `process.execPath`, NEVER A BARE `bun` — the trap
  * `scripts/ops/prepack.ts` documents, re-measured for the `bun run` path this
  * script is launched through:
@@ -110,27 +182,43 @@
  * silently skips a NEW file (a renamed content-hash chunk).
  *
  * Usage:
- *   bun run release:manual                    # guard, pin, bump+rebuild, publish
- *   bun run release:manual --no-publish       # stop after the tag is pushed
- *   bun run release:manual -- --release patch -y   # anything else goes to bumpp
- *   bun scripts/ops/release.ts --rebuild      # just rebuild + stage dist/
+ *   bun run release:manual vX.Y.Z                  # guard, pin, notes, bump+rebuild, publish
+ *   bun run release:manual vX.Y.Z --no-publish     # stop after the tag is pushed
+ *   bun run release:manual vX.Y.Z -y               # anything else goes to bumpp
+ *   bun scripts/ops/release.ts --rebuild           # just rebuild + stage dist/
  *
- * Exit codes: 0 ok · 1 refused (dirty tree, or the running Bun is not the pin) ·
- * 2 a step failed. Nothing irreversible happens on 1: the refusals are both
- * ahead of `bumpp`, which is where the commit, the tag and the push are.
+ * Exit codes: 0 ok · 1 refused (no tag, dirty tree, the running Bun is not the
+ * pin, or the milestone the notes come from has problems) · 2 a step failed.
+ * Nothing irreversible happens on 1: every refusal is ahead of `bumpp`, which is
+ * where the commit, the tag and the push are.
  *
  * `git` and every child process go through the two injectable runners this repo
  * already uses (`check-bindings.ts`'s `GitRunner`, `prepack.ts`'s
- * `CommandRunner`), so the tests run offline without a bundler, a repository or
- * a registry.
+ * `CommandRunner`), the GitHub reads go through `release-notes.ts`'s `GhRunner`,
+ * and `CHANGELOG.md` is read and written through an injected pair — so the tests
+ * run offline without a bundler, a repository, a registry or a working copy.
  */
+
+import fs from "node:fs"
+import path from "node:path"
 
 import { ARTIFACTS, type GitRunner, realGit } from "./check-bindings"
 import { type CommandRunner, prepack, type PrepackOptions, realRunner } from "./prepack"
+import {
+  collectReleaseNotes,
+  exitCodeFor,
+  type GhRunner,
+  type ReleaseNotes,
+  renderChangelog,
+  renderProblems,
+  stripV,
+} from "./release-notes"
 
 // Every child process — `git`, `bumpp`, `bun publish` — runs through the two
 // runners imported above, both of which already resolve the repo root from
 // their own file, so this script works from any cwd without repeating it.
+// `CHANGELOG.md` is the one path this file resolves itself.
+const REPO_ROOT = path.resolve(import.meta.dir, "..", "..")
 
 /** Runs only the rebuild-and-stage step. What `bumpp`'s execute hook invokes. */
 export const REBUILD_FLAG = "--rebuild"
@@ -143,6 +231,167 @@ export const OWN_FLAGS: ReadonlyArray<string> = [REBUILD_FLAG, NO_PUBLISH_FLAG]
 
 /** `bun publish`'s argv, argv-identical to the tail of the old `release:manual`. */
 export const PUBLISH_ARGV: ReadonlyArray<string> = ["publish", "--access", "public"]
+
+/** The tag this release cuts. Prereleases are not modelled anywhere in this tooling. */
+export const TAG_RE = /^v\d+\.\d+\.\d+$/u
+
+// --- the changelog ---
+
+/** The file the generated block is inserted into. */
+export const CHANGELOG_FILE = "CHANGELOG.md"
+
+/**
+ * The insertion point. `CHANGELOG.md` carries this comment so automation never
+ * has to guess an offset into a file whose preamble is prose. Matched by prefix,
+ * not by its full text, so the sentence after it stays editable.
+ */
+export const CHANGELOG_ANCHOR = /^<!-- releases below.*$/mu
+
+/**
+ * How the rendered block reaches `bumpp`'s execute hook, which is a separate
+ * process spawned with the ambient environment. Unset means "rebuild only",
+ * which is what a by-hand `release.ts --rebuild` gets.
+ */
+export const CHANGELOG_ENV = "MAXIMAL_RELEASE_CHANGELOG_BLOCK"
+
+/**
+ * Does the file already document this version? Both heading shapes
+ * `release-notes.ts` can emit count: `## [0.4.2](compare-link) (date)` and the
+ * unlinked `## 0.4.2 (date)` a first release gets.
+ */
+export function changelogHasVersion(source: string, version: string): boolean {
+  const escaped = version.replaceAll(".", "\\.")
+  return new RegExp(`^## (?:\\[${escaped}\\]|${escaped}[ (])`, "mu").test(source)
+}
+
+/**
+ * Insert `block` directly below the anchor, or `undefined` when the anchor is
+ * gone. One blank line separates it from the release under it, which is the
+ * spacing every existing pair in the file already uses — so the diff of a
+ * generated insert is indistinguishable from the pasted ones above it.
+ */
+export function insertChangelogBlock(source: string, block: string): string | undefined {
+  const match = CHANGELOG_ANCHOR.exec(source)
+  if (!match) return undefined
+  const at = match.index + match[0].length
+  const head = source.slice(0, at)
+  const tail = source.slice(at)
+  const entry = block.trimEnd()
+  if (tail.trim() === "") return `${head}\n\n${entry}\n`
+  return `${head}\n\n${entry}${tail.replace(/^\n*/u, "\n\n")}`
+}
+
+/** Read/write seam for `CHANGELOG.md`, so no test needs a working copy. */
+export interface ChangelogIo {
+  read?: () => string
+  write?: (contents: string) => void
+}
+
+function readChangelog(io: ChangelogIo): () => string {
+  return io.read ?? (() => fs.readFileSync(path.join(REPO_ROOT, CHANGELOG_FILE), "utf8"))
+}
+
+function anchorObjection(): string {
+  return (
+    `release: REFUSING — ${CHANGELOG_FILE} has no insertion anchor.\n`
+    + `\n`
+    + `  Expected a line beginning \`<!-- releases below\`, which is what tells this\n`
+    + `  script where a generated block goes without guessing an offset.\n`
+    + `\n`
+    + `Put the anchor back above the newest release heading, or paste the block by\n`
+    + `hand and re-run — an entry that is already there is left alone:\n`
+    + `    bun run release:notes <tag>\n`
+  )
+}
+
+/** What the changelog step decided. Exactly one of these three fields is set. */
+export interface ChangelogPlan {
+  /** The block to insert, when there is one to insert. */
+  block?: string
+  /** Why the release must not proceed. */
+  objection?: string
+  /** Why there is nothing to do, when that is the answer. */
+  note?: string
+}
+
+export interface ChangelogPlanOptions extends ChangelogIo {
+  tag: string
+  gh?: GhRunner
+  now?: () => Date
+}
+
+/**
+ * Fetch, validate and render the entry for `tag` — everything about the
+ * changelog that can fail, done BEFORE `bumpp` so a failure costs nothing.
+ *
+ * The refusal condition is `release:notes`'s own: this returns an objection for
+ * anything that would make it exit non-zero and write nothing. A release whose
+ * notes cannot be trusted is a release that must not be cut, and there is
+ * deliberately no `--force` here — `release:notes --force` emits the well-formed
+ * subset for a human to paste, which this step then finds and leaves alone.
+ */
+export function planChangelog(options: ChangelogPlanOptions): ChangelogPlan {
+  let source: string
+  try {
+    source = readChangelog(options)()
+  } catch (err) {
+    return { objection: `release: could not read ${CHANGELOG_FILE} — ${err instanceof Error ? err.message : String(err)}` }
+  }
+  if (!CHANGELOG_ANCHOR.test(source)) return { objection: anchorObjection() }
+
+  const version = stripV(options.tag)
+  if (changelogHasVersion(source, version)) {
+    return { note: `release: ${CHANGELOG_FILE} already documents ${version} — leaving it exactly as it is.` }
+  }
+
+  let notes: ReleaseNotes
+  try {
+    notes = collectReleaseNotes({ tag: options.tag, gh: options.gh, now: options.now })
+  } catch (err) {
+    return {
+      objection:
+        `release: REFUSING — could not generate the ${CHANGELOG_FILE} entry for ${options.tag}.\n`
+        + `\n  ${err instanceof Error ? err.message : String(err)}\n`,
+    }
+  }
+
+  if (exitCodeFor(notes) !== 0) {
+    return {
+      objection:
+        `${renderProblems(notes.problems)}\n`
+        + `\n`
+        + `release: REFUSING — the milestone \`${options.tag}\` cannot produce trustworthy\n`
+        + `notes, and the entry is the only thing that reaches the changelog. Fix the\n`
+        + `milestone, or paste a block by hand and re-run:\n`
+        + `    bun run release:notes ${options.tag} --force\n`,
+    }
+  }
+  return { block: renderChangelog(notes) }
+}
+
+/**
+ * Write the block into `CHANGELOG.md`. Runs INSIDE `bumpp`, between the bump and
+ * the commit, so `git commit --all` picks it up. Returns an objection or
+ * `undefined`; everything that could realistically fail here was already checked
+ * by `planChangelog` before the bump.
+ */
+export function applyChangelog(block: string, io: ChangelogIo = {}): string | undefined {
+  const write = io.write ?? ((contents: string) => { fs.writeFileSync(path.join(REPO_ROOT, CHANGELOG_FILE), contents) })
+  let source: string
+  try {
+    source = readChangelog(io)()
+  } catch (err) {
+    return `release: could not read ${CHANGELOG_FILE} — ${err instanceof Error ? err.message : String(err)}`
+  }
+  const next = insertChangelogBlock(source, block)
+  if (next === undefined) return anchorObjection()
+  try {
+    write(next)
+  } catch (err) {
+    return `release: could not write ${CHANGELOG_FILE} — ${err instanceof Error ? err.message : String(err)}`
+  }
+  return undefined
+}
 
 // --- what gets staged ---
 
@@ -269,21 +518,31 @@ function pinOptions(options: PinOptions): PinOptions {
   return pin
 }
 
-export interface RebuildOptions extends PinOptions {
+export interface RebuildOptions extends PinOptions, ChangelogIo {
   git?: GitRunner
   run?: CommandRunner
   log?: (line: string) => void
   pathspecs?: ReadonlyArray<string>
+  /** The rendered entry to insert. Handed over by `release()` via the env. */
+  changelogBlock?: string
 }
 
 /**
- * Rebuild the committed artifacts against the version that is now on disk and
- * stage them. Runs INSIDE `bumpp`, between the bump and the commit.
+ * Rebuild the committed artifacts against the version that is now on disk, write
+ * the changelog entry, and stage both. Runs INSIDE `bumpp`, between the bump and
+ * the commit — the only window where the new version is on disk and the commit
+ * has not happened yet.
  *
  * `prepack()` is the rebuild rather than a local reimplementation: it is already
  * the argv-identical pair of builds (`build` + `build:lib`), it already refuses
  * off-pin before writing anything, and it already bundles with
  * `process.execPath`.
+ *
+ * The changelog is written LAST, after the builds have succeeded: a failed build
+ * aborts `bumpp` before the commit, and the less of the tree that has been
+ * touched by then the better. It is staged explicitly even though `--all` would
+ * pick a tracked modification up anyway, so the hook is answerable for the whole
+ * content of the release commit on its own terms.
  */
 export function rebuildAndStage(options: RebuildOptions = {}): number {
   const log = options.log ?? ((line: string) => { console.error(line) })
@@ -299,13 +558,32 @@ export function rebuildAndStage(options: RebuildOptions = {}): number {
     return 2
   }
   log(`release: rebuilt and staged ${pathspecs.join(", ")}`)
+
+  const block = options.changelogBlock
+  if (block === undefined || block.trim() === "") return 0
+
+  const objection = applyChangelog(block, options)
+  if (objection !== undefined) {
+    log(objection)
+    return 2
+  }
+  const stagedNotes = git(["add", "--", CHANGELOG_FILE])
+  if (stagedNotes.status !== 0) {
+    log(`release: could not stage ${CHANGELOG_FILE} — ${stagedNotes.stderr.trim() || `git exited ${stagedNotes.status}`}`)
+    return 2
+  }
+  log(`release: wrote and staged the ${CHANGELOG_FILE} entry`)
   return 0
 }
 
-export interface ReleaseOptions extends PinOptions {
+export interface ReleaseOptions extends PinOptions, ChangelogIo {
   git?: GitRunner
   run?: CommandRunner
+  gh?: GhRunner
   log?: (line: string) => void
+  now?: () => Date
+  /** The tag being cut — the milestone title, and the version `bumpp` bumps to. */
+  tag?: string
   /** The interpreter the execute hook will bundle with. Never a PATH lookup. */
   bun?: string
   /** This file, as `bumpp` will have to spawn it. */
@@ -313,15 +591,19 @@ export interface ReleaseOptions extends PinOptions {
   /** Extra argv forwarded to `bumpp`. */
   bumppArgs?: ReadonlyArray<string>
   publish?: boolean
+  /** How the rendered block reaches the hook. Defaults to `process.env`. */
+  handOverBlock?: (block: string | undefined) => void
 }
 
 /**
- * Guard, assert, bump, publish. The order is the point: everything that can
- * refuse runs before `bumpp`, because `bumpp` commits, tags AND pushes, and the
- * runbook is explicit that a published tag must not be moved.
+ * Guard, assert, generate, bump, publish. The order is the point: everything
+ * that can refuse runs before `bumpp`, because `bumpp` commits, tags AND pushes,
+ * and the runbook is explicit that a published tag must not be moved.
  *
  * The tree comes first because it is the failure nothing else in the repo
- * catches; the pin is re-asserted at `prepack` time on the publish path anyway.
+ * catches; the pin is re-asserted at `prepack` time on the publish path anyway;
+ * the changelog is generated last of the three because it is the only step that
+ * touches the network, and there is no point paying for it behind a refusal.
  */
 export function release(options: ReleaseOptions = {}): number {
   const log = options.log ?? ((line: string) => { console.error(line) })
@@ -329,6 +611,11 @@ export function release(options: ReleaseOptions = {}): number {
   const run = options.run ?? realRunner
   const bun = options.bun ?? process.execPath
   const script = options.script ?? import.meta.path
+
+  if (options.tag === undefined || !TAG_RE.test(options.tag)) {
+    log(usage(options.tag))
+    return 1
+  }
 
   const status = git(["status", "--porcelain"])
   if (status.status !== 0) {
@@ -346,7 +633,22 @@ export function release(options: ReleaseOptions = {}): number {
   const pinned = prepack({ ...pinOptions(options), checkOnly: true, run, log })
   if (pinned !== 0) return pinned
 
-  const bumped = run(bun, bumppArgv(executeCommand(bun, script), options.bumppArgs ?? []))
+  const plan = planChangelog({ tag: options.tag, gh: options.gh, read: options.read, now: options.now })
+  if (plan.objection !== undefined) {
+    log(plan.objection)
+    return 1
+  }
+  if (plan.note !== undefined) log(plan.note)
+
+  const handOver = options.handOverBlock ?? ((block: string | undefined) => {
+    if (block === undefined) delete process.env[CHANGELOG_ENV]
+    else process.env[CHANGELOG_ENV] = block
+  })
+
+  handOver(plan.block)
+  const bumppArgs = ["--release", stripV(options.tag), ...options.bumppArgs ?? []]
+  const bumped = run(bun, bumppArgv(executeCommand(bun, script), bumppArgs))
+  handOver(undefined)
   if (bumped.status !== 0) {
     log(`release: bumpp exited ${bumped.status}${bumped.output ? ` — ${bumped.output.trim()}` : ""}`)
     return 2
@@ -367,15 +669,85 @@ export function release(options: ReleaseOptions = {}): number {
 
 // --- entry point ---
 
+/** Refusal text for a missing or malformed tag. Never a guess at what was meant. */
+export function usage(given?: string): string {
+  return (
+    `release: REFUSING — ${given === undefined ? "no release tag was given." : `\`${given}\` is not a release tag.`}\n`
+    + `\n`
+    + `  usage: bun run release:manual vX.Y.Z [--no-publish] [bumpp flags]\n`
+    + `\n`
+    + `The tag names the GitHub milestone the CHANGELOG entry is generated from, and\n`
+    + `it is what \`bumpp\` bumps package.json to, so the tag and the manifest cannot\n`
+    + `disagree. Prereleases are not modelled by any of this tooling.\n`
+  )
+}
+
+export interface ParsedArgv {
+  tag?: string
+  rebuild: boolean
+  publish: boolean
+  /** Everything left over, forwarded verbatim to `bumpp`. */
+  bumppArgs: Array<string>
+  /** Set when the argv itself is the problem. */
+  objection?: string
+}
+
+/**
+ * Split this script's own argv from `bumpp`'s.
+ *
+ * The tag is claimed positionally, but only from an item that LOOKS like a tag
+ * and does not sit where a forwarded flag's value would — `-t v9.9.9` names
+ * `bumpp`'s tag template, not this release. `--release` is refused outright
+ * rather than forwarded: the version comes from the tag, and two sources for it
+ * is exactly how `v0.1.1` was tagged off a `0.1.0` manifest.
+ */
+export function parseArgv(argv: ReadonlyArray<string>): ParsedArgv {
+  const parsed: ParsedArgv = {
+    rebuild: argv.includes(REBUILD_FLAG),
+    publish: !argv.includes(NO_PUBLISH_FLAG),
+    bumppArgs: [],
+  }
+  for (const [index, arg] of argv.entries()) {
+    if (OWN_FLAGS.includes(arg)) continue
+    if (arg === "--release") {
+      parsed.objection =
+        `release: REFUSING — \`--release\` is not forwarded.\n`
+        + `\n`
+        + `  The version comes from the tag: \`bun run release:manual vX.Y.Z\` bumps\n`
+        + `  package.json to X.Y.Z, so the tag and the manifest cannot disagree.\n`
+      return parsed
+    }
+    const previous = argv[index - 1]
+    const couldBeAValue = previous !== undefined && previous.startsWith("-") && !OWN_FLAGS.includes(previous)
+    if (parsed.tag === undefined && !couldBeAValue && TAG_RE.test(arg)) {
+      parsed.tag = arg
+      continue
+    }
+    parsed.bumppArgs.push(arg)
+  }
+  return parsed
+}
+
 export function main(
   argv: ReadonlyArray<string> = process.argv.slice(2),
   options: ReleaseOptions & RebuildOptions = {},
 ): number {
-  if (argv.includes(REBUILD_FLAG)) return rebuildAndStage(options)
+  const parsed = parseArgv(argv)
+  if (parsed.rebuild) {
+    return rebuildAndStage({
+      ...options,
+      changelogBlock: options.changelogBlock ?? process.env[CHANGELOG_ENV],
+    })
+  }
+  if (parsed.objection !== undefined) {
+    (options.log ?? ((line: string) => { console.error(line) }))(parsed.objection)
+    return 1
+  }
   return release({
     ...options,
-    publish: options.publish ?? !argv.includes(NO_PUBLISH_FLAG),
-    bumppArgs: options.bumppArgs ?? argv.filter((arg) => !OWN_FLAGS.includes(arg)),
+    tag: options.tag ?? parsed.tag,
+    publish: options.publish ?? parsed.publish,
+    bumppArgs: options.bumppArgs ?? parsed.bumppArgs,
   })
 }
 

@@ -1,10 +1,11 @@
 # Changelog
 
 Releases of `maximal-core`. Generated from the GitHub milestone whose title is
-the tag being cut:
+the tag being cut, and inserted at the anchor below by the release itself:
 
 ```sh
-bun run release:notes v0.2.1
+bun run release:notes v0.2.1     # preview the block
+bun run release:manual v0.2.1    # generate it, insert it, and cut the release
 ```
 
 Whatever is assigned to the milestone is what ships, so the contents of a
@@ -36,7 +37,7 @@ Two notes on provenance:
   package, but every link in it points at the parent repo and none of its
   entries describes a `maximal-core` release.
 
-<!-- releases below — newest first; `release:notes` output is inserted here -->
+<!-- releases below — newest first; `release:manual vX.Y.Z` inserts the generated block here -->
 
 ## [0.4.1](https://github.com/stuffbucket/maximal-core/compare/v0.4.0...v0.4.1) (2026-08-05)
 
