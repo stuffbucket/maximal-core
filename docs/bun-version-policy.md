@@ -5,7 +5,7 @@ and at runtime by every CI workflow that needs Bun: `tooling-ci.yml`,
 `watch-external-drift.yml`, `watch-branch-rules.yml`, `randomized-test-order.yml`,
 `release-gates.yml`, `release-tag-check.yml`, `release-artifacts.yml`,
 `publish-package.yml` and `ci.yml`'s `windows` job each
-`cat .bun-version` into `setup-bun`; `publish-ci-image.yml` bakes it into the
+`cat .bun-version` into `setup-bun`; the toolchain-image workflow bakes it into the
 toolchain image, and `ci.yml`'s `test` job runs in that image and `cat`s the
 file to assert the two agree. No workflow holds a copy of the version
 literal, so dev/CI drift is not representable — which is the point: drift is
@@ -30,7 +30,7 @@ artifact that the version decides:
 6. Watch the next CI run.
 
 **Ordering, once `ci.yml`'s `test` job runs in the toolchain image:** dispatch
-`publish-ci-image.yml` on your bump branch *before* opening the PR. That job
+the toolchain-image workflow on your bump branch *before* opening the PR. That job
 names the image by a floating `latest` tag (it cannot compute one — see that
 workflow's header), and its first step asserts the image's Bun equals
 `.bun-version`. A bump PR opened against a not-yet-republished image fails that
