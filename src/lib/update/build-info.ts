@@ -1,16 +1,30 @@
 /**
  * Compile-time build metadata.
  *
- * Values are injected by `bun build --compile --define ...` for
- * release binaries — `buildBinary()` in `scripts/dev/build-binary.ts`
- * is the single place that passes them, and it injects all four:
- * `__MAXIMAL_VERSION__` (from package.json), `__MAXIMAL_GIT_SHA__`
- * (short SHA), `__MAXIMAL_GIT_BRANCH__`, and `__MAXIMAL_CHANNEL__`
- * (derived from the version's prerelease tag). When unset — running
- * source via `bun src/main.ts`, or after a stock `bun build` without
- * the defines — we fall back to package.json's version and leave the
- * git SHA undefined (the live `.git` walk in
- * `src/lib/update/version.ts` picks it up in dev).
+ * Values are injected by `bun build --compile --define ...` for release
+ * binaries. **Two compilers do that, and only one of them is in this repo:**
+ *
+ *   - `buildBinary()` in `scripts/dev/build-binary.ts` — core's own
+ *     `bun-darwin-arm64` / `bun-windows-x64` artifacts.
+ *   - `scripts/build-sidecar.ts` in `stuffbucket/maximal` — which compiles
+ *     **this repo's `src/main.ts`**, reached through the git dependency at
+ *     `shell/node_modules/@stuffbucket/maximal-core/src/main.ts`, and injects
+ *     all four defines itself.
+ *
+ * That second producer is the one that ships to users, and it is easy to miss
+ * because nothing in this repo references it. Do not treat these globals as
+ * dead if core's own binary pipeline goes away: the downstream compile still
+ * sets them, so `BUILD_CHANNEL` still decides which channel a shipped build
+ * polls (`src/lib/update/update-check.ts`) and `BUILD_GIT_SHA` still lands in
+ * `x-maximal-version`.
+ *
+ * All four are injected together: `__MAXIMAL_VERSION__` (from package.json),
+ * `__MAXIMAL_GIT_SHA__` (short SHA), `__MAXIMAL_GIT_BRANCH__`, and
+ * `__MAXIMAL_CHANNEL__` (derived from the version's prerelease tag). When unset
+ * — running source via `bun src/main.ts`, or after a stock `bun build` without
+ * the defines — we fall back to package.json's version and leave the git SHA
+ * undefined (the live `.git` walk in `src/lib/update/version.ts` picks it up in
+ * dev).
  *
  * Why globals + --define instead of build-time codegen: identical
  * effect, no .gen.ts file to gitignore, no extra prebuild script
@@ -23,7 +37,9 @@
  * (where the substitution didn't happen) doesn't ReferenceError.
  */
 
-import packageJson from "../../../package.json" with { type: "json" }
+// Named, not default: `bun build` tree-shakes this to the one field, keeping
+// the rest of package.json (scripts, devDependencies) out of dist/main.js.
+import { version } from "../../../package.json" with { type: "json" }
 
 declare const __MAXIMAL_VERSION__: string
 declare const __MAXIMAL_GIT_SHA__: string
@@ -33,7 +49,7 @@ declare const __MAXIMAL_CHANNEL__: string
 export const BUILD_VERSION: string =
   typeof __MAXIMAL_VERSION__ === "string" && __MAXIMAL_VERSION__.length > 0 ?
     __MAXIMAL_VERSION__
-  : packageJson.version
+  : version
 
 export const BUILD_GIT_SHA: string | undefined =
   typeof __MAXIMAL_GIT_SHA__ === "string" && __MAXIMAL_GIT_SHA__.length > 0 ?

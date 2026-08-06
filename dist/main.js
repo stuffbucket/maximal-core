@@ -2225,148 +2225,8 @@ var init_dist2 = __esm(() => {
 var HELPER_SUBCOMMAND = "api", LEGACY_HELPER_FLAG = "--apiKeyHelper";
 
 // package.json
-var package_default;
-var init_package = __esm(() => {
-  package_default = {
-    $schema: "https://json.schemastore.org/package.json",
-    name: "@stuffbucket/maximal-core",
-    version: "0.4.2",
-    description: "Headless core of maximal: a local proxy that exposes GitHub Copilot as OpenAI- and Anthropic-compatible HTTP endpoints. No UI.",
-    keywords: [
-      "proxy",
-      "github-copilot",
-      "openai-compatible",
-      "anthropic-compatible"
-    ],
-    homepage: "https://github.com/stuffbucket/maximal-core",
-    bugs: "https://github.com/stuffbucket/maximal-core/issues",
-    repository: {
-      type: "git",
-      url: "https://github.com/stuffbucket/maximal-core"
-    },
-    license: "MIT",
-    author: "stuffbucket",
-    type: "module",
-    exports: {
-      "./client": {
-        types: "./dist/lib/client.d.ts",
-        import: "./dist/lib/client.js"
-      },
-      "./contract": {
-        types: "./dist/lib/contract.d.ts",
-        import: "./dist/lib/contract.js"
-      },
-      "./control-contract": {
-        types: "./dist/lib/control-contract.d.ts",
-        import: "./dist/lib/control-contract.js"
-      },
-      "./package.json": "./package.json",
-      "./settings-types": {
-        types: "./dist/lib/settings-types.d.ts",
-        import: "./dist/lib/settings-types.js"
-      },
-      "./supervisor": {
-        types: "./dist/lib/supervisor.d.ts",
-        import: "./dist/lib/supervisor.js"
-      }
-    },
-    bin: {
-      maximal: "./dist/main.js"
-    },
-    files: [
-      "dist",
-      "src",
-      "tsconfig.json"
-    ],
-    scripts: {
-      "bindings:check": "bun scripts/ops/check-bindings.ts",
-      build: "bun build src/main.ts --target=bun --outdir dist",
-      "build:binary": "bun scripts/dev/build-binary.ts",
-      "build:lib": "tsup",
-      casts: "bun run scripts/find-casts.ts",
-      "casts:check": "bun run scripts/find-casts.ts --check",
-      "check:deep": "bun run check:fast && bun run casts:check && bun test && bun run knip && bun run deps:check && bun run build && bun run typecheck:downstream && bun run bindings:check",
-      "check:fast": "bun run lint:fast && bun run typecheck && bun run lint:all",
-      "check:ops": "bun run typecheck:ops && bun run test:ops",
-      "deps:check": "depcruise --config .dependency-cruiser.cjs src tests",
-      dev: "bun run --watch ./src/main.ts",
-      "dev:stale-check": "bun scripts/dev/verify-build.ts",
-      e2e: "bun run e2e:seam && bun run e2e:feed && bun run e2e:lifecycle && bun run e2e:replace",
-      "e2e:binary": "bun scripts/dev/e2e-binary.ts",
-      "e2e:feed": "bun scripts/dev/e2e-feed.ts",
-      "e2e:lifecycle": "bun scripts/dev/e2e-lifecycle.ts",
-      "e2e:replace": "bun scripts/dev/e2e-replace.ts",
-      "e2e:seam": "bun scripts/dev/e2e-seam.ts",
-      knip: "knip-bun",
-      lint: "eslint --cache",
-      "lint:all": "eslint --cache .",
-      "lint:fast": "oxlint",
-      "measure:baseline": "bun scripts/dev/measure-baseline.ts",
-      mutate: "stryker run",
-      prepack: "bun scripts/ops/prepack.ts",
-      prepare: "bun scripts/ops/prepare.ts",
-      "release:check": "bun scripts/ops/release-gates.ts",
-      "release:manual": "bun scripts/ops/release.ts",
-      "release:notes": "bun scripts/ops/release-notes.ts",
-      "release:preflight": "bun scripts/ops/prepack.ts --check",
-      sbom: "bun scripts/sbom.ts",
-      "scan:secrets": "trufflehog filesystem . --no-verification --fail --results=verified,unknown,unverified --no-update --exclude-paths .trufflehog-exclude",
-      start: "NODE_ENV=production bun run ./src/main.ts",
-      "test:ops": "cd scripts/ops && bun test",
-      typecheck: "tsc",
-      "typecheck:downstream": "bun downstream/check.ts",
-      "typecheck:ops": "tsc -p scripts/ops/tsconfig.json",
-      "verify:artifact": "bun scripts/dev/verify-artifact.ts",
-      "watch:drift": "bun scripts/ops/watch-external-drift.ts"
-    },
-    "simple-git-hooks": {
-      "pre-commit": "bunx lint-staged"
-    },
-    "lint-staged": {
-      "!dist/**": [
-        "bun run lint --fix",
-        "bash scripts/secret-scan.sh"
-      ]
-    },
-    dependencies: {
-      "@hono/zod-openapi": "^1.5.0",
-      citty: "^0.1.6",
-      clipboardy: "^5.0.0",
-      consola: "^3.4.2",
-      "fetch-event-stream": "^0.1.5",
-      "gpt-tokenizer": "^3.0.1",
-      hono: "^4.12.0",
-      "proxy-from-env": "^1.1.0",
-      srvx: "^0.11.15",
-      "tiny-invariant": "^1.3.3",
-      turndown: "^7.2.4",
-      undici: "^7.16.0",
-      winreg: "^1.2.5",
-      zod: "^4.1.11"
-    },
-    devDependencies: {
-      "@echristian/eslint-config": "^0.0.54",
-      "@stryker-mutator/core": "^9.6.1",
-      "@types/bun": "^1.2.23",
-      "@types/proxy-from-env": "^1.0.4",
-      "@types/turndown": "^5.0.6",
-      "@types/winreg": "^1.2.36",
-      bumpp: "^10.2.3",
-      "dependency-cruiser": "^17.4.0",
-      eslint: "^9.37.0",
-      knip: "^5.64.1",
-      "lint-staged": "^16.2.3",
-      oxlint: "^1.63.0",
-      "prettier-plugin-packagejson": "^2.5.19",
-      "simple-git-hooks": "^2.13.1",
-      tsup: "^8.5.1",
-      typescript: "^5.9.3"
-    },
-    engines: {
-      node: ">=22.13.0"
-    }
-  };
-});
+var version = "0.4.4";
+var init_package = () => {};
 
 // src/lib/update/build-info.ts
 var exports_build_info = {};
@@ -2379,7 +2239,7 @@ __export(exports_build_info, {
 var BUILD_VERSION, BUILD_GIT_SHA, BUILD_GIT_BRANCH, BUILD_CHANNEL;
 var init_build_info = __esm(() => {
   init_package();
-  BUILD_VERSION = typeof __MAXIMAL_VERSION__ === "string" && __MAXIMAL_VERSION__.length > 0 ? __MAXIMAL_VERSION__ : package_default.version;
+  BUILD_VERSION = typeof __MAXIMAL_VERSION__ === "string" && __MAXIMAL_VERSION__.length > 0 ? __MAXIMAL_VERSION__ : version;
   BUILD_GIT_SHA = typeof __MAXIMAL_GIT_SHA__ === "string" && __MAXIMAL_GIT_SHA__.length > 0 ? __MAXIMAL_GIT_SHA__ : undefined;
   BUILD_GIT_BRANCH = typeof __MAXIMAL_GIT_BRANCH__ === "string" && __MAXIMAL_GIT_BRANCH__.length > 0 ? __MAXIMAL_GIT_BRANCH__ : undefined;
   BUILD_CHANNEL = typeof __MAXIMAL_CHANNEL__ === "string" && __MAXIMAL_CHANNEL__.length > 0 ? __MAXIMAL_CHANNEL__ : "stable";
@@ -3475,10 +3335,10 @@ function fixedBase64(bodyLength, padding) {
 function fixedBase64url(length) {
   return new RegExp(`^[A-Za-z0-9_-]{${length}}$`);
 }
-var cuid, cuid2, ulid, xid, ksuid, nanoid, duration, extendedDuration, guid, uuid = (version) => {
-  if (!version)
+var cuid, cuid2, ulid, xid, ksuid, nanoid, duration, extendedDuration, guid, uuid = (version2) => {
+  if (!version2)
     return /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/;
-  return new RegExp(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`);
+  return new RegExp(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version2}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`);
 }, uuid4, uuid6, uuid7, email, html5Email, rfc5322Email, unicodeEmail, idnEmail, browserEmail, _emoji = `^(\\p{Extended_Pictographic}|\\p{Emoji_Component})+$`, ipv4, ipv6, mac = (delimiter) => {
   const escapedDelim = escapeRegex(delimiter ?? ":");
   return new RegExp(`^(?:[0-9A-F]{2}${escapedDelim}){5}[0-9A-F]{2}$|^(?:[0-9a-f]{2}${escapedDelim}){5}[0-9a-f]{2}$`);
@@ -4135,9 +3995,9 @@ class Doc {
 }
 
 // node_modules/zod/v4/core/versions.js
-var version;
+var version2;
 var init_versions = __esm(() => {
-  version = {
+  version2 = {
     major: 4,
     minor: 4,
     patch: 3
@@ -4559,7 +4419,7 @@ var init_schemas = __esm(() => {
     inst ?? (inst = {});
     inst._zod.def = def;
     inst._zod.bag = inst._zod.bag || {};
-    inst._zod.version = version;
+    inst._zod.version = version2;
     const checks = [...inst._zod.def.checks ?? []];
     if (inst._zod.traits.has("$ZodCheck")) {
       checks.unshift(inst);
@@ -14310,7 +14170,7 @@ var init_json_schema = () => {};
 // node_modules/zod/v4/core/index.js
 var exports_core2 = {};
 __export(exports_core2, {
-  version: () => version,
+  version: () => version2,
   util: () => exports_util,
   treeifyError: () => treeifyError,
   toJSONSchema: () => toJSONSchema,
@@ -16630,10 +16490,10 @@ function fromJSONSchema(schema, params) {
   } catch {
     throw new Error("fromJSONSchema input is not valid JSON (possibly cyclic); use $defs/$ref for recursive schemas");
   }
-  const version2 = detectVersion(normalized, params?.defaultTarget);
+  const version3 = detectVersion(normalized, params?.defaultTarget);
   const defs = normalized.$defs || normalized.definitions || {};
   const ctx = {
-    version: version2,
+    version: version3,
     defs,
     refs: new Map,
     processing: new Set,
@@ -17168,9 +17028,14 @@ function ensureConfigFile() {
   try {
     fs2.accessSync(PATHS.CONFIG_PATH, fs2.constants.R_OK | fs2.constants.W_OK);
   } catch {
-    fs2.mkdirSync(PATHS.APP_DIR, { recursive: true });
-    fs2.writeFileSync(PATHS.CONFIG_PATH, `${JSON.stringify(defaultConfig, null, 2)}
+    try {
+      fs2.mkdirSync(PATHS.APP_DIR, { recursive: true });
+      fs2.writeFileSync(PATHS.CONFIG_PATH, `${JSON.stringify(defaultConfig, null, 2)}
 `, "utf8");
+    } catch (error51) {
+      consola.warn(`Couldn't create ${PATHS.CONFIG_PATH}; continuing with whatever is on disk`, error51);
+      return;
+    }
     try {
       fs2.chmodSync(PATHS.CONFIG_PATH, 384);
     } catch {
@@ -17514,6 +17379,43 @@ var init_active_clients = __esm(() => {
   }
 });
 
+// src/lib/auth/auth-types.ts
+function parseAccountType(input) {
+  const result = accountTypeSchema.safeParse(input);
+  if (!result.success) {
+    throw new Error(`Invalid account type "${input}". Must be one of: ${ACCOUNT_TYPES.join(", ")}.`);
+  }
+  return result.data;
+}
+function toCopilotHost(url2) {
+  let parsed;
+  try {
+    parsed = new URL(url2);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:")
+    return null;
+  return parsed.origin;
+}
+function hostForAccountType(accountType) {
+  const url2 = accountType === "individual" ? "https://api.githubcopilot.com" : `https://api.${accountType}.githubcopilot.com`;
+  return url2;
+}
+var ACCOUNT_TYPES, accountTypeSchema, CREDENTIAL_HEALTH;
+var init_auth_types = __esm(() => {
+  init_zod();
+  ACCOUNT_TYPES = ["individual", "business", "enterprise"];
+  accountTypeSchema = exports_external.enum(ACCOUNT_TYPES);
+  CREDENTIAL_HEALTH = {
+    healthy: "healthy",
+    refreshing: "refreshing",
+    needsReauth: "needsReauth",
+    expired: "expired",
+    unknown: "unknown"
+  };
+});
+
 // src/lib/runtime-state/event-bus.ts
 class EventBus {
   handlers = new Map;
@@ -17688,7 +17590,10 @@ import { randomUUID } from "crypto";
 function setGithubToken(token) {
   state.githubToken = token;
 }
-function setCopilotToken(token) {
+function setCopilotToken(token, expiresAtMs) {
+  state.copilotTokenExpiresAtMs = expiresAtMs;
+  refreshHealth.lastSuccessAtMs = Date.now();
+  refreshHealth.consecutiveFailures = 0;
   if (state.copilotToken === token)
     return;
   state.copilotToken = token;
@@ -17704,10 +17609,37 @@ function clearTokenTrio(fields = {
 }) {
   if (fields.github)
     state.githubToken = undefined;
-  if (fields.copilot)
+  if (fields.copilot) {
     state.copilotToken = undefined;
+    state.copilotTokenExpiresAtMs = undefined;
+    resetCopilotRefreshHealth();
+  }
   if (fields.userName)
     state.userName = undefined;
+}
+function copilotRefreshHealth() {
+  return { ...refreshHealth };
+}
+function noteCopilotRefreshFailure(reason, nowMs = Date.now()) {
+  refreshHealth.lastFailureAtMs = nowMs;
+  refreshHealth.lastFailureReason = reason;
+  refreshHealth.consecutiveFailures++;
+}
+function resetCopilotRefreshHealth() {
+  refreshHealth.lastSuccessAtMs = null;
+  refreshHealth.lastFailureAtMs = null;
+  refreshHealth.lastFailureReason = null;
+  refreshHealth.consecutiveFailures = 0;
+}
+function copilotTokenHealth(nowMs = Date.now()) {
+  if (state.copilotToken === undefined)
+    return CREDENTIAL_HEALTH.unknown;
+  if (refreshHealth.consecutiveFailures === 0)
+    return CREDENTIAL_HEALTH.healthy;
+  const expiresAtMs = state.copilotTokenExpiresAtMs;
+  if (expiresAtMs === undefined)
+    return CREDENTIAL_HEALTH.unknown;
+  return nowMs >= expiresAtMs ? CREDENTIAL_HEALTH.expired : CREDENTIAL_HEALTH.refreshing;
 }
 function hasGithubToken() {
   return state.githubToken !== undefined;
@@ -17765,8 +17697,9 @@ function clearNetworkDiagnosis() {
 function getModelsLoadedAtMs() {
   return modelsCache.metrics().loaded_at_ms;
 }
-var modelsCache, copilotTokenCache, state;
+var modelsCache, copilotTokenCache, state, refreshHealth;
 var init_state = __esm(() => {
+  init_auth_types();
   init_settings_events();
   init_cache();
   modelsCache = new SingletonCache({ name: "models" });
@@ -17781,6 +17714,12 @@ var init_state = __esm(() => {
     proxyPort: 4141,
     vsCodeDeviceId: randomUUID(),
     shellApiKey: process.env.MAXIMAL_SHELL_KEY?.trim() || undefined
+  };
+  refreshHealth = {
+    lastSuccessAtMs: null,
+    lastFailureAtMs: null,
+    lastFailureReason: null,
+    consecutiveFailures: 0
   };
 });
 
@@ -17862,8 +17801,6 @@ function createAuthMiddleware(options = {}) {
   const isEnforcing = options.isEnforcing ?? (() => getConfig().auth?.enforce === true);
   const allowUnauthenticatedPaths = options.allowUnauthenticatedPaths ?? ["/"];
   const allowUnauthenticatedPrefixes = options.allowUnauthenticatedPrefixes ?? [];
-  const requireAuthPrefixes = options.requireAuthPrefixes ?? [];
-  const alwaysEnforcePrefixes = options.alwaysEnforcePrefixes ?? [];
   const allowOptionsBypass = options.allowOptionsBypass ?? true;
   const loopbackOnlyPaths = options.loopbackOnlyPaths ?? [];
   const getRequestIp = options.getRequestIp ?? defaultGetRequestIp;
@@ -17873,7 +17810,7 @@ function createAuthMiddleware(options = {}) {
     if (allowUnauthenticatedPaths.includes(c3.req.path))
       return true;
     const path2 = c3.req.path;
-    if (allowUnauthenticatedPrefixes.some((p) => pathMatchesPrefix(path2, p)) && !requireAuthPrefixes.some((p) => pathMatchesPrefix(path2, p))) {
+    if (allowUnauthenticatedPrefixes.some((p) => pathMatchesPrefix(path2, p))) {
       return true;
     }
     if (loopbackOnlyPaths.includes(c3.req.path) && isLoopbackAddress(getRequestIp(c3))) {
@@ -17881,11 +17818,11 @@ function createAuthMiddleware(options = {}) {
     }
     return false;
   };
-  const decideAuth = (requestApiKey, mandatory) => {
+  const decideAuth = (requestApiKey) => {
     if (isShellKey(requestApiKey)) {
       return { allow: true, id: null, label: "Maximal Settings" };
     }
-    if (!mandatory && !isEnforcing()) {
+    if (!isEnforcing()) {
       const entry2 = requestApiKey ? findApiKeyEntry(requestApiKey) : null;
       return { allow: true, id: entry2?.id ?? null, label: entry2?.label ?? null };
     }
@@ -17898,8 +17835,7 @@ function createAuthMiddleware(options = {}) {
   return async (c3, next) => {
     if (shouldBypass(c3))
       return next();
-    const mandatory = alwaysEnforcePrefixes.some((p) => pathMatchesPrefix(c3.req.path, p));
-    const decision = decideAuth(extractRequestApiKey(c3), mandatory);
+    const decision = decideAuth(extractRequestApiKey(c3));
     if (!decision.allow)
       return createUnauthorizedResponse(c3);
     recordClient({
@@ -17916,7 +17852,7 @@ var LOOPBACK_IPS, requireGithubAuth = async (c3, next) => {
   }
   return c3.json({
     error: "not_authenticated",
-    hint: "Open Settings \u2192 Account to sign in, or run `maximal auth`."
+    hint: "Run `maximal auth` to sign in, or start the flow over the /control API."
   }, 401);
 };
 var init_request_auth = __esm(() => {
@@ -20435,29 +20371,29 @@ var require_semver = __commonJS((exports, module) => {
   var { compareIdentifiers } = require_identifiers();
 
   class SemVer {
-    constructor(version2, options) {
+    constructor(version3, options) {
       options = parseOptions(options);
-      if (version2 instanceof SemVer) {
-        if (version2.loose === !!options.loose && version2.includePrerelease === !!options.includePrerelease) {
-          return version2;
+      if (version3 instanceof SemVer) {
+        if (version3.loose === !!options.loose && version3.includePrerelease === !!options.includePrerelease) {
+          return version3;
         } else {
-          version2 = version2.version;
+          version3 = version3.version;
         }
-      } else if (typeof version2 !== "string") {
-        throw new TypeError(`Invalid version. Must be a string. Got type "${typeof version2}".`);
+      } else if (typeof version3 !== "string") {
+        throw new TypeError(`Invalid version. Must be a string. Got type "${typeof version3}".`);
       }
-      if (version2.length > MAX_LENGTH) {
+      if (version3.length > MAX_LENGTH) {
         throw new TypeError(`version is longer than ${MAX_LENGTH} characters`);
       }
-      debug("SemVer", version2, options);
+      debug("SemVer", version3, options);
       this.options = options;
       this.loose = !!options.loose;
       this.includePrerelease = !!options.includePrerelease;
-      const m2 = version2.trim().match(options.loose ? re[t2.LOOSE] : re[t2.FULL]);
+      const m2 = version3.trim().match(options.loose ? re[t2.LOOSE] : re[t2.FULL]);
       if (!m2) {
-        throw new TypeError(`Invalid Version: ${version2}`);
+        throw new TypeError(`Invalid Version: ${version3}`);
       }
-      this.raw = version2;
+      this.raw = version3;
       this.major = +m2[1];
       this.minor = +m2[2];
       this.patch = +m2[3];
@@ -20698,12 +20634,12 @@ var require_semver = __commonJS((exports, module) => {
 // node_modules/semver/functions/parse.js
 var require_parse2 = __commonJS((exports, module) => {
   var SemVer = require_semver();
-  var parse5 = (version2, options, throwErrors = false) => {
-    if (version2 instanceof SemVer) {
-      return version2;
+  var parse5 = (version3, options, throwErrors = false) => {
+    if (version3 instanceof SemVer) {
+      return version3;
     }
     try {
-      return new SemVer(version2, options);
+      return new SemVer(version3, options);
     } catch (er) {
       if (!throwErrors) {
         return null;
@@ -20717,8 +20653,8 @@ var require_parse2 = __commonJS((exports, module) => {
 // node_modules/semver/functions/valid.js
 var require_valid = __commonJS((exports, module) => {
   var parse5 = require_parse2();
-  var valid = (version2, options) => {
-    const v2 = parse5(version2, options);
+  var valid = (version3, options) => {
+    const v2 = parse5(version3, options);
     return v2 ? v2.version : null;
   };
   module.exports = valid;
@@ -20727,8 +20663,8 @@ var require_valid = __commonJS((exports, module) => {
 // node_modules/semver/functions/clean.js
 var require_clean = __commonJS((exports, module) => {
   var parse5 = require_parse2();
-  var clean = (version2, options) => {
-    const s2 = parse5(version2.trim().replace(/^[=v]+/, ""), options);
+  var clean = (version3, options) => {
+    const s2 = parse5(version3.trim().replace(/^[=v]+/, ""), options);
     return s2 ? s2.version : null;
   };
   module.exports = clean;
@@ -20737,14 +20673,14 @@ var require_clean = __commonJS((exports, module) => {
 // node_modules/semver/functions/inc.js
 var require_inc = __commonJS((exports, module) => {
   var SemVer = require_semver();
-  var inc = (version2, release, options, identifier, identifierBase) => {
+  var inc = (version3, release, options, identifier, identifierBase) => {
     if (typeof options === "string") {
       identifierBase = identifier;
       identifier = options;
       options = undefined;
     }
     try {
-      return new SemVer(version2 instanceof SemVer ? version2.version : version2, options).inc(release, identifier, identifierBase).version;
+      return new SemVer(version3 instanceof SemVer ? version3.version : version3, options).inc(release, identifier, identifierBase).version;
     } catch (er) {
       return null;
     }
@@ -20755,9 +20691,9 @@ var require_inc = __commonJS((exports, module) => {
 // node_modules/semver/functions/diff.js
 var require_diff = __commonJS((exports, module) => {
   var parse5 = require_parse2();
-  var diff = (version1, version2) => {
+  var diff = (version1, version22) => {
     const v1 = parse5(version1, null, true);
-    const v2 = parse5(version2, null, true);
+    const v2 = parse5(version22, null, true);
     const comparison = v1.compare(v2);
     if (comparison === 0) {
       return null;
@@ -20817,8 +20753,8 @@ var require_patch = __commonJS((exports, module) => {
 // node_modules/semver/functions/prerelease.js
 var require_prerelease = __commonJS((exports, module) => {
   var parse5 = require_parse2();
-  var prerelease = (version2, options) => {
-    const parsed = parse5(version2, options);
+  var prerelease = (version3, options) => {
+    const parsed = parse5(version3, options);
     return parsed && parsed.prerelease.length ? parsed.prerelease : null;
   };
   module.exports = prerelease;
@@ -20964,24 +20900,24 @@ var require_coerce = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var parse5 = require_parse2();
   var { safeRe: re, t: t2 } = require_re();
-  var coerce = (version2, options) => {
-    if (version2 instanceof SemVer) {
-      return version2;
+  var coerce = (version3, options) => {
+    if (version3 instanceof SemVer) {
+      return version3;
     }
-    if (typeof version2 === "number") {
-      version2 = String(version2);
+    if (typeof version3 === "number") {
+      version3 = String(version3);
     }
-    if (typeof version2 !== "string") {
+    if (typeof version3 !== "string") {
       return null;
     }
     options = options || {};
     let match = null;
     if (!options.rtl) {
-      match = version2.match(options.includePrerelease ? re[t2.COERCEFULL] : re[t2.COERCE]);
+      match = version3.match(options.includePrerelease ? re[t2.COERCEFULL] : re[t2.COERCE]);
     } else {
       const coerceRtlRegex = options.includePrerelease ? re[t2.COERCERTLFULL] : re[t2.COERCERTL];
       let next;
-      while ((next = coerceRtlRegex.exec(version2)) && (!match || match.index + match[0].length !== version2.length)) {
+      while ((next = coerceRtlRegex.exec(version3)) && (!match || match.index + match[0].length !== version3.length)) {
         if (!match || next.index + next[0].length !== match.index + match[0].length) {
           match = next;
         }
@@ -21159,19 +21095,19 @@ var require_range = __commonJS((exports, module) => {
         });
       });
     }
-    test(version2) {
-      if (!version2) {
+    test(version3) {
+      if (!version3) {
         return false;
       }
-      if (typeof version2 === "string") {
+      if (typeof version3 === "string") {
         try {
-          version2 = new SemVer(version2, this.options);
+          version3 = new SemVer(version3, this.options);
         } catch (er) {
           return false;
         }
       }
       for (let i2 = 0;i2 < this.set.length; i2++) {
-        if (testSet(this.set[i2], version2, this.options)) {
+        if (testSet(this.set[i2], version3, this.options)) {
           return true;
         }
       }
@@ -21386,13 +21322,13 @@ var require_range = __commonJS((exports, module) => {
     }
     return `${from} ${to}`.trim();
   };
-  var testSet = (set2, version2, options) => {
+  var testSet = (set2, version3, options) => {
     for (let i2 = 0;i2 < set2.length; i2++) {
-      if (!set2[i2].test(version2)) {
+      if (!set2[i2].test(version3)) {
         return false;
       }
     }
-    if (version2.prerelease.length && !options.includePrerelease) {
+    if (version3.prerelease.length && !options.includePrerelease) {
       for (let i2 = 0;i2 < set2.length; i2++) {
         debug(set2[i2].semver);
         if (set2[i2].semver === Comparator.ANY) {
@@ -21400,7 +21336,7 @@ var require_range = __commonJS((exports, module) => {
         }
         if (set2[i2].semver.prerelease.length > 0) {
           const allowed = set2[i2].semver;
-          if (allowed.major === version2.major && allowed.minor === version2.minor && allowed.patch === version2.patch) {
+          if (allowed.major === version3.major && allowed.minor === version3.minor && allowed.patch === version3.patch) {
             return true;
           }
         }
@@ -21459,19 +21395,19 @@ var require_comparator = __commonJS((exports, module) => {
     toString() {
       return this.value;
     }
-    test(version2) {
-      debug("Comparator.test", version2, this.options.loose);
-      if (this.semver === ANY || version2 === ANY) {
+    test(version3) {
+      debug("Comparator.test", version3, this.options.loose);
+      if (this.semver === ANY || version3 === ANY) {
         return true;
       }
-      if (typeof version2 === "string") {
+      if (typeof version3 === "string") {
         try {
-          version2 = new SemVer(version2, this.options);
+          version3 = new SemVer(version3, this.options);
         } catch (er) {
           return false;
         }
       }
-      return cmp(version2, this.operator, this.semver, this.options);
+      return cmp(version3, this.operator, this.semver, this.options);
     }
     intersects(comp, options) {
       if (!(comp instanceof Comparator)) {
@@ -21525,13 +21461,13 @@ var require_comparator = __commonJS((exports, module) => {
 // node_modules/semver/functions/satisfies.js
 var require_satisfies = __commonJS((exports, module) => {
   var Range = require_range();
-  var satisfies = (version2, range, options) => {
+  var satisfies = (version3, range, options) => {
     try {
       range = new Range(range, options);
     } catch (er) {
       return false;
     }
-    return range.test(version2);
+    return range.test(version3);
   };
   module.exports = satisfies;
 });
@@ -21673,8 +21609,8 @@ var require_outside = __commonJS((exports, module) => {
   var lt = require_lt();
   var lte = require_lte();
   var gte = require_gte();
-  var outside = (version2, range, hilo, options) => {
-    version2 = new SemVer(version2, options);
+  var outside = (version3, range, hilo, options) => {
+    version3 = new SemVer(version3, options);
     range = new Range(range, options);
     let gtfn, ltefn, ltfn, comp, ecomp;
     switch (hilo) {
@@ -21695,7 +21631,7 @@ var require_outside = __commonJS((exports, module) => {
       default:
         throw new TypeError('Must provide a hilo val of "<" or ">"');
     }
-    if (satisfies(version2, range, options)) {
+    if (satisfies(version3, range, options)) {
       return false;
     }
     for (let i2 = 0;i2 < range.set.length; ++i2) {
@@ -21717,9 +21653,9 @@ var require_outside = __commonJS((exports, module) => {
       if (high.operator === comp || high.operator === ecomp) {
         return false;
       }
-      if ((!low.operator || low.operator === comp) && ltefn(version2, low.semver)) {
+      if ((!low.operator || low.operator === comp) && ltefn(version3, low.semver)) {
         return false;
-      } else if (low.operator === ecomp && ltfn(version2, low.semver)) {
+      } else if (low.operator === ecomp && ltfn(version3, low.semver)) {
         return false;
       }
     }
@@ -21731,14 +21667,14 @@ var require_outside = __commonJS((exports, module) => {
 // node_modules/semver/ranges/gtr.js
 var require_gtr = __commonJS((exports, module) => {
   var outside = require_outside();
-  var gtr = (version2, range, options) => outside(version2, range, ">", options);
+  var gtr = (version3, range, options) => outside(version3, range, ">", options);
   module.exports = gtr;
 });
 
 // node_modules/semver/ranges/ltr.js
 var require_ltr = __commonJS((exports, module) => {
   var outside = require_outside();
-  var ltr = (version2, range, options) => outside(version2, range, "<", options);
+  var ltr = (version3, range, options) => outside(version3, range, "<", options);
   module.exports = ltr;
 });
 
@@ -21762,12 +21698,12 @@ var require_simplify = __commonJS((exports, module) => {
     let first = null;
     let prev = null;
     const v2 = versions2.sort((a2, b2) => compare(a2, b2, options));
-    for (const version2 of v2) {
-      const included = satisfies(version2, range, options);
+    for (const version3 of v2) {
+      const included = satisfies(version3, range, options);
       if (included) {
-        prev = version2;
+        prev = version3;
         if (!first) {
-          first = version2;
+          first = version3;
         }
       } else {
         if (prev) {
@@ -22059,38 +21995,38 @@ function macOSVersion() {
   if (!isMacOS) {
     return;
   }
-  if (!version2) {
+  if (!version3) {
     const file2 = fs6.readFileSync("/System/Library/CoreServices/SystemVersion.plist", "utf8");
     const matches = parseVersion(file2);
     if (!matches) {
       return;
     }
-    version2 = clean(matches);
+    version3 = clean(matches);
   }
-  return version2;
+  return version3;
 }
-function isMacOSVersionGreaterThanOrEqualTo(version3) {
+function isMacOSVersionGreaterThanOrEqualTo(version4) {
   if (!isMacOS) {
     return false;
   }
-  version3 = version3.replace("10.16", "11");
-  return import_semver.default.gte(macOSVersion(), clean(version3));
+  version4 = version4.replace("10.16", "11");
+  return import_semver.default.gte(macOSVersion(), clean(version4));
 }
-function assertMacOSVersionGreaterThanOrEqualTo(version3) {
-  version3 = version3.replace("10.16", "11");
-  if (!isMacOSVersionGreaterThanOrEqualTo(version3)) {
-    throw new Error(`Requires macOS ${version3} or later`);
+function assertMacOSVersionGreaterThanOrEqualTo(version4) {
+  version4 = version4.replace("10.16", "11");
+  if (!isMacOSVersionGreaterThanOrEqualTo(version4)) {
+    throw new Error(`Requires macOS ${version4} or later`);
   }
 }
-var import_semver, isMacOS, version2, clean = (version3) => {
-  const { length } = version3.split(".");
+var import_semver, isMacOS, version3, clean = (version4) => {
+  const { length } = version4.split(".");
   if (length === 1) {
-    return `${version3}.0.0`;
+    return `${version4}.0.0`;
   }
   if (length === 2) {
-    return `${version3}.0`;
+    return `${version4}.0`;
   }
-  return version3;
+  return version4;
 }, parseVersion = (plist) => {
   const matches = /<key>ProductVersion<\/key>\s*<string>([\d.]+)<\/string>/.exec(plist);
   if (!matches) {
@@ -29565,35 +29501,46 @@ var init_upstream_error_advice = __esm(() => {
 });
 
 // src/lib/errors/error.ts
+async function forwardAuthFatal(c5, error51) {
+  let outcome = "auth_fatal";
+  try {
+    outcome = await rearmCopilotAuth();
+  } catch (handlerErr) {
+    consola.warn("rearmCopilotAuth threw while forwarding upstream error:", handlerErr);
+  }
+  if (outcome !== "auth_fatal") {
+    return c5.json({
+      error: {
+        message: outcome === "online" ? "Re-authenticated with Copilot after a stale token; please retry the request." : "Reconnecting to Copilot; please retry the request.",
+        type: "server_error"
+      }
+    }, 503);
+  }
+  try {
+    await markAuthDegraded(error51);
+  } catch (handlerErr) {
+    consola.warn("markAuthDegraded failed while forwarding upstream error:", handlerErr);
+  }
+  return c5.json({
+    error: {
+      message: error51.message,
+      type: "auth_fatal",
+      ...error51.remediationUrl ? { remediation_url: error51.remediationUrl } : {}
+    }
+  }, error51.status);
+}
 async function forwardError(c5, error51) {
   consola.error("Error occurred:", error51);
-  if (error51 instanceof CopilotAuthFatalError) {
-    let outcome = "auth_fatal";
-    try {
-      outcome = await rearmCopilotAuth();
-    } catch (handlerErr) {
-      consola.warn("rearmCopilotAuth threw while forwarding upstream error:", handlerErr);
-    }
-    if (outcome !== "auth_fatal") {
-      return c5.json({
-        error: {
-          message: outcome === "online" ? "Re-authenticated with Copilot after a stale token; please retry the request." : "Reconnecting to Copilot; please retry the request.",
-          type: "server_error"
-        }
-      }, 503);
-    }
-    try {
-      await markAuthDegraded(error51);
-    } catch (handlerErr) {
-      consola.warn("markAuthDegraded failed while forwarding upstream error:", handlerErr);
-    }
+  if (error51 instanceof CopilotTokenStaleError) {
     return c5.json({
       error: {
         message: error51.message,
-        type: "auth_fatal",
-        ...error51.remediationUrl ? { remediation_url: error51.remediationUrl } : {}
+        type: "upstream_credential_stale"
       }
-    }, error51.status);
+    }, 503);
+  }
+  if (error51 instanceof CopilotAuthFatalError) {
+    return forwardAuthFatal(c5, error51);
   }
   if (error51 instanceof HTTPError) {
     if (error51.response.status === 429) {
@@ -29627,7 +29574,7 @@ async function forwardError(c5, error51) {
     }
   }, 500);
 }
-var HTTPError, CopilotAuthFatalError;
+var HTTPError, CopilotAuthFatalError, CopilotTokenStaleError;
 var init_error2 = __esm(() => {
   init_dist();
   init_auth_controller();
@@ -29647,6 +29594,13 @@ var init_error2 = __esm(() => {
       super(message);
       this.status = status;
       this.remediationUrl = remediationUrl;
+    }
+  };
+  CopilotTokenStaleError = class CopilotTokenStaleError extends Error {
+    reason;
+    constructor(reason) {
+      super("maximal's GitHub Copilot token expired and the background refresh is failing" + (reason ? ` (${reason})` : "") + ". This is not a problem with this client's credentials \u2014 signing in" + " again here will not help. Requests resume automatically once the" + " refresh succeeds; check maximal's connection to GitHub.");
+      this.reason = reason;
     }
   };
 });
@@ -30668,36 +30622,6 @@ var init_deviceid = __esm(() => {
   windows64Architectures = new Set(["AMD64", "ARM64", "IA64"]);
 });
 
-// src/lib/auth/auth-types.ts
-function parseAccountType(input) {
-  const result = accountTypeSchema.safeParse(input);
-  if (!result.success) {
-    throw new Error(`Invalid account type "${input}". Must be one of: ${ACCOUNT_TYPES.join(", ")}.`);
-  }
-  return result.data;
-}
-function toCopilotHost(url2) {
-  let parsed;
-  try {
-    parsed = new URL(url2);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== "https:")
-    return null;
-  return parsed.origin;
-}
-function hostForAccountType(accountType) {
-  const url2 = accountType === "individual" ? "https://api.githubcopilot.com" : `https://api.${accountType}.githubcopilot.com`;
-  return url2;
-}
-var ACCOUNT_TYPES, accountTypeSchema;
-var init_auth_types = __esm(() => {
-  init_zod();
-  ACCOUNT_TYPES = ["individual", "business", "enterprise"];
-  accountTypeSchema = exports_external.enum(ACCOUNT_TYPES);
-});
-
 // src/lib/models/compact.ts
 var COMPACT_REQUEST = 1, COMPACT_AUTO_CONTINUE = 2, compactSystemPromptStart = "You are a helpful AI assistant tasked with summarizing conversations", compactOpenCodeSystemPromptStart = "You are an anchored context summarization assistant for coding sessions.", compactSystemPromptStarts, compactTextOnlyGuard = "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.", compactSummaryPromptStart = "Your task is to create a detailed summary of the conversation so far", compactAutoContinueClaudeCodePromptStart = "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.", compactAutoContinueOpenCodePromptStart = "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.", compactAutoContinueOpenCodePromptStart2 = "The previous request exceeded the provider's size limit due to large media attachments. The conversation was compacted and media files were removed from context.", compactAutoContinuePromptStarts, compactMessageSections;
 var init_compact = __esm(() => {
@@ -30725,8 +30649,8 @@ async function resolveOpencodeVersion() {
     const npmRootPath = await getGlobalNpmRoot();
     const opencodePackagePath = path11.join(npmRootPath, "opencode-ai", "package.json");
     const packageJson = await readFile(opencodePackagePath, "utf8");
-    const { version: version3 } = OpencodePackageSchema.parse(JSON.parse(packageJson));
-    opencodeVersionCache = version3;
+    const { version: version4 } = OpencodePackageSchema.parse(JSON.parse(packageJson));
+    opencodeVersionCache = version4;
   } catch (error51) {
     consola.warn(`Failed to resolve opencode version`, error51);
   }
@@ -30837,9 +30761,9 @@ var isOpencodeOauthApp = () => {
   "content-type": "application/json",
   accept: "application/json"
 }), getOpencodeVersion = () => {
-  const version3 = getCachedOpencodeVersion();
-  if (version3) {
-    return "opencode/" + version3;
+  const version4 = getCachedOpencodeVersion();
+  if (version4) {
+    return "opencode/" + version4;
   }
   return OPENCODE_VERSION;
 }, OPENCODE_SEMVER = "1.17.20", OPENCODE_VERSION, OPENCODE_LLM_USER_AGENT, COPILOT_VERSION = "0.46.0", EDITOR_PLUGIN_VERSION, USER_AGENT, CLAUDE_AGENT_USER_AGENT = "vscode_claude_code/2.1.209 (external, sdk-ts, agent-sdk/0.2.112)", API_VERSION = "2025-10-01", copilotBaseUrl = (state2) => {
@@ -32546,7 +32470,7 @@ function findGithubUrl(text) {
 }
 
 // src/services/github/get-copilot-token.ts
-var getCopilotToken = async () => {
+var DEFAULT_REFRESH_IN_SECONDS = 1500, CopilotTokenResponseSchema, getCopilotToken = async () => {
   const response = await sendRequest(getCopilotTokenUrl(), {
     headers: githubHeaders(),
     timeoutMs: COPILOT_TOKEN_TIMEOUT_MS
@@ -32562,18 +32486,38 @@ var getCopilotToken = async () => {
     }
     throw new HTTPError("Failed to get Copilot token", response);
   }
-  return await response.json();
+  return CopilotTokenResponseSchema.parse(await response.json());
 };
 var init_get_copilot_token = __esm(() => {
   init_dist();
+  init_zod();
   init_api_config();
   init_error2();
   init_send_request();
   init_state();
+  CopilotTokenResponseSchema = exports_external.object({
+    expires_at: exports_external.number().catch(0),
+    refresh_in: exports_external.number().nonnegative().catch(DEFAULT_REFRESH_IN_SECONDS),
+    token: exports_external.string(),
+    endpoints: exports_external.object({ api: exports_external.string().optional() }).loose().optional().catch(undefined)
+  }).loose();
 });
 
 // src/lib/auth/token.ts
 import { setTimeout as delay2 } from "timers/promises";
+function describeRefreshFailure(diagnosis, error51) {
+  if (diagnosis)
+    return formatDiagnosisForLog(diagnosis);
+  return error51 instanceof Error ? error51.message : String(error51);
+}
+function announceIfStale(alreadyAnnounced) {
+  if (alreadyAnnounced || copilotTokenHealth() !== CREDENTIAL_HEALTH.expired) {
+    return alreadyAnnounced;
+  }
+  const { consecutiveFailures, lastFailureReason } = copilotRefreshHealth();
+  log3.error(`Copilot token is now PAST ITS EXPIRY and the refresh is still failing after ${consecutiveFailures} attempt(s) \u2014 requests will be failed locally (503) instead of sent with a dead credential: ${lastFailureReason ?? "unknown"}`);
+  return true;
+}
 async function logRefreshFailure(label, error51) {
   if (!isTransportError(error51)) {
     log3.error(`${label}:`, error51);
@@ -32674,11 +32618,24 @@ async function setupGitHubToken(options) {
     log3.info(`Logged in as ${login ?? "(unknown)"}`);
   } catch (error51) {
     if (error51 instanceof HTTPError) {
-      log3.error("Failed to get GitHub token:", await error51.response.json());
+      log3.error("Failed to get GitHub token:", await readErrorBody(error51));
       throw error51;
     }
     log3.error("Failed to get GitHub token:", error51);
     throw error51;
+  }
+}
+async function readErrorBody(error51) {
+  let text;
+  try {
+    text = await error51.response.text();
+  } catch {
+    return `<unreadable ${error51.response.status} body>`;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
   }
 }
 async function logUser() {
@@ -32723,10 +32680,12 @@ var log3, clearActiveNeedsReauth = () => {
   }
   let token;
   let refresh_in;
+  let expiresAtMs;
   try {
     const result = await getCopilotToken2();
     token = result.token;
     refresh_in = result.refresh_in;
+    expiresAtMs = resolveCopilotExpiryMs(result.expires_at, result.refresh_in);
     applyCopilotApiUrl(result.endpoints?.api);
   } catch (error51) {
     if (error51 instanceof CopilotAuthFatalError) {
@@ -32741,7 +32700,7 @@ var log3, clearActiveNeedsReauth = () => {
     }
     throw error51;
   }
-  setCopilotToken(token);
+  setCopilotToken(token, expiresAtMs);
   clearActiveNeedsReauth();
   log3.debug("GitHub Copilot Token fetched successfully!");
   if (state.showToken) {
@@ -32757,9 +32716,17 @@ var log3, clearActiveNeedsReauth = () => {
       copilotRefreshLoopController = null;
     }
   });
-}, REFRESH_POLL_INTERVAL_MS = 15000, EARLY_REFRESH_BUFFER_MS = 60000, RETRY_REFRESH_DELAY_MS = 15000, MIN_REFRESH_DELAY_MS = 1000, maxFatalRefreshRetries = 3, getRefreshDeadlineMs = (refreshIn, nowMs = Date.now()) => nowMs + Math.max(refreshIn * 1000 - EARLY_REFRESH_BUFFER_MS, MIN_REFRESH_DELAY_MS), getRefreshPollDelayMs = (refreshAtMs, nowMs = Date.now()) => Math.min(Math.max(refreshAtMs - nowMs, 0), REFRESH_POLL_INTERVAL_MS), runCopilotRefreshLoop = async (refreshIn, signal) => {
+}, REFRESH_POLL_INTERVAL_MS = 15000, EARLY_REFRESH_BUFFER_MS = 60000, RETRY_REFRESH_DELAY_MS = 15000, MIN_REFRESH_DELAY_MS = 1000, maxFatalRefreshRetries = 3, getRefreshDeadlineMs = (refreshIn, nowMs = Date.now()) => nowMs + Math.max(refreshIn * 1000 - EARLY_REFRESH_BUFFER_MS, MIN_REFRESH_DELAY_MS), MAX_PLAUSIBLE_TOKEN_TTL_MS, REFRESH_TO_EXPIRY_SLACK_MS = 300000, resolveCopilotExpiryMs = (expiresAtSeconds, refreshIn, nowMs = Date.now()) => {
+  const absoluteMs = expiresAtSeconds * 1000;
+  const impliedTtlMs = absoluteMs - nowMs;
+  if (impliedTtlMs > 0 && impliedTtlMs <= MAX_PLAUSIBLE_TOKEN_TTL_MS) {
+    return absoluteMs;
+  }
+  return nowMs + refreshIn * 1000 + REFRESH_TO_EXPIRY_SLACK_MS;
+}, getRefreshPollDelayMs = (refreshAtMs, nowMs = Date.now()) => Math.min(Math.max(refreshAtMs - nowMs, 0), REFRESH_POLL_INTERVAL_MS), runCopilotRefreshLoop = async (refreshIn, signal) => {
   let refreshAtMs = getRefreshDeadlineMs(refreshIn);
   let fatalRetries = 0;
+  let staleAnnounced = false;
   while (!signal.aborted) {
     const nextDelayMs = getRefreshPollDelayMs(refreshAtMs);
     if (nextDelayMs > 0) {
@@ -32774,13 +32741,14 @@ var log3, clearActiveNeedsReauth = () => {
     }
     log3.debug("Refreshing Copilot token");
     try {
-      const { token, refresh_in, endpoints } = await getCopilotToken2();
-      setCopilotToken(token);
+      const { token, refresh_in, expires_at, endpoints } = await getCopilotToken2();
+      setCopilotToken(token, resolveCopilotExpiryMs(expires_at, refresh_in));
       applyCopilotApiUrl(endpoints?.api);
       refreshAtMs = getRefreshDeadlineMs(refresh_in);
       if (fatalRetries > 0)
         clearActiveNeedsReauth();
       fatalRetries = 0;
+      staleAnnounced = false;
       noteAuthSuccess();
       log3.debug("Copilot token refreshed");
       noteConnectivityRecovered();
@@ -32790,9 +32758,11 @@ var log3, clearActiveNeedsReauth = () => {
     } catch (error51) {
       if (error51 instanceof CopilotAuthFatalError) {
         fatalRetries++;
+        noteCopilotRefreshFailure(error51.message);
         if (fatalRetries < maxFatalRefreshRetries) {
           log3.warn(`Copilot rejected the GitHub token on refresh (attempt ${fatalRetries}/${maxFatalRefreshRetries}); retrying in ${RETRY_REFRESH_DELAY_MS / 1000}s before treating it as fatal:`, error51.message);
           refreshAtMs = Date.now() + RETRY_REFRESH_DELAY_MS;
+          staleAnnounced = announceIfStale(staleAnnounced);
           continue;
         }
         log3.warn(`Copilot persistently rejected the GitHub token (${fatalRetries} attempts); degrading without deleting the credential:`, error51.message);
@@ -32801,9 +32771,11 @@ var log3, clearActiveNeedsReauth = () => {
         return;
       }
       const diagnosis = await logRefreshFailure("Failed to refresh Copilot token", error51);
+      noteCopilotRefreshFailure(describeRefreshFailure(diagnosis, error51));
       noteConnectivityFailure(diagnosis);
       refreshAtMs = Date.now() + RETRY_REFRESH_DELAY_MS;
       log3.warn(`Retrying Copilot token refresh in ${RETRY_REFRESH_DELAY_MS / 1000}s`);
+      staleAnnounced = announceIfStale(staleAnnounced);
     }
   }
 }, GITHUB_TOKEN_PATH2;
@@ -32828,6 +32800,7 @@ var init_token = __esm(() => {
   log3 = createTeeLogger("auth");
   getCopilotToken2 = getCopilotToken;
   markAuthDegraded2 = markAuthDegraded;
+  MAX_PLAUSIBLE_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
   GITHUB_TOKEN_PATH2 = PATHS.GITHUB_TOKEN_PATH;
 });
 
@@ -33740,125 +33713,11 @@ var init_proxy = __esm(() => {
   init_proxy_from_env();
 });
 
-// src/lib/platform/cli-path.ts
-import fs14 from "fs";
-import os6 from "os";
-import path15 from "path";
-function isAppBundlePath(execPath2) {
-  return /\.app\/Contents\/MacOS\//u.test(execPath2);
-}
-function describeLaunchSource(execPath2 = process.execPath) {
-  if (isAppBundlePath(execPath2))
-    return { path: execPath2, kind: "dmg-app" };
-  if (/\/target\/(?:debug|release)\//u.test(execPath2) || /\/bun$/u.test(execPath2))
-    return { path: execPath2, kind: "dev" };
-  if (/\/(?:homebrew|Cellar)\//u.test(execPath2))
-    return { path: execPath2, kind: "homebrew" };
-  if (execPath2.includes("/.local/bin/"))
-    return { path: execPath2, kind: "user-bin" };
-  return { path: execPath2, kind: "other" };
-}
-function ensureCliSymlink(opts = {}) {
-  const execPath2 = opts.execPath ?? process.execPath;
-  const home = opts.home ?? os6.homedir();
-  const platform3 = opts.platform ?? process.platform;
-  const binDir = path15.join(home, ".local", "bin");
-  const symlinkPath = path15.join(binDir, "maximal");
-  const base2 = {
-    symlinkPath,
-    target: execPath2,
-    linked: false,
-    binDirCreated: false,
-    pathBlockAdded: false
-  };
-  if (platform3 !== "darwin")
-    return { ...base2, skipped: "not-macos" };
-  if (!isAppBundlePath(execPath2))
-    return { ...base2, skipped: "not-app-bundle" };
-  const binDirExisted = fs14.existsSync(binDir);
-  let binDirCreated = false;
-  if (!binDirExisted) {
-    try {
-      fs14.mkdirSync(binDir, { recursive: true });
-      binDirCreated = true;
-    } catch {
-      return base2;
-    }
-  }
-  let existing;
-  try {
-    existing = fs14.lstatSync(symlinkPath);
-  } catch {
-    existing = undefined;
-  }
-  if (existing && !existing.isSymbolicLink()) {
-    return { ...base2, binDirCreated, skipped: "foreign-file-at-target" };
-  }
-  const linked = relinkIfStale(symlinkPath, execPath2, existing !== undefined);
-  const pathBlockAdded = binDirCreated ? addFirstLaunchPathBlock(home) : false;
-  return {
-    symlinkPath,
-    target: execPath2,
-    linked,
-    binDirCreated,
-    pathBlockAdded
-  };
-}
-function relinkIfStale(symlinkPath, target, present) {
-  let currentTarget;
-  if (present) {
-    try {
-      currentTarget = fs14.readlinkSync(symlinkPath);
-    } catch {
-      currentTarget = undefined;
-    }
-  }
-  if (currentTarget === target)
-    return false;
-  try {
-    if (present)
-      fs14.unlinkSync(symlinkPath);
-    fs14.symlinkSync(target, symlinkPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function addFirstLaunchPathBlock(home = os6.homedir()) {
-  const rc = path15.join(home, ".zprofile");
-  let existing;
-  try {
-    existing = fs14.readFileSync(rc, "utf8");
-  } catch {
-    existing = "";
-  }
-  if (existing.includes(FIRST_LAUNCH_PATH_MARKER_START))
-    return false;
-  const needsLeadingNewline = existing.length > 0 && !existing.endsWith(`
-`);
-  const block = [
-    FIRST_LAUNCH_PATH_MARKER_START,
-    PATH_BLOCK_BODY,
-    FIRST_LAUNCH_PATH_MARKER_END,
-    ""
-  ].join(`
-`);
-  try {
-    fs14.writeFileSync(rc, existing + (needsLeadingNewline ? `
-` : "") + block);
-    return true;
-  } catch {
-    return false;
-  }
-}
-var FIRST_LAUNCH_PATH_MARKER_START = "# >>> maximal PATH >>>", FIRST_LAUNCH_PATH_MARKER_END = "# <<< maximal PATH <<<", PATH_BLOCK_BODY = 'export PATH="$HOME/.local/bin:$PATH"';
-var init_cli_path = () => {};
-
 // src/lib/platform/replace-running.ts
 import { spawnSync as spawnSync2 } from "child_process";
-import fs15 from "fs/promises";
+import fs14 from "fs/promises";
 import net2 from "net";
-import path16 from "path";
+import path15 from "path";
 function defaultSleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -33882,7 +33741,7 @@ function defaultProbePort(port2) {
 }
 async function defaultReadPidfile() {
   try {
-    const raw = await fs15.readFile(PIDFILE_PATH, "utf8");
+    const raw = await fs14.readFile(PIDFILE_PATH, "utf8");
     const pid = Number.parseInt(raw.trim(), 10);
     return Number.isInteger(pid) && pid > 0 ? pid : null;
   } catch {
@@ -34014,31 +33873,31 @@ async function killEscalate(pid, deps) {
 }
 async function writePidfile(pid = process.pid) {
   try {
-    await fs15.writeFile(PIDFILE_PATH, String(pid), { mode: 384 });
+    await fs14.writeFile(PIDFILE_PATH, String(pid), { mode: 384 });
   } catch {}
 }
 async function removePidfile() {
   try {
-    await fs15.unlink(PIDFILE_PATH);
+    await fs14.unlink(PIDFILE_PATH);
   } catch {}
 }
 var PIDFILE_PATH;
 var init_replace_running = __esm(() => {
   init_paths();
-  PIDFILE_PATH = path16.join(PATHS.APP_DIR, "maximal.pid");
+  PIDFILE_PATH = path15.join(PATHS.APP_DIR, "maximal.pid");
 });
 
 // src/lib/platform/sqlite.ts
-import fs16 from "fs/promises";
-import path17 from "path";
-function parseNodeVersion(version3) {
-  return version3.split(".", 3).map((part) => {
+import fs15 from "fs/promises";
+import path16 from "path";
+function parseNodeVersion(version4) {
+  return version4.split(".", 3).map((part) => {
     const parsed = Number.parseInt(part, 10);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
   });
 }
-function isNodeSqliteSupportedVersion(version3) {
-  const current2 = parseNodeVersion(version3);
+function isNodeSqliteSupportedVersion(version4) {
+  const current2 = parseNodeVersion(version4);
   const minimum = parseNodeVersion(MINIMUM_NODE_SQLITE_VERSION);
   for (const [index, minimumPart] of minimum.entries()) {
     const currentPart = current2[index] ?? 0;
@@ -34080,9 +33939,9 @@ async function openNodeDatabase(dbPath) {
   return new sqlite.DatabaseSync(dbPath);
 }
 async function openSqliteDatabase(dbPath) {
-  const dir = path17.dirname(dbPath);
+  const dir = path16.dirname(dbPath);
   if (dbPath !== ":memory:" && dir !== ".") {
-    await fs16.mkdir(dir, { recursive: true });
+    await fs15.mkdir(dir, { recursive: true });
   }
   return isBunRuntime() ? openBunDatabase(dbPath) : openNodeDatabase(dbPath);
 }
@@ -34108,8 +33967,16 @@ class SqliteDbStore {
     db.close?.();
   }
   async open() {
-    const db = await openSqliteDatabase(this.options.getPath());
-    this.options.initialize?.(db);
+    const openImpl = this.options.open ?? openSqliteDatabase;
+    const db = await openImpl(this.options.getPath());
+    try {
+      this.options.initialize?.(db);
+    } catch (error51) {
+      try {
+        db.close?.();
+      } catch {}
+      throw error51;
+    }
     return db;
   }
 }
@@ -34117,8 +33984,8 @@ function getUserVersion(db) {
   const row = db.prepare("PRAGMA user_version").get();
   return typeof row?.user_version === "number" ? row.user_version : 0;
 }
-function setUserVersion(db, version3) {
-  db.exec(`PRAGMA user_version = ${Math.floor(version3)}`);
+function setUserVersion(db, version4) {
+  db.exec(`PRAGMA user_version = ${Math.floor(version4)}`);
 }
 function runMigrations(db, migrations) {
   let current2 = getUserVersion(db);
@@ -34148,9 +34015,9 @@ var init_sqlite = __esm(() => {
 });
 
 // src/lib/token-usage/store.ts
-import path18 from "path";
+import path17 from "path";
 function getDbPath() {
-  return process.env[DB_PATH_ENV] ?? path18.join(PATHS.APP_DIR, DEFAULT_DB_FILENAME);
+  return process.env[DB_PATH_ENV] ?? path17.join(PATHS.APP_DIR, DEFAULT_DB_FILENAME);
 }
 function getDb() {
   return tokenUsageDbStore.getDb();
@@ -34709,6 +34576,8 @@ function runRetentionSweep() {
     if (removed > 0) {
       consola.debug(`Pruned ${removed} token-usage event(s) older than ${days}d`);
     }
+  }, (error51) => {
+    consola.warn("Token-usage retention sweep failed:", error51);
   });
 }
 function startTokenUsageRetention() {
@@ -34870,12 +34739,12 @@ var init_token_usage = __esm(() => {
 });
 
 // src/lib/update/version.ts
-import fs17 from "fs";
-import path19 from "path";
+import fs16 from "fs";
+import path18 from "path";
 function resolveGitFile(candidate) {
   let pointer;
   try {
-    pointer = fs17.readFileSync(candidate, "utf8").trim();
+    pointer = fs16.readFileSync(candidate, "utf8").trim();
   } catch (err) {
     if (err instanceof Error && "code" in err && err.code === "EISDIR") {
       return { worktree: candidate, common: candidate };
@@ -34885,11 +34754,11 @@ function resolveGitFile(candidate) {
   const match = pointer.match(/^gitdir: (\S.*)$/u);
   if (!match)
     return;
-  const worktreeDir = path19.isAbsolute(match[1]) ? match[1] : path19.resolve(path19.dirname(candidate), match[1]);
+  const worktreeDir = path18.isAbsolute(match[1]) ? match[1] : path18.resolve(path18.dirname(candidate), match[1]);
   let commonDir = worktreeDir;
   try {
-    const rel = fs17.readFileSync(path19.join(worktreeDir, "commondir"), "utf8").trim();
-    commonDir = path19.isAbsolute(rel) ? rel : path19.resolve(worktreeDir, rel);
+    const rel = fs16.readFileSync(path18.join(worktreeDir, "commondir"), "utf8").trim();
+    commonDir = path18.isAbsolute(rel) ? rel : path18.resolve(worktreeDir, rel);
   } catch {}
   return { worktree: worktreeDir, common: commonDir };
 }
@@ -34897,17 +34766,17 @@ function findGitDirs() {
   const starts = [
     process.cwd(),
     PATHS.APP_DIR,
-    path19.dirname(new URL(import.meta.url).pathname)
+    path18.dirname(new URL(import.meta.url).pathname)
   ];
   const seen = new Set;
   for (const start of starts) {
     let dir = start;
     while (dir && !seen.has(dir)) {
       seen.add(dir);
-      const resolved = resolveGitFile(path19.join(dir, ".git"));
+      const resolved = resolveGitFile(path18.join(dir, ".git"));
       if (resolved)
         return resolved;
-      const parent = path19.dirname(dir);
+      const parent = path18.dirname(dir);
       if (parent === dir)
         break;
       dir = parent;
@@ -34917,7 +34786,7 @@ function findGitDirs() {
 }
 function resolveRefFromPackedRefs(gitDir, ref) {
   try {
-    const packed = fs17.readFileSync(path19.join(gitDir, "packed-refs"), "utf8");
+    const packed = fs16.readFileSync(path18.join(gitDir, "packed-refs"), "utf8");
     for (const line of packed.split(`
 `)) {
       if (line.startsWith("#") || line.length === 0)
@@ -34937,7 +34806,7 @@ function readGitVersion() {
     return { sha: undefined, branch: undefined };
   let head;
   try {
-    head = fs17.readFileSync(path19.join(dirs.worktree, "HEAD"), "utf8").trim();
+    head = fs16.readFileSync(path18.join(dirs.worktree, "HEAD"), "utf8").trim();
   } catch {
     return { sha: undefined, branch: undefined };
   }
@@ -34951,7 +34820,7 @@ function readGitVersion() {
   let sha;
   for (const dir of [dirs.worktree, dirs.common]) {
     try {
-      const looseRef = fs17.readFileSync(path19.join(dir, ref), "utf8").trim();
+      const looseRef = fs16.readFileSync(path18.join(dir, ref), "utf8").trim();
       if (SHA_RE.test(looseRef)) {
         sha = looseRef;
         break;
@@ -35028,14 +34897,14 @@ var init_get_copilot_usage = __esm(() => {
   init_send_request();
   init_state();
   QuotaDetailSchema = exports_external.object({
-    entitlement: exports_external.number(),
-    overage_count: exports_external.number(),
-    overage_permitted: exports_external.boolean(),
-    percent_remaining: exports_external.number(),
-    quota_id: exports_external.string(),
-    quota_remaining: exports_external.number(),
-    remaining: exports_external.number(),
-    unlimited: exports_external.boolean()
+    entitlement: exports_external.number().optional(),
+    overage_count: exports_external.number().optional(),
+    overage_permitted: exports_external.boolean().optional(),
+    percent_remaining: exports_external.number().optional(),
+    quota_id: exports_external.string().optional(),
+    quota_remaining: exports_external.number().optional(),
+    remaining: exports_external.number().optional(),
+    unlimited: exports_external.boolean().optional()
   }).loose();
   QuotaSnapshotsSchema = exports_external.object({
     chat: QuotaDetailSchema.optional(),
@@ -35153,8 +35022,13 @@ var init_auth_recovery = __esm(() => {
 });
 
 // src/lib/auth/secrets.ts
-import fs18 from "fs";
-import path20 from "path";
+import fs17 from "fs";
+import path19 from "path";
+function modeIsOwnerOnly(mode) {
+  if (process.platform === "win32")
+    return true;
+  return (mode & 511) === SAFE_FILE_MODE;
+}
 function readSecret(opts) {
   const env3 = opts.env ?? process.env;
   const envVal = env3[opts.envVar];
@@ -35162,15 +35036,15 @@ function readSecret(opts) {
     return { value: envVal, source: "env" };
   }
   const dir = opts.dir ?? SECRETS_DIR;
-  const file2 = path20.join(dir, opts.fileName);
+  const file2 = path19.join(dir, opts.fileName);
   let fd;
   try {
-    fd = fs18.openSync(file2, fs18.constants.O_RDONLY | fs18.constants.O_NOFOLLOW);
+    fd = fs17.openSync(file2, fs17.constants.O_RDONLY | fs17.constants.O_NOFOLLOW);
   } catch {
     return { value: undefined, source: "unset" };
   }
   try {
-    const stats = fs18.fstatSync(fd);
+    const stats = fs17.fstatSync(fd);
     if (!stats.isFile()) {
       return {
         value: undefined,
@@ -35179,14 +35053,14 @@ function readSecret(opts) {
       };
     }
     const mode = stats.mode & 511;
-    if (mode !== SAFE_FILE_MODE) {
+    if (!modeIsOwnerOnly(mode)) {
       const msg = `${file2} has insecure mode ${mode.toString(8).padStart(3, "0")} (expected 600); skipped`;
       consola.warn(msg);
       return { value: undefined, source: "unset", diagnostic: msg };
     }
     let value;
     try {
-      value = fs18.readFileSync(fd, "utf8").trim();
+      value = fs17.readFileSync(fd, "utf8").trim();
     } catch {
       return {
         value: undefined,
@@ -35200,7 +35074,7 @@ function readSecret(opts) {
     return { value, source: "file" };
   } finally {
     try {
-      fs18.closeSync(fd);
+      fs17.closeSync(fd);
     } catch {}
   }
 }
@@ -35213,29 +35087,29 @@ function loadSecretIntoEnv(opts) {
 }
 function ensureSecretsDir(dir = SECRETS_DIR) {
   try {
-    fs18.mkdirSync(dir, { recursive: true, mode: SAFE_DIR_MODE });
+    fs17.mkdirSync(dir, { recursive: true, mode: SAFE_DIR_MODE });
   } catch {}
 }
 function secretIsFromFile(fileName, value) {
-  const filePath = path20.join(SECRETS_DIR, fileName);
+  const filePath = path19.join(SECRETS_DIR, fileName);
   let fd;
   try {
-    fd = fs18.openSync(filePath, fs18.constants.O_RDONLY | fs18.constants.O_NOFOLLOW);
+    fd = fs17.openSync(filePath, fs17.constants.O_RDONLY | fs17.constants.O_NOFOLLOW);
   } catch {
     return false;
   }
   try {
-    const stats = fs18.fstatSync(fd);
+    const stats = fs17.fstatSync(fd);
     if (!stats.isFile())
       return false;
-    if ((stats.mode & 511) !== SAFE_FILE_MODE)
+    if (!modeIsOwnerOnly(stats.mode))
       return false;
-    return fs18.readFileSync(fd, "utf8").trim() === value;
+    return fs17.readFileSync(fd, "utf8").trim() === value;
   } catch {
     return false;
   } finally {
     try {
-      fs18.closeSync(fd);
+      fs17.closeSync(fd);
     } catch {}
   }
 }
@@ -35243,7 +35117,7 @@ var SECRETS_DIR, SAFE_FILE_MODE = 384, SAFE_DIR_MODE = 448, SECRET_DEFS;
 var init_secrets = __esm(() => {
   init_dist();
   init_paths();
-  SECRETS_DIR = path20.join(PATHS.APP_DIR, "secrets");
+  SECRETS_DIR = path19.join(PATHS.APP_DIR, "secrets");
   SECRET_DEFS = [
     { name: "ollama_api_key", envVar: "OLLAMA_API_KEY", fileName: "ollama" },
     {
@@ -35327,7 +35201,7 @@ ${state.models?.data.map((model) => `- ${model.id}`).join(`
       });
     }
   }
-  consola.warn("No GitHub token; proxy is up in unauthenticated mode \u2014 sign in via /settings or run `maximal auth`.");
+  consola.warn("No GitHub token; proxy is up in unauthenticated mode \u2014 run `maximal auth` to sign in.");
 }
 function bootSecrets() {
   ensureSecretsDir();
@@ -35421,13 +35295,16 @@ var init_small_model = () => {};
 // src/lib/platform/shell.ts
 import { execSync } from "child_process";
 import process18 from "process";
-function getShell() {
-  const { platform: platform3, ppid, env: env3 } = process18;
+function getShell(probe = {}) {
+  const platform3 = probe.platform ?? process18.platform;
+  const ppid = probe.ppid ?? process18.ppid;
+  const env3 = probe.env ?? process18.env;
+  const run = probe.run ?? defaultRun;
   if (platform3 === "win32") {
     try {
-      const command = `wmic process get ParentProcessId,Name | findstr "${ppid}"`;
-      const parentProcess = execSync(command, { stdio: "pipe" }).toString();
-      if (parentProcess.toLowerCase().includes("powershell.exe")) {
+      const output = run(`tasklist /FI "PID eq ${ppid}" /NH /FO CSV`);
+      const parentImage = output.toLowerCase();
+      if (parentImage.includes("powershell.exe") || parentImage.includes("pwsh.exe")) {
         return "powershell";
       }
     } catch {
@@ -35447,8 +35324,8 @@ function getShell() {
     return "sh";
   }
 }
-function generateEnvScript(envVars, commandToRun = "") {
-  const shell = getShell();
+function generateEnvScript(envVars, commandToRun = "", probe = {}) {
+  const shell = getShell(probe);
   const filteredEnvVars = Object.entries(envVars).filter(([, value]) => value !== undefined);
   let commandBlock;
   switch (shell) {
@@ -35476,6 +35353,7 @@ function generateEnvScript(envVars, commandToRun = "") {
   }
   return commandBlock || commandToRun;
 }
+var defaultRun = (command) => execSync(command, { stdio: "pipe" }).toString();
 var init_shell = () => {};
 
 // src/lib/start/claude-code-flow.ts
@@ -35690,15 +35568,15 @@ var init_port = __esm(() => {
 });
 
 // src/lib/start/session-sentinel.ts
-import fs19 from "fs";
-import path21 from "path";
+import fs18 from "fs";
+import path20 from "path";
 function sentinelPath() {
-  return path21.join(PATHS.APP_DIR, SENTINEL_FILENAME);
+  return path20.join(PATHS.APP_DIR, SENTINEL_FILENAME);
 }
 function markSessionRunning() {
   try {
-    fs19.mkdirSync(PATHS.APP_DIR, { recursive: true });
-    fs19.writeFileSync(sentinelPath(), JSON.stringify({
+    fs18.mkdirSync(PATHS.APP_DIR, { recursive: true });
+    fs18.writeFileSync(sentinelPath(), JSON.stringify({
       pid: process.pid,
       started_at: new Date().toISOString()
     }));
@@ -35706,12 +35584,12 @@ function markSessionRunning() {
 }
 function clearSessionRunning() {
   try {
-    fs19.rmSync(sentinelPath(), { force: true });
+    fs18.rmSync(sentinelPath(), { force: true });
   } catch {}
 }
 function staleSessionMarkerPresent() {
   try {
-    return fs19.existsSync(sentinelPath());
+    return fs18.existsSync(sentinelPath());
   } catch {
     return false;
   }
@@ -35934,24 +35812,24 @@ var init_body = __esm(() => {
 });
 
 // node_modules/hono/dist/utils/url.js
-var splitPath = (path22) => {
-  const paths = path22.split("/");
+var splitPath = (path21) => {
+  const paths = path21.split("/");
   if (paths[0] === "") {
     paths.shift();
   }
   return paths;
 }, splitRoutingPath = (routePath) => {
-  const { groups, path: path22 } = extractGroupsFromPath(routePath);
-  const paths = splitPath(path22);
+  const { groups, path: path21 } = extractGroupsFromPath(routePath);
+  const paths = splitPath(path21);
   return replaceGroupMarks(paths, groups);
-}, extractGroupsFromPath = (path22) => {
+}, extractGroupsFromPath = (path21) => {
   const groups = [];
-  path22 = path22.replace(/\{[^}]+\}/g, (match, index) => {
+  path21 = path21.replace(/\{[^}]+\}/g, (match, index) => {
     const mark = `@${index}`;
     groups.push([mark, match]);
     return mark;
   });
-  return { groups, path: path22 };
+  return { groups, path: path21 };
 }, replaceGroupMarks = (paths, groups) => {
   for (let i3 = groups.length - 1;i3 >= 0; i3--) {
     const [mark] = groups[i3];
@@ -36002,8 +35880,8 @@ var splitPath = (path22) => {
       const queryIndex = url2.indexOf("?", i3);
       const hashIndex = url2.indexOf("#", i3);
       const end = queryIndex === -1 ? hashIndex === -1 ? undefined : hashIndex : hashIndex === -1 ? queryIndex : Math.min(queryIndex, hashIndex);
-      const path22 = url2.slice(start, end);
-      return tryDecodeURI(path22.includes("%25") ? path22.replace(/%25/g, "%2525") : path22);
+      const path21 = url2.slice(start, end);
+      return tryDecodeURI(path21.includes("%25") ? path21.replace(/%25/g, "%2525") : path21);
     } else if (charCode === 63 || charCode === 35) {
       break;
     }
@@ -36017,11 +35895,11 @@ var splitPath = (path22) => {
     sub = mergePath(sub, ...rest);
   }
   return `${base2?.[0] === "/" ? "" : "/"}${base2}${sub === "/" ? "" : `${base2?.at(-1) === "/" ? "" : "/"}${sub?.[0] === "/" ? sub.slice(1) : sub}`}`;
-}, checkOptionalParameter = (path22) => {
-  if (path22.charCodeAt(path22.length - 1) !== 63 || !path22.includes(":")) {
+}, checkOptionalParameter = (path21) => {
+  if (path21.charCodeAt(path21.length - 1) !== 63 || !path21.includes(":")) {
     return null;
   }
-  const segments = path22.split("/");
+  const segments = path21.split("/");
   const results = [];
   let basePath = "";
   segments.forEach((segment) => {
@@ -36136,9 +36014,9 @@ var init_request = __esm(() => {
     routeIndex = 0;
     path;
     bodyCache = {};
-    constructor(request, path22 = "/", matchResult = [[]]) {
+    constructor(request, path21 = "/", matchResult = [[]]) {
       this.raw = request;
-      this.path = path22;
+      this.path = path21;
       this.#matchResult = matchResult;
       this.#validatedData = {};
     }
@@ -36498,8 +36376,8 @@ var notFoundHandler = (c5) => {
         return this;
       };
     });
-    this.on = (method, path22, ...handlers) => {
-      for (const p of [path22].flat()) {
+    this.on = (method, path21, ...handlers) => {
+      for (const p of [path21].flat()) {
         this.#path = p;
         for (const m2 of [method].flat()) {
           handlers.map((handler2) => {
@@ -36537,8 +36415,8 @@ var notFoundHandler = (c5) => {
   }
   #notFoundHandler = notFoundHandler;
   errorHandler = errorHandler;
-  route(path22, app) {
-    const subApp = this.basePath(path22);
+  route(path21, app) {
+    const subApp = this.basePath(path21);
     app.routes.map((r3) => {
       let handler2;
       if (app.errorHandler === errorHandler) {
@@ -36551,9 +36429,9 @@ var notFoundHandler = (c5) => {
     });
     return this;
   }
-  basePath(path22) {
+  basePath(path21) {
     const subApp = this.#clone();
-    subApp._basePath = mergePath(this._basePath, path22);
+    subApp._basePath = mergePath(this._basePath, path21);
     return subApp;
   }
   onError = (handler2) => {
@@ -36564,7 +36442,7 @@ var notFoundHandler = (c5) => {
     this.#notFoundHandler = handler2;
     return this;
   };
-  mount(path22, applicationHandler, options) {
+  mount(path21, applicationHandler, options) {
     let replaceRequest;
     let optionHandler;
     if (options) {
@@ -36590,7 +36468,7 @@ var notFoundHandler = (c5) => {
       return [c5.env, executionContext];
     };
     replaceRequest ||= (() => {
-      const mergedPath = mergePath(this._basePath, path22);
+      const mergedPath = mergePath(this._basePath, path21);
       const pathPrefixLength = mergedPath === "/" ? 0 : mergedPath.length;
       return (request) => {
         const url2 = new URL(request.url);
@@ -36605,14 +36483,14 @@ var notFoundHandler = (c5) => {
       }
       await next();
     };
-    this.#addRoute(METHOD_NAME_ALL, mergePath(path22, "*"), handler2);
+    this.#addRoute(METHOD_NAME_ALL, mergePath(path21, "*"), handler2);
     return this;
   }
-  #addRoute(method, path22, handler2) {
+  #addRoute(method, path21, handler2) {
     method = method.toUpperCase();
-    path22 = mergePath(this._basePath, path22);
-    const r3 = { basePath: this._basePath, path: path22, method, handler: handler2 };
-    this.router.add(method, path22, [handler2, r3]);
+    path21 = mergePath(this._basePath, path21);
+    const r3 = { basePath: this._basePath, path: path21, method, handler: handler2 };
+    this.router.add(method, path21, [handler2, r3]);
     this.routes.push(r3);
   }
   #handleError(err, c5) {
@@ -36625,10 +36503,10 @@ var notFoundHandler = (c5) => {
     if (method === "HEAD") {
       return (async () => new Response(null, await this.#dispatch(request, executionCtx, env3, "GET")))();
     }
-    const path22 = this.getPath(request, { env: env3 });
-    const matchResult = this.router.match(method, path22);
+    const path21 = this.getPath(request, { env: env3 });
+    const matchResult = this.router.match(method, path21);
     const c5 = new Context(request, {
-      path: path22,
+      path: path21,
       matchResult,
       env: env3,
       executionCtx,
@@ -36683,15 +36561,15 @@ var init_hono_base = __esm(() => {
 });
 
 // node_modules/hono/dist/router/reg-exp-router/matcher.js
-function match(method, path22) {
+function match(method, path21) {
   const matchers = this.buildAllMatchers();
-  const match2 = (method2, path23) => {
+  const match2 = (method2, path22) => {
     const matcher = matchers[method2] || matchers[METHOD_NAME_ALL];
-    const staticMatch = matcher[2][path23];
+    const staticMatch = matcher[2][path22];
     if (staticMatch) {
       return staticMatch;
     }
-    const match3 = path23.match(matcher[0]);
+    const match3 = path22.match(matcher[0]);
     if (!match3) {
       return [[], emptyParam];
     }
@@ -36699,7 +36577,7 @@ function match(method, path22) {
     return [matcher[1][index], match3];
   };
   this.match = match2;
-  return match2(method, path22);
+  return match2(method, path21);
 }
 var emptyParam;
 var init_matcher = __esm(() => {
@@ -36814,12 +36692,12 @@ var init_node3 = __esm(() => {
 var Trie = class {
   #context = { varIndex: 0 };
   #root = new Node;
-  insert(path22, index, pathErrorCheckOnly) {
+  insert(path21, index, pathErrorCheckOnly) {
     const paramAssoc = [];
     const groups = [];
     for (let i3 = 0;; ) {
       let replaced = false;
-      path22 = path22.replace(/\{[^}]+\}/g, (m2) => {
+      path21 = path21.replace(/\{[^}]+\}/g, (m2) => {
         const mark = `@\\${i3}`;
         groups[i3] = [mark, m2];
         i3++;
@@ -36830,7 +36708,7 @@ var Trie = class {
         break;
       }
     }
-    const tokens = path22.match(/(?::[^\/]+)|(?:\/\*$)|./g) || [];
+    const tokens = path21.match(/(?::[^\/]+)|(?:\/\*$)|./g) || [];
     for (let i3 = groups.length - 1;i3 >= 0; i3--) {
       const [mark] = groups[i3];
       for (let j = tokens.length - 1;j >= 0; j--) {
@@ -36870,8 +36748,8 @@ var init_trie = __esm(() => {
 });
 
 // node_modules/hono/dist/router/reg-exp-router/router.js
-function buildWildcardRegExp(path22) {
-  return wildcardRegExpCache[path22] ??= new RegExp(path22 === "*" ? "" : `^${path22.replace(/\/\*$|([.\\+*[^\]$()])/g, (_3, metaChar) => metaChar ? `\\${metaChar}` : "(?:|/.*)")}$`);
+function buildWildcardRegExp(path21) {
+  return wildcardRegExpCache[path21] ??= new RegExp(path21 === "*" ? "" : `^${path21.replace(/\/\*$|([.\\+*[^\]$()])/g, (_3, metaChar) => metaChar ? `\\${metaChar}` : "(?:|/.*)")}$`);
 }
 function clearWildcardRegExpCache() {
   wildcardRegExpCache = /* @__PURE__ */ Object.create(null);
@@ -36885,17 +36763,17 @@ function buildMatcherFromPreprocessedRoutes(routes) {
   const routesWithStaticPathFlag = routes.map((route) => [!/\*|\/:/.test(route[0]), ...route]).sort(([isStaticA, pathA], [isStaticB, pathB]) => isStaticA ? 1 : isStaticB ? -1 : pathA.length - pathB.length);
   const staticMap = /* @__PURE__ */ Object.create(null);
   for (let i3 = 0, j = -1, len = routesWithStaticPathFlag.length;i3 < len; i3++) {
-    const [pathErrorCheckOnly, path22, handlers] = routesWithStaticPathFlag[i3];
+    const [pathErrorCheckOnly, path21, handlers] = routesWithStaticPathFlag[i3];
     if (pathErrorCheckOnly) {
-      staticMap[path22] = [handlers.map(([h3]) => [h3, /* @__PURE__ */ Object.create(null)]), emptyParam];
+      staticMap[path21] = [handlers.map(([h3]) => [h3, /* @__PURE__ */ Object.create(null)]), emptyParam];
     } else {
       j++;
     }
     let paramAssoc;
     try {
-      paramAssoc = trie.insert(path22, j, pathErrorCheckOnly);
+      paramAssoc = trie.insert(path21, j, pathErrorCheckOnly);
     } catch (e2) {
-      throw e2 === PATH_ERROR ? new UnsupportedPathError(path22) : e2;
+      throw e2 === PATH_ERROR ? new UnsupportedPathError(path21) : e2;
     }
     if (pathErrorCheckOnly) {
       continue;
@@ -36929,12 +36807,12 @@ function buildMatcherFromPreprocessedRoutes(routes) {
   }
   return [regexp, handlerMap, staticMap];
 }
-function findMiddleware(middleware, path22) {
+function findMiddleware(middleware, path21) {
   if (!middleware) {
     return;
   }
   for (const k2 of Object.keys(middleware).sort((a3, b2) => b2.length - a3.length)) {
-    if (buildWildcardRegExp(k2).test(path22)) {
+    if (buildWildcardRegExp(k2).test(path21)) {
       return [...middleware[k2]];
     }
   }
@@ -36948,7 +36826,7 @@ var nullMatcher, wildcardRegExpCache, RegExpRouter = class {
     this.#middleware = { [METHOD_NAME_ALL]: /* @__PURE__ */ Object.create(null) };
     this.#routes = { [METHOD_NAME_ALL]: /* @__PURE__ */ Object.create(null) };
   }
-  add(method, path22, handler2) {
+  add(method, path21, handler2) {
     const middleware = this.#middleware;
     const routes = this.#routes;
     if (!middleware || !routes) {
@@ -36962,18 +36840,18 @@ var nullMatcher, wildcardRegExpCache, RegExpRouter = class {
         });
       });
     }
-    if (path22 === "/*") {
-      path22 = "*";
+    if (path21 === "/*") {
+      path21 = "*";
     }
-    const paramCount = (path22.match(/\/:/g) || []).length;
-    if (/\*$/.test(path22)) {
-      const re = buildWildcardRegExp(path22);
+    const paramCount = (path21.match(/\/:/g) || []).length;
+    if (/\*$/.test(path21)) {
+      const re = buildWildcardRegExp(path21);
       if (method === METHOD_NAME_ALL) {
         Object.keys(middleware).forEach((m2) => {
-          middleware[m2][path22] ||= findMiddleware(middleware[m2], path22) || findMiddleware(middleware[METHOD_NAME_ALL], path22) || [];
+          middleware[m2][path21] ||= findMiddleware(middleware[m2], path21) || findMiddleware(middleware[METHOD_NAME_ALL], path21) || [];
         });
       } else {
-        middleware[method][path22] ||= findMiddleware(middleware[method], path22) || findMiddleware(middleware[METHOD_NAME_ALL], path22) || [];
+        middleware[method][path21] ||= findMiddleware(middleware[method], path21) || findMiddleware(middleware[METHOD_NAME_ALL], path21) || [];
       }
       Object.keys(middleware).forEach((m2) => {
         if (method === METHOD_NAME_ALL || method === m2) {
@@ -36989,15 +36867,15 @@ var nullMatcher, wildcardRegExpCache, RegExpRouter = class {
       });
       return;
     }
-    const paths = checkOptionalParameter(path22) || [path22];
+    const paths = checkOptionalParameter(path21) || [path21];
     for (let i3 = 0, len = paths.length;i3 < len; i3++) {
-      const path23 = paths[i3];
+      const path22 = paths[i3];
       Object.keys(routes).forEach((m2) => {
         if (method === METHOD_NAME_ALL || method === m2) {
-          routes[m2][path23] ||= [
-            ...findMiddleware(middleware[m2], path23) || findMiddleware(middleware[METHOD_NAME_ALL], path23) || []
+          routes[m2][path22] ||= [
+            ...findMiddleware(middleware[m2], path22) || findMiddleware(middleware[METHOD_NAME_ALL], path22) || []
           ];
-          routes[m2][path23].push([handler2, paramCount - len + i3 + 1]);
+          routes[m2][path22].push([handler2, paramCount - len + i3 + 1]);
         }
       });
     }
@@ -37016,12 +36894,12 @@ var nullMatcher, wildcardRegExpCache, RegExpRouter = class {
     const routes = [];
     let hasOwnRoute = method === METHOD_NAME_ALL;
     [this.#middleware, this.#routes].forEach((r3) => {
-      const ownRoute = r3[method] ? Object.keys(r3[method]).map((path22) => [path22, r3[method][path22]]) : [];
+      const ownRoute = r3[method] ? Object.keys(r3[method]).map((path21) => [path21, r3[method][path21]]) : [];
       if (ownRoute.length !== 0) {
         hasOwnRoute ||= true;
         routes.push(...ownRoute);
       } else if (method !== METHOD_NAME_ALL) {
-        routes.push(...Object.keys(r3[METHOD_NAME_ALL]).map((path22) => [path22, r3[METHOD_NAME_ALL][path22]]));
+        routes.push(...Object.keys(r3[METHOD_NAME_ALL]).map((path21) => [path21, r3[METHOD_NAME_ALL][path21]]));
       }
     });
     if (!hasOwnRoute) {
@@ -37055,21 +36933,21 @@ var PreparedRegExpRouter = class {
     matcher[1].forEach((list) => list && list.push(handlerData));
     Object.values(matcher[2]).forEach((list) => list[0].push(handlerData));
   }
-  #addPath(method, path22, handler2, indexes, map2) {
+  #addPath(method, path21, handler2, indexes, map2) {
     const matcher = this.#matchers[method];
     if (!map2) {
-      matcher[2][path22][0].push([handler2, {}]);
+      matcher[2][path21][0].push([handler2, {}]);
     } else {
       indexes.forEach((index) => {
         if (typeof index === "number") {
           matcher[1][index].push([handler2, map2]);
         } else {
-          matcher[2][index || path22][0].push([handler2, map2]);
+          matcher[2][index || path21][0].push([handler2, map2]);
         }
       });
     }
   }
-  add(method, path22, handler2) {
+  add(method, path21, handler2) {
     if (!this.#matchers[method]) {
       const all = this.#matchers[METHOD_NAME_ALL];
       const staticMap = {};
@@ -37082,7 +36960,7 @@ var PreparedRegExpRouter = class {
         staticMap
       ];
     }
-    if (path22 === "/*" || path22 === "*") {
+    if (path21 === "/*" || path21 === "*") {
       const handlerData = [handler2, {}];
       if (method === METHOD_NAME_ALL) {
         for (const m2 in this.#matchers) {
@@ -37093,17 +36971,17 @@ var PreparedRegExpRouter = class {
       }
       return;
     }
-    const data = this.#relocateMap[path22];
+    const data = this.#relocateMap[path21];
     if (!data) {
-      throw new Error(`Path ${path22} is not registered`);
+      throw new Error(`Path ${path21} is not registered`);
     }
     for (const [indexes, map2] of data) {
       if (method === METHOD_NAME_ALL) {
         for (const m2 in this.#matchers) {
-          this.#addPath(m2, path22, handler2, indexes, map2);
+          this.#addPath(m2, path21, handler2, indexes, map2);
         }
       } else {
-        this.#addPath(method, path22, handler2, indexes, map2);
+        this.#addPath(method, path21, handler2, indexes, map2);
       }
     }
   }
@@ -37132,13 +37010,13 @@ var SmartRouter = class {
   constructor(init2) {
     this.#routers = init2.routers;
   }
-  add(method, path22, handler2) {
+  add(method, path21, handler2) {
     if (!this.#routes) {
       throw new Error(MESSAGE_MATCHER_IS_ALREADY_BUILT);
     }
-    this.#routes.push([method, path22, handler2]);
+    this.#routes.push([method, path21, handler2]);
   }
-  match(method, path22) {
+  match(method, path21) {
     if (!this.#routes) {
       throw new Error("Fatal error");
     }
@@ -37153,7 +37031,7 @@ var SmartRouter = class {
         for (let i22 = 0, len2 = routes.length;i22 < len2; i22++) {
           router.add(...routes[i22]);
         }
-        res = router.match(method, path22);
+        res = router.match(method, path21);
       } catch (e2) {
         if (e2 instanceof UnsupportedPathError) {
           continue;
@@ -37209,10 +37087,10 @@ var emptyParams, hasChildren = (children) => {
     }
     this.#patterns = [];
   }
-  insert(method, path22, handler2) {
+  insert(method, path21, handler2) {
     this.#order = ++this.#order;
     let curNode = this;
-    const parts = splitRoutingPath(path22);
+    const parts = splitRoutingPath(path21);
     const possibleKeys = [];
     for (let i3 = 0, len = parts.length;i3 < len; i3++) {
       const p = parts[i3];
@@ -37261,12 +37139,12 @@ var emptyParams, hasChildren = (children) => {
       }
     }
   }
-  search(method, path22) {
+  search(method, path21) {
     const handlerSets = [];
     this.#params = emptyParams;
     const curNode = this;
     let curNodes = [curNode];
-    const parts = splitPath(path22);
+    const parts = splitPath(path21);
     const curNodesQueue = [];
     const len = parts.length;
     let partOffsets = null;
@@ -37308,13 +37186,13 @@ var emptyParams, hasChildren = (children) => {
           if (matcher instanceof RegExp) {
             if (partOffsets === null) {
               partOffsets = new Array(len);
-              let offset = path22[0] === "/" ? 1 : 0;
+              let offset = path21[0] === "/" ? 1 : 0;
               for (let p = 0;p < len; p++) {
                 partOffsets[p] = offset;
                 offset += parts[p].length + 1;
               }
             }
-            const restPathString = path22.substring(partOffsets[i3]);
+            const restPathString = path21.substring(partOffsets[i3]);
             const m2 = matcher.exec(restPathString);
             if (m2) {
               params[name] = m2[0];
@@ -37366,18 +37244,18 @@ var TrieRouter = class {
   constructor() {
     this.#node = new Node2;
   }
-  add(method, path22, handler2) {
-    const results = checkOptionalParameter(path22);
+  add(method, path21, handler2) {
+    const results = checkOptionalParameter(path21);
     if (results) {
       for (let i3 = 0, len = results.length;i3 < len; i3++) {
         this.#node.insert(method, results[i3], handler2);
       }
       return;
     }
-    this.#node.insert(method, path22, handler2);
+    this.#node.insert(method, path21, handler2);
   }
-  match(method, path22) {
-    return this.#node.search(method, path22);
+  match(method, path21) {
+    return this.#node.search(method, path21);
   }
 };
 var init_router4 = __esm(() => {
@@ -37519,8 +37397,8 @@ async function getColorEnabledAsync() {
 var init_color = () => {};
 
 // node_modules/hono/dist/middleware/logger/index.js
-async function log5(fn, prefix2, method, path22, status = 0, elapsed) {
-  const out = prefix2 === "<--" ? `${prefix2} ${method} ${path22}` : `${prefix2} ${method} ${path22} ${await colorStatus(status)} ${elapsed}`;
+async function log5(fn, prefix2, method, path21, status = 0, elapsed) {
+  const out = prefix2 === "<--" ? `${prefix2} ${method} ${path21}` : `${prefix2} ${method} ${path21} ${await colorStatus(status)} ${elapsed}`;
   fn(out);
 }
 var humanize = (times) => {
@@ -37548,11 +37426,11 @@ var humanize = (times) => {
 }, logger = (fn = console.log) => {
   return async function logger2(c5, next) {
     const { method, url: url2 } = c5.req;
-    const path22 = url2.slice(url2.indexOf("/", 8));
-    await log5(fn, "<--", method, path22);
+    const path21 = url2.slice(url2.indexOf("/", 8));
+    await log5(fn, "<--", method, path21);
     const start = Date.now();
     await next();
-    await log5(fn, "-->", method, path22, c5.res.status, time3(start));
+    await log5(fn, "-->", method, path21, c5.res.status, time3(start));
   };
 };
 var init_logger2 = __esm(() => {
@@ -37560,8 +37438,8 @@ var init_logger2 = __esm(() => {
 });
 
 // src/lib/auth/origin-guard.ts
-function pathMatchesPrefix2(path22, prefix2) {
-  return path22 === prefix2 || path22.startsWith(prefix2 + "/");
+function pathMatchesPrefix2(path21, prefix2) {
+  return path21 === prefix2 || path21.startsWith(prefix2 + "/");
 }
 function isAllowedOrigin(origin, boundPort) {
   if (origin === null)
@@ -37576,8 +37454,8 @@ function isAllowedOrigin(origin, boundPort) {
     return false;
   return url2.port === String(boundPort);
 }
-function isCsrfGuardedPath(path22) {
-  return CSRF_GUARDED_PREFIXES.some((prefix2) => pathMatchesPrefix2(path22, prefix2));
+function isCsrfGuardedPath(path21) {
+  return CSRF_GUARDED_PREFIXES.some((prefix2) => pathMatchesPrefix2(path21, prefix2));
 }
 function createOriginGuardMiddleware(options) {
   return async (c5, next) => {
@@ -37803,11 +37681,11 @@ var init_stream2 = () => {};
 
 // node_modules/hono/dist/helper/streaming/utils.js
 var isOldBunVersion = () => {
-  const version3 = typeof Bun !== "undefined" ? Bun.version : undefined;
-  if (version3 === undefined) {
+  const version4 = typeof Bun !== "undefined" ? Bun.version : undefined;
+  if (version4 === undefined) {
     return false;
   }
-  const result = version3.startsWith("1.1") || version3.startsWith("1.0") || version3.startsWith("0.");
+  const result = version4.startsWith("1.1") || version4.startsWith("1.0") || version4.startsWith("0.");
   isOldBunVersion = () => result;
   return result;
 };
@@ -38137,6 +38015,9 @@ var init_copilot_rate_limit = __esm(() => {
 var requireCopilotToken = () => {
   if (!state.copilotToken)
     throw new Error("Copilot token not found");
+  if (copilotTokenHealth() === CREDENTIAL_HEALTH.expired) {
+    throw new CopilotTokenStaleError(copilotRefreshHealth().lastFailureReason);
+  }
   return state.copilotToken;
 }, buildCopilotHeaders = (callState, options) => {
   const headers = {
@@ -38171,6 +38052,7 @@ var requireCopilotToken = () => {
 var init_upstream_request = __esm(() => {
   init_dist();
   init_mod();
+  init_auth_types();
   init_api_config();
   init_copilot_rate_limit();
   init_error2();
@@ -38587,10 +38469,10 @@ var init_claude_code = __esm(() => {
 
 // src/apps/claude-desktop/config.ts
 import { randomUUID as randomUUID6 } from "crypto";
-import fs20 from "fs";
-import os7 from "os";
-import path22 from "path";
-function gatewayProfile(home = os7.homedir(), baseUrl = "http://127.0.0.1:4141") {
+import fs19 from "fs";
+import os6 from "os";
+import path21 from "path";
+function gatewayProfile(home = os6.homedir(), baseUrl = "http://127.0.0.1:4141") {
   return {
     inferenceProvider: "gateway",
     inferenceGatewayBaseUrl: baseUrl,
@@ -38598,7 +38480,7 @@ function gatewayProfile(home = os7.homedir(), baseUrl = "http://127.0.0.1:4141")
     inferenceGatewayAuthScheme: "bearer",
     disableDeploymentModeChooser: true,
     coworkEgressAllowedHosts: ["*"],
-    allowedWorkspaceFolders: [path22.join(home, "Claude")],
+    allowedWorkspaceFolders: [path21.join(home, "Claude")],
     disableEssentialTelemetry: true,
     disableNonessentialTelemetry: true,
     disableNonessentialServices: false,
@@ -38610,12 +38492,20 @@ function gatewayProfile(home = os7.homedir(), baseUrl = "http://127.0.0.1:4141")
     isClaudeCodeForDesktopEnabled: true
   };
 }
-function getClaude3pDir(home = os7.homedir(), platform3 = process.platform) {
+function getClaude3pDir(home = os6.homedir(), platform3 = process.platform) {
   if (platform3 === "win32") {
-    const localAppData = process.env.LOCALAPPDATA ?? path22.join(home, "AppData", "Local");
-    return path22.join(localAppData, `Claude${USERDATA_3P_SUFFIX}`);
+    const localAppData = process.env.LOCALAPPDATA ?? path21.join(home, "AppData", "Local");
+    return path21.join(localAppData, `Claude${USERDATA_3P_SUFFIX}`);
   }
-  return path22.join(home, "Library", "Application Support", `Claude${USERDATA_3P_SUFFIX}`);
+  return path21.join(home, "Library", "Application Support", `Claude${USERDATA_3P_SUFFIX}`);
+}
+function readMetaFile(file2) {
+  const raw2 = readJsonObject(file2);
+  const entries = raw2?.entries;
+  return {
+    appliedId: typeof raw2?.appliedId === "string" ? raw2.appliedId : "",
+    entries: Array.isArray(entries) ? entries.filter((e2) => typeof e2 === "object" && e2 !== null && typeof e2.id === "string" && typeof e2.name === "string") : []
+  };
 }
 function profileMatches(existing, values) {
   if (!existing)
@@ -38625,7 +38515,7 @@ function profileMatches(existing, values) {
 function readJsonObject(file2) {
   let raw2;
   try {
-    raw2 = fs20.readFileSync(file2, "utf8");
+    raw2 = fs19.readFileSync(file2, "utf8");
   } catch {
     return null;
   }
@@ -38642,19 +38532,16 @@ function readJsonObject(file2) {
 function atomicWriteJson2(file2, value) {
   atomicWriteJson(file2, value, { label: "Claude Desktop config" });
 }
-function applyConfigLibraryProfile(home = os7.homedir(), values = gatewayProfile(home)) {
+function applyConfigLibraryProfile(home = os6.homedir(), values = gatewayProfile(home)) {
   const dir = getClaude3pDir(home);
-  const libDir = path22.join(dir, "configLibrary");
-  const metaPath = path22.join(libDir, "_meta.json");
-  const meta3 = readJsonObject(metaPath) ?? {
-    appliedId: "",
-    entries: []
-  };
+  const libDir = path21.join(dir, "configLibrary");
+  const metaPath = path21.join(libDir, "_meta.json");
+  const meta3 = readMetaFile(metaPath);
   const profileId = meta3.appliedId || randomUUID6();
-  const profilePath = path22.join(libDir, `${profileId}.json`);
+  const profilePath = path21.join(libDir, `${profileId}.json`);
   const ensuredWorkspaceFolders = ensureWorkspaceFolders(values.allowedWorkspaceFolders);
   const existingProfile = readJsonObject(profilePath);
-  const topPath = path22.join(dir, "claude_desktop_config.json");
+  const topPath = path21.join(dir, "claude_desktop_config.json");
   const top = readJsonObject(topPath) ?? {};
   const alreadyApplied = meta3.appliedId === profileId && profileMatches(existingProfile, values) && top.deploymentMode === "3p";
   if (alreadyApplied) {
@@ -38669,16 +38556,16 @@ function applyConfigLibraryProfile(home = os7.homedir(), values = gatewayProfile
   atomicWriteJson2(topPath, top);
   return { dir, profileId, wrote: true, ensuredWorkspaceFolders };
 }
-function isConfigLibraryApplied(home = os7.homedir(), values = gatewayProfile(home)) {
+function isConfigLibraryApplied(home = os6.homedir(), values = gatewayProfile(home)) {
   const dir = getClaude3pDir(home);
-  const libDir = path22.join(dir, "configLibrary");
-  const meta3 = readJsonObject(path22.join(libDir, "_meta.json"));
+  const libDir = path21.join(dir, "configLibrary");
+  const meta3 = readJsonObject(path21.join(libDir, "_meta.json"));
   if (!meta3?.appliedId)
     return false;
-  const profile = readJsonObject(path22.join(libDir, `${meta3.appliedId}.json`));
+  const profile = readJsonObject(path21.join(libDir, `${meta3.appliedId}.json`));
   if (!profileMatches(profile, values))
     return false;
-  const top = readJsonObject(path22.join(dir, "claude_desktop_config.json"));
+  const top = readJsonObject(path21.join(dir, "claude_desktop_config.json"));
   return top?.deploymentMode === "3p";
 }
 function stripOwnedPreferences(top) {
@@ -38697,21 +38584,21 @@ function stripOwnedPreferences(top) {
   }
   return true;
 }
-function revertConfigLibraryProfile(home = os7.homedir()) {
+function revertConfigLibraryProfile(home = os6.homedir()) {
   const dir = getClaude3pDir(home);
-  const libDir = path22.join(dir, "configLibrary");
-  const metaPath = path22.join(libDir, "_meta.json");
+  const libDir = path21.join(dir, "configLibrary");
+  const metaPath = path21.join(libDir, "_meta.json");
   const meta3 = readJsonObject(metaPath);
   let reverted = false;
   if (meta3?.appliedId) {
     try {
-      fs20.rmSync(path22.join(libDir, `${meta3.appliedId}.json`), { force: true });
+      fs19.rmSync(path21.join(libDir, `${meta3.appliedId}.json`), { force: true });
     } catch {}
     const entries = meta3.entries.filter((e2) => e2.id !== meta3.appliedId);
     atomicWriteJson2(metaPath, { appliedId: "", entries });
     reverted = true;
   }
-  const topPath = path22.join(dir, "claude_desktop_config.json");
+  const topPath = path21.join(dir, "claude_desktop_config.json");
   const top = readJsonObject(topPath);
   if (top) {
     let dirty = false;
@@ -38732,7 +38619,7 @@ function ensureWorkspaceFolders(folders) {
   const created = [];
   for (const folder of folders) {
     try {
-      fs20.mkdirSync(folder, { recursive: true });
+      fs19.mkdirSync(folder, { recursive: true });
       created.push(folder);
     } catch {}
   }
@@ -38764,7 +38651,7 @@ ${pad}</dict>`;
   }
   throw new Error(`unsupported plist value: ${typeof v2}`);
 }
-function generateManagedProfile(home = os7.homedir(), values = gatewayProfile(home), opts = {}) {
+function generateManagedProfile(home = os6.homedir(), values = gatewayProfile(home), opts = {}) {
   const profileUUID = opts.profileUUID ?? randomUUID6();
   const payloadUUID = opts.payloadUUID ?? randomUUID6();
   const scope = opts.scope ?? "User";
@@ -38829,40 +38716,40 @@ var init_config3 = __esm(() => {
 });
 
 // src/apps/claude-desktop/detect.ts
-import fs21 from "fs";
-import os8 from "os";
-import path23 from "path";
-function claudeAppCandidates(platform3 = process.platform, home = os8.homedir()) {
+import fs20 from "fs";
+import os7 from "os";
+import path22 from "path";
+function claudeAppCandidates(platform3 = process.platform, home = os7.homedir()) {
   if (platform3 === "darwin")
     return [CLAUDE_APP_PATH];
   if (platform3 === "win32") {
     const localAppData = windowsLocalAppData(home);
     return [
-      path23.join(localAppData, "AnthropicClaude"),
-      path23.join(localAppData, "Microsoft", "WindowsApps", "Claude.exe"),
-      path23.join(localAppData, "Packages", "Claude_pzs8sxrjxfjjc")
+      path22.join(localAppData, "AnthropicClaude"),
+      path22.join(localAppData, "Microsoft", "WindowsApps", "Claude.exe"),
+      path22.join(localAppData, "Packages", "Claude_pzs8sxrjxfjjc")
     ];
   }
   return [];
 }
 function windowsLocalAppData(home) {
-  return process.env.LOCALAPPDATA ?? path23.join(home, "AppData", "Local");
+  return process.env.LOCALAPPDATA ?? path22.join(home, "AppData", "Local");
 }
 function windowsMsixClaudeInstalled(home) {
-  const packages = path23.join(windowsLocalAppData(home), "Packages");
+  const packages = path22.join(windowsLocalAppData(home), "Packages");
   try {
-    return fs21.readdirSync(packages).some((name) => name.startsWith("Claude_") || name.startsWith("AnthropicPBC.Claude"));
+    return fs20.readdirSync(packages).some((name) => name.startsWith("Claude_") || name.startsWith("AnthropicPBC.Claude"));
   } catch {
     return false;
   }
 }
-function claudeAppInstalled(platform3 = process.platform, home = os8.homedir()) {
+function claudeAppInstalled(platform3 = process.platform, home = os7.homedir()) {
   const candidates = claudeAppCandidates(platform3, home);
   if (candidates.length === 0)
     return true;
   const hasCandidate = candidates.some((p) => {
     try {
-      fs21.statSync(p);
+      fs20.statSync(p);
       return true;
     } catch {
       return false;
@@ -38878,8 +38765,8 @@ var CLAUDE_APP_PATH = "/Applications/Claude.app";
 var init_detect2 = () => {};
 
 // src/apps/claude-desktop/cli.ts
-import fs22 from "fs";
-import path24 from "path";
+import fs21 from "fs";
+import path23 from "path";
 function apply() {
   try {
     const result = applyConfigLibraryProfile();
@@ -38898,10 +38785,10 @@ function apply() {
 }
 function writeManagedProfile() {
   try {
-    fs22.writeFileSync(MANAGED_PROFILE_OUT, generateManagedProfile(), {
+    fs21.writeFileSync(MANAGED_PROFILE_OUT, generateManagedProfile(), {
       mode: 384
     });
-    const abs = path24.resolve(MANAGED_PROFILE_OUT);
+    const abs = path23.resolve(MANAGED_PROFILE_OUT);
     consola.success(`Wrote managed-preferences profile to ${abs}`);
     consola.info(`  Install it (no Anthropic sign-in needed) via either:
 ` + `    sudo profiles install -path ${abs}
@@ -39431,9 +39318,9 @@ function isNewerVersion(a3, b2) {
   }
   return false;
 }
-function normalizeCurrent(version3) {
-  const devAt = version3.indexOf("-dev+");
-  return devAt === -1 ? version3 : version3.slice(0, devAt);
+function normalizeCurrent(version4) {
+  const devAt = version4.indexOf("-dev+");
+  return devAt === -1 ? version4 : version4.slice(0, devAt);
 }
 function parseManifestVersion(body, channel = UPDATE_CHANNEL) {
   let parsed;
@@ -39443,10 +39330,10 @@ function parseManifestVersion(body, channel = UPDATE_CHANNEL) {
     return null;
   }
   const entry = parsed?.channels?.[channel];
-  const version3 = entry?.version;
-  if (typeof version3 !== "string")
+  const version4 = entry?.version;
+  if (typeof version4 !== "string")
     return null;
-  const match2 = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$/u.exec(version3.trim());
+  const match2 = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$/u.exec(version4.trim());
   return match2 ? match2[1] : null;
 }
 async function getUpdateStatus(force = false) {
@@ -44199,33 +44086,33 @@ var require_URL = __commonJS((exports, module) => {
         else
           return basepath.substring(0, lastslash + 1) + refpath;
       }
-      function remove_dot_segments(path25) {
-        if (!path25)
-          return path25;
+      function remove_dot_segments(path24) {
+        if (!path24)
+          return path24;
         var output = "";
-        while (path25.length > 0) {
-          if (path25 === "." || path25 === "..") {
-            path25 = "";
+        while (path24.length > 0) {
+          if (path24 === "." || path24 === "..") {
+            path24 = "";
             break;
           }
-          var twochars = path25.substring(0, 2);
-          var threechars = path25.substring(0, 3);
-          var fourchars = path25.substring(0, 4);
+          var twochars = path24.substring(0, 2);
+          var threechars = path24.substring(0, 3);
+          var fourchars = path24.substring(0, 4);
           if (threechars === "../") {
-            path25 = path25.substring(3);
+            path24 = path24.substring(3);
           } else if (twochars === "./") {
-            path25 = path25.substring(2);
+            path24 = path24.substring(2);
           } else if (threechars === "/./") {
-            path25 = "/" + path25.substring(3);
-          } else if (twochars === "/." && path25.length === 2) {
-            path25 = "/";
-          } else if (fourchars === "/../" || threechars === "/.." && path25.length === 3) {
-            path25 = "/" + path25.substring(4);
+            path24 = "/" + path24.substring(3);
+          } else if (twochars === "/." && path24.length === 2) {
+            path24 = "/";
+          } else if (fourchars === "/../" || threechars === "/.." && path24.length === 3) {
+            path24 = "/" + path24.substring(4);
             output = output.replace(/\/?[^\/]*$/, "");
           } else {
-            var segment = path25.match(/(\/?([^\/]*))/)[0];
+            var segment = path24.match(/(\/?([^\/]*))/)[0];
             output += segment;
-            path25 = path25.substring(segment.length);
+            path24 = path24.substring(segment.length);
           }
         }
         return output;
@@ -55212,9 +55099,9 @@ var require_DOMImplementation = __commonJS((exports, module) => {
     xhtml: { "": true, "1.0": true, "2.0": true }
   };
   DOMImplementation.prototype = {
-    hasFeature: function hasFeature(feature, version3) {
+    hasFeature: function hasFeature(feature, version4) {
       var f3 = supportedFeatures[(feature || "").toLowerCase()];
-      return f3 && f3[version3 || ""] || false;
+      return f3 && f3[version4 || ""] || false;
     },
     createDocumentType: function createDocumentType(qualifiedName, publicId, systemId) {
       if (!xml.isValidQName(qualifiedName))
@@ -56513,12 +56400,12 @@ class OllamaWebExecutor {
       title
     };
   }
-  async post(path25, body) {
+  async post(path24, body) {
     const controller = new AbortController;
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let response;
     try {
-      response = await fetch(`${this.base}${path25}`, {
+      response = await fetch(`${this.base}${path24}`, {
         method: "POST",
         signal: controller.signal,
         headers: {
@@ -56698,7 +56585,7 @@ __export(exports_debug, {
   debug: () => debug,
   collectSecretStatuses: () => collectSecretStatuses
 });
-import os9 from "os";
+import os8 from "os";
 async function getPackageVersion() {
   const { BUILD_VERSION: BUILD_VERSION2 } = await Promise.resolve().then(() => (init_build_info(), exports_build_info));
   return BUILD_VERSION2;
@@ -56708,8 +56595,8 @@ function getRuntimeInfo() {
   return {
     name: isBun ? "bun" : "node",
     version: isBun ? Bun.version : process.version.slice(1),
-    platform: os9.platform(),
-    arch: os9.arch()
+    platform: os8.platform(),
+    arch: os8.arch()
   };
 }
 async function checkTokenExists() {
@@ -56773,7 +56660,7 @@ function collectSecretStatuses(config2, env3 = process.env) {
   }, env3));
 }
 async function getDebugInfo() {
-  const [version3, tokenExists] = await Promise.all([
+  const [version4, tokenExists] = await Promise.all([
     getPackageVersion(),
     checkTokenExists()
   ]);
@@ -56784,7 +56671,7 @@ async function getDebugInfo() {
     config2 = {};
   }
   return {
-    version: version3,
+    version: version4,
     git: getGitVersion(),
     runtime: getRuntimeInfo(),
     paths: {
@@ -56881,12 +56768,20 @@ var init_debug = __esm(() => {
 });
 
 // src/lib/config/settings-types.ts
-var TokenStatus, RateLimitStatus, WebSearchStatus, CopilotServiceStatus, DiagnosticsResponse, UpdateStatusResponse, ModelCapabilityFlags, ModelSummary, ModelsListResponse, ApiErrorBody, UpstreamRejection, NetworkDiagnosisSignal, AccountTypeWire, AuthStatus, AccountSummary, AccountsListResponse, ApiKeyEntry, ApiKeysListResponse, ApiKeyCreateRequest, ApiKeyUpdateRequest, AppInstall, AppInstallHint, AppEntry, AppsListResponse, ClaudeCodeToggleRequest, ClaudeDesktopToggleRequest;
+var TokenStatus, CopilotRefreshStatus, RateLimitStatus, WebSearchStatus, CopilotServiceStatus, DiagnosticsResponse, UpdateStatusResponse, ModelCapabilityFlags, ModelSummary, ModelsListResponse, ApiErrorBody, UpstreamRejection, NetworkDiagnosisSignal, AccountTypeWire, AuthStatus, AccountSummary, AccountsListResponse, ApiKeyEntry, ApiKeysListResponse, ApiKeyCreateRequest, ApiKeyUpdateRequest, AppInstall, AppInstallHint, AppEntry, AppsListResponse, ClaudeCodeToggleRequest, ClaudeDesktopToggleRequest;
 var init_settings_types = __esm(() => {
   init_zod();
   TokenStatus = exports_external.object({
     github_token_present: exports_external.boolean(),
     copilot_token_present: exports_external.boolean()
+  });
+  CopilotRefreshStatus = exports_external.object({
+    health: exports_external.enum(["healthy", "refreshing", "expired", "unknown"]),
+    token_expires_at: exports_external.string().nullable(),
+    last_success_at: exports_external.string().nullable(),
+    last_failure_at: exports_external.string().nullable(),
+    last_failure_reason: exports_external.string().nullable(),
+    consecutive_failures: exports_external.number().int()
   });
   RateLimitStatus = exports_external.object({
     interval_seconds: exports_external.number().nullable(),
@@ -56915,6 +56810,7 @@ var init_settings_types = __esm(() => {
     account_type: exports_external.string(),
     models_cached: exports_external.number().int(),
     tokens: TokenStatus,
+    copilot_refresh: CopilotRefreshStatus.optional(),
     rate_limit: RateLimitStatus,
     web_search: WebSearchStatus,
     copilot_service: CopilotServiceStatus.optional()
@@ -57072,6 +56968,22 @@ var init_settings_types = __esm(() => {
   });
 });
 
+// src/lib/platform/cli-path.ts
+function isAppBundlePath(execPath2) {
+  return /\.app\/Contents\/MacOS\//u.test(execPath2);
+}
+function describeLaunchSource(execPath2 = process.execPath) {
+  if (isAppBundlePath(execPath2))
+    return { path: execPath2, kind: "dmg-app" };
+  if (/\/target\/(?:debug|release)\//u.test(execPath2) || /\/bun$/u.test(execPath2))
+    return { path: execPath2, kind: "dev" };
+  if (/\/(?:homebrew|Cellar)\//u.test(execPath2))
+    return { path: execPath2, kind: "homebrew" };
+  if (execPath2.includes("/.local/bin/"))
+    return { path: execPath2, kind: "user-bin" };
+  return { path: execPath2, kind: "other" };
+}
+
 // src/lib/system/gh-cli.ts
 var exports_gh_cli = {};
 __export(exports_gh_cli, {
@@ -57124,19 +57036,19 @@ async function readGhAccounts(run2) {
   return accounts;
 }
 async function detectGhCli(run2 = defaultRunner) {
-  const version3 = await run2(["--version"]).catch(() => ({
+  const version4 = await run2(["--version"]).catch(() => ({
     stdout: "",
     stderr: "",
     code: 1,
     notFound: true
   }));
-  if (version3.notFound) {
+  if (version4.notFound) {
     return { installed: false, version: null, accounts: [] };
   }
   const accounts = await readGhAccounts(run2).catch(() => []);
   return {
     installed: true,
-    version: parseVersion2(version3.stdout),
+    version: parseVersion2(version4.stdout),
     accounts
   };
 }
@@ -57361,6 +57273,17 @@ function registerAppToggles(app) {
     }
   });
 }
+function buildCopilotRefreshStatus() {
+  const health = copilotRefreshHealth();
+  return {
+    health: copilotTokenHealth(),
+    token_expires_at: isoOrNull(state.copilotTokenExpiresAtMs),
+    last_success_at: isoOrNull(health.lastSuccessAtMs),
+    last_failure_at: isoOrNull(health.lastFailureAtMs),
+    last_failure_reason: health.lastFailureReason,
+    consecutive_failures: health.consecutiveFailures
+  };
+}
 function buildDiagnostics() {
   const git = getGitVersion();
   const launch = describeLaunchSource();
@@ -57380,6 +57303,7 @@ function buildDiagnostics() {
       github_token_present: tokens.github,
       copilot_token_present: tokens.copilot
     },
+    copilot_refresh: buildCopilotRefreshStatus(),
     rate_limit: {
       interval_seconds: state.rateLimitSeconds ?? null,
       last_request_at: state.lastRequestTimestamp ? new Date(state.lastRequestTimestamp).toISOString() : null,
@@ -57409,7 +57333,7 @@ function registerSettingsEndpoints(app) {
   registerAppToggles(app);
   registerDiagnostics(app);
 }
-var VALIDATION, enforceBodySchema, ghUseBodySchema;
+var VALIDATION, enforceBodySchema, ghUseBodySchema, isoOrNull = (ms) => ms === null || ms === undefined ? null : new Date(ms).toISOString();
 var init_settings_endpoints = __esm(() => {
   init_zod();
   init_registry();
@@ -57422,7 +57346,6 @@ var init_settings_endpoints = __esm(() => {
   init_config_schema();
   init_settings_types();
   init_error2();
-  init_cli_path();
   init_state();
   init_build_info();
   init_version();
@@ -66346,7 +66269,7 @@ var TOOL_REFERENCE_TURN_BOUNDARY = "Tool loaded.", IDE_EXECUTE_CODE_TOOL = "mcp_
     return COMPACT_REQUEST;
   }
   return 0;
-}, mergeContentWithText = (tr, textBlock) => {
+}, resultBlocks = (tr) => Array.isArray(tr.content) ? tr.content : [], mergeContentWithText = (tr, textBlock) => {
   if (typeof tr.content === "string") {
     return { ...tr, content: `${tr.content}
 
@@ -66357,7 +66280,7 @@ ${textBlock.text}` };
   }
   return {
     ...tr,
-    content: [...tr.content, textBlock]
+    content: [...resultBlocks(tr), textBlock]
   };
 }, mergeContentWithTexts = (tr, textBlocks) => {
   if (typeof tr.content === "string") {
@@ -66371,7 +66294,7 @@ ${appendedTexts}` };
   if (hasToolRef(tr)) {
     return tr;
   }
-  return { ...tr, content: [...tr.content, ...textBlocks] };
+  return { ...tr, content: [...resultBlocks(tr), ...textBlocks] };
 }, mergeContentWithAttachments = (tr, attachments) => {
   if (typeof tr.content === "string") {
     return {
@@ -66381,7 +66304,7 @@ ${appendedTexts}` };
   }
   return {
     ...tr,
-    content: [...tr.content, ...attachments]
+    content: [...resultBlocks(tr), ...attachments]
   };
 }, isAttachmentBlock = (block) => {
   return block.type === "image" || block.type === "document";
@@ -66430,13 +66353,14 @@ ${appendedTexts}` };
   if (typeof toolResult.content === "string") {
     return toolResult.content.startsWith(PDF_FILE_READ_PREFIX);
   }
-  if (toolResult.content.some((block) => block.type === "document")) {
+  const blocks = resultBlocks(toolResult);
+  if (blocks.some((block) => block.type === "document")) {
     return false;
   }
-  if (toolResult.content.length === 0) {
+  if (blocks.length === 0) {
     return false;
   }
-  const firstBlock = toolResult.content[0];
+  const firstBlock = blocks[0];
   if (firstBlock.type !== "text") {
     return false;
   }
@@ -68200,7 +68124,11 @@ var handleWithChatCompletions = async (c5, anthropicPayload, options) => {
         if (!rawEvent.data) {
           continue;
         }
-        const chunk = JSON.parse(rawEvent.data);
+        const chunk = readChatCompletionFrame(rawEvent.data);
+        if (chunk === null) {
+          logger3.debug("Skipping unparseable chat-completions frame");
+          continue;
+        }
         if (asRecord3(chunk)?.usage) {
           usage = normalizeOpenAIUsage(readUsage(chunk));
         }
@@ -68376,11 +68304,22 @@ var handleWithChatCompletions = async (c5, anthropicPayload, options) => {
   fallbackSessionId: options.fallbackSessionId,
   model: options.model,
   sessionId: getMetadataSessionId(options.payload)
-}), getMetadataSessionId = (payload) => parseUserIdMetadata(payload.metadata?.user_id).sessionId, readResponsesFrame = (data) => {
+}), getMetadataSessionId = (payload) => parseUserIdMetadata(payload.metadata?.user_id).sessionId, readChatCompletionFrame = (data) => {
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}, readResponsesFrame = (data) => {
   if (data === "[DONE]") {
     return null;
   }
-  const event = JSON.parse(data);
+  let event;
+  try {
+    event = JSON.parse(data);
+  } catch {
+    return null;
+  }
   if (!asRecord3(event)) {
     return null;
   }
@@ -69418,19 +69357,28 @@ async function handleWithWebToolsAgent(args) {
     return c5.json(finalResponse);
   }
   return streamSSE(c5, async (stream3) => {
-    await runStreamingAgent({
-      initialPayload: payload,
-      policy,
-      stream: stream3,
-      options,
-      executor
-    });
+    try {
+      await runStreamingAgent({
+        initialPayload: payload,
+        policy,
+        stream: stream3,
+        options,
+        executor,
+        upstreamCall: args.upstreamCall
+      });
+    } catch (error51) {
+      await emitStreamError(stream3, options.logger, {
+        error: error51,
+        flow: "chat_completions"
+      });
+    }
   });
 }
 var init_flow = __esm(() => {
   init_streaming2();
   init_create_chat_completions();
   init_non_stream_translation();
+  init_stream_error();
   init_agent();
   init_executor();
   init_rewriter();
@@ -69449,9 +69397,28 @@ function resolveCopilotModel(c5, payload) {
   const longContext = c5.req.header("anthropic-beta")?.includes("context-1m-2025-08-07") ?? false;
   return pickCopilotVariantId(reversed, { effort: payload.output_config?.effort, longContext }, state.models?.data.map((m2) => m2.id) ?? []);
 }
+function respondIfWarmup(c5, payload, ctx) {
+  const noTools = !payload.tools || payload.tools.length === 0;
+  if (!ctx.anthropicBeta || !noTools || ctx.compactType !== 0)
+    return null;
+  if (isWarmupRequest(payload)) {
+    logger3.debug("warmup short-circuit", {
+      model: payload.model,
+      stream: payload.stream ?? false
+    });
+    return respondToWarmup(c5, payload);
+  }
+  debugLazy(logger3, () => [
+    "no-tool beta request, not warmup-shaped",
+    { msgCount: payload.messages.length }
+  ]);
+  return null;
+}
 async function handleCompletion2(c5, deps = defaultDeps) {
   await checkRateLimit(state);
-  const anthropicPayload = await c5.req.json();
+  const anthropicPayload = await readMessagesPayload(c5);
+  if (!anthropicPayload)
+    return invalidRequest(c5);
   stripUnsupportedTopLevelAnthropicFields(anthropicPayload);
   debugJson(logger3, "Anthropic request payload:", anthropicPayload);
   anthropicPayload.model = resolveCopilotModel(c5, anthropicPayload);
@@ -69466,20 +69433,12 @@ async function handleCompletion2(c5, deps = defaultDeps) {
   const compactType = getCompactType(anthropicPayload);
   const anthropicBeta = c5.req.header("anthropic-beta");
   logger3.debug("Anthropic Beta header:", anthropicBeta);
-  const noTools = !anthropicPayload.tools || anthropicPayload.tools.length === 0;
-  if (anthropicBeta && noTools && compactType === 0) {
-    if (isWarmupRequest(anthropicPayload)) {
-      logger3.debug("warmup short-circuit", {
-        model: anthropicPayload.model,
-        stream: anthropicPayload.stream ?? false
-      });
-      return respondToWarmup(c5, anthropicPayload);
-    }
-    debugLazy(logger3, () => [
-      "no-tool beta request, not warmup-shaped",
-      { msgCount: anthropicPayload.messages.length }
-    ]);
-  }
+  const warmup = respondIfWarmup(c5, anthropicPayload, {
+    anthropicBeta,
+    compactType
+  });
+  if (warmup)
+    return warmup;
   if (compactType) {
     logger3.debug("Compact request type:", compactType);
   }
@@ -69531,7 +69490,17 @@ async function handleCompletion2(c5, deps = defaultDeps) {
     logger: logger3
   });
 }
-var logger3, defaultDeps, RESPONSES_ENDPOINT = "/responses", MESSAGES_ENDPOINT = "/v1/messages", shouldUseResponsesApi = (selectedModel) => {
+var logger3, MessagesRequestShape, readMessagesPayload = async (c5) => {
+  const body = await c5.req.json().catch(() => null);
+  if (!MessagesRequestShape.safeParse(body).success)
+    return null;
+  return body;
+}, invalidRequest = (c5) => c5.json({
+  error: {
+    message: "Invalid request body: expected a JSON object with a `messages` array.",
+    type: "invalid_request_error"
+  }
+}, 400), defaultDeps, RESPONSES_ENDPOINT = "/responses", MESSAGES_ENDPOINT = "/v1/messages", shouldUseResponsesApi = (selectedModel) => {
   return selectedModel?.supported_endpoints?.includes(RESPONSES_ENDPOINT) ?? false;
 }, shouldUseMessagesApi = (selectedModel) => {
   const useMessagesApi = isMessagesApiEnabled();
@@ -69541,6 +69510,7 @@ var logger3, defaultDeps, RESPONSES_ENDPOINT = "/responses", MESSAGES_ENDPOINT =
   return selectedModel?.supported_endpoints?.includes(MESSAGES_ENDPOINT) ?? false;
 };
 var init_handler2 = __esm(() => {
+  init_zod();
   init_config();
   init_approval();
   init_rate_limit();
@@ -69556,6 +69526,7 @@ var init_handler2 = __esm(() => {
   init_warmup();
   init_web_tools();
   logger3 = createHandlerLogger("messages-handler");
+  MessagesRequestShape = exports_external.object({ messages: exports_external.array(exports_external.unknown()) }).loose();
   defaultDeps = {
     findEndpointModel,
     handleWithMessagesApi,
@@ -70896,11 +70867,11 @@ class OpenAPIGenerator {
     return schema;
   }
   generatePath(route) {
-    const { method, path: path25, request, responses } = route, pathItemConfig = __rest(route, ["method", "path", "request", "responses"]);
+    const { method, path: path24, request, responses } = route, pathItemConfig = __rest(route, ["method", "path", "request", "responses"]);
     const generatedResponses = mapValues(responses, (response) => {
       return this.getResponse(response);
     });
-    const parameters = enhanceMissingParametersError(() => this.getParameters(request), { route: `${method} ${path25}` });
+    const parameters = enhanceMissingParametersError(() => this.getParameters(request), { route: `${method} ${path24}` });
     const requestBody = this.getRequestBody(request === null || request === undefined ? undefined : request.body);
     const routeDoc = {
       [method]: Object.assign(Object.assign(Object.assign(Object.assign({}, pathItemConfig), parameters.length > 0 ? {
@@ -71378,8 +71349,8 @@ function isZod(x2) {
 }
 function addBasePathToDocument(document, basePath) {
   const updatedPaths = {};
-  Object.keys(document.paths).forEach((path25) => {
-    updatedPaths[mergePath(basePath.replaceAll(/:([^\/]+)/g, "{$1}"), path25)] = document.paths[path25];
+  Object.keys(document.paths).forEach((path24) => {
+    updatedPaths[mergePath(basePath.replaceAll(/:([^\/]+)/g, "{$1}"), path24)] = document.paths[path24];
   });
   return {
     ...document,
@@ -71514,8 +71485,8 @@ var init_dist6 = __esm(() => {
       const document = new OpenApiGeneratorV31(this.openAPIRegistry.definitions, generatorConfig).generateDocument(objectConfig);
       return this._basePath ? addBasePathToDocument(document, this._basePath) : document;
     };
-    doc = (path25, configureObject, configureGenerator) => {
-      return this.get(path25, (c5) => {
+    doc = (path24, configureObject, configureGenerator) => {
+      return this.get(path24, (c5) => {
         const objectConfig = typeof configureObject === "function" ? configureObject(c5) : configureObject;
         const generatorConfig = typeof configureGenerator === "function" ? configureGenerator(c5) : configureGenerator;
         try {
@@ -71526,8 +71497,8 @@ var init_dist6 = __esm(() => {
         }
       });
     };
-    doc31 = (path25, configureObject, configureGenerator) => {
-      return this.get(path25, (c5) => {
+    doc31 = (path24, configureObject, configureGenerator) => {
+      return this.get(path24, (c5) => {
         const objectConfig = typeof configureObject === "function" ? configureObject(c5) : configureObject;
         const generatorConfig = typeof configureGenerator === "function" ? configureGenerator(c5) : configureGenerator;
         try {
@@ -71538,9 +71509,9 @@ var init_dist6 = __esm(() => {
         }
       });
     };
-    route(path25, app) {
-      const pathForOpenAPI = path25.replaceAll(/:([^\/]+)/g, "{$1}");
-      super.route(path25, app);
+    route(path24, app) {
+      const pathForOpenAPI = path24.replaceAll(/:([^\/]+)/g, "{$1}");
+      super.route(path24, app);
       if (!(app instanceof OpenAPIHono2))
         return this;
       app.#parentApp ??= this;
@@ -71572,8 +71543,8 @@ var init_dist6 = __esm(() => {
       });
       return this;
     }
-    basePath(path25) {
-      const cloned = super.basePath(path25);
+    basePath(path24) {
+      const cloned = super.basePath(path24);
       const newApp = new OpenAPIHono2({ defaultHook: this.defaultHook });
       newApp.router = cloned.router;
       newApp.routes = cloned.routes;
@@ -71598,12 +71569,12 @@ import {
   readFileSync as readFileSync3,
   statSync as statSync2
 } from "fs";
-import path25 from "path";
+import path24 from "path";
 function defaultPaths() {
   return {
     appDir: PATHS.APP_DIR,
     configPath: PATHS.CONFIG_PATH,
-    dbPath: path25.join(PATHS.APP_DIR, DB_FILENAME),
+    dbPath: path24.join(PATHS.APP_DIR, DB_FILENAME),
     githubTokenPath: PATHS.GITHUB_TOKEN_PATH
   };
 }
@@ -72584,13 +72555,6 @@ async function runServer(options) {
   if (removedShim) {
     consola.info(`Removed legacy Claude Code shim at ${removedShim}`);
   }
-  const link = ensureCliSymlink();
-  if (link.linked) {
-    consola.info(`Linked CLI onto PATH: ${link.symlinkPath} \u2192 ${link.target}`);
-    if (link.pathBlockAdded) {
-      consola.info("Added ~/.local/bin to PATH in ~/.zprofile (open a new terminal to pick it up).");
-    }
-  }
   await cacheVSCodeVersion();
   cacheMacMachineId();
   cacheVsCodeSessionId();
@@ -72679,7 +72643,6 @@ var init_run_server = __esm(() => {
   init_reconcile();
   init_config();
   init_proxy();
-  init_cli_path();
   init_opencode();
   init_paths();
   init_replace_running();
@@ -73134,14 +73097,13 @@ __export(exports_uninstall, {
   uninstall: () => uninstall,
   runUninstall: () => runUninstall,
   revertAppIntegrations: () => revertAppIntegrations,
-  removeFirstLaunchPathBlock: () => removeFirstLaunchPathBlock,
   installTargets: () => installTargets,
   enabledApps: () => enabledApps
 });
 import { spawnSync as spawnSync3 } from "child_process";
-import fs23 from "fs";
-import os10 from "os";
-import path26 from "path";
+import fs22 from "fs";
+import os9 from "os";
+import path25 from "path";
 async function runUninstall(opts) {
   consola.box("maximal uninstall");
   const enabled = enabledApps();
@@ -73156,7 +73118,7 @@ async function runUninstall(opts) {
   consola.info("Step 2/5: Remove startup integration");
   removeStartupIntegration();
   consola.info("Step 3/5: Remove the binary");
-  removeBinary({ keepApp: opts.keepApp });
+  removeBinary();
   consola.info("Step 4/5: Revert app integrations");
   await revertAppIntegrations(enabled);
   consola.info("Step 5/5: Optional cleanup");
@@ -73188,10 +73150,10 @@ function stopProxy() {
 }
 function removeStartupIntegration() {
   if (process.platform === "darwin") {
-    const plist = path26.join(os10.homedir(), "Library", "LaunchAgents", "co.stuffbucket.maximal.plist");
-    if (fs23.existsSync(plist)) {
+    const plist = path25.join(os9.homedir(), "Library", "LaunchAgents", "co.stuffbucket.maximal.plist");
+    if (fs22.existsSync(plist)) {
       try {
-        fs23.rmSync(plist);
+        fs22.rmSync(plist);
         consola.success(`  removed ${plist}`);
       } catch (err) {
         consola.warn(`  could not remove ${plist}`, err);
@@ -73214,38 +73176,25 @@ function removeStartupIntegration() {
   }
   consola.info("  unsupported platform; skipping");
 }
-function installTargets(opts = {}) {
-  const home = os10.homedir();
-  if (process.platform === "win32") {
-    return [
-      {
-        path: path26.join(process.env.LOCALAPPDATA ?? path26.join(home, "AppData", "Local"), "Programs", "maximal", "maximal.exe")
-      }
-    ];
-  }
-  const targets = [
-    { path: path26.join(home, ".local", "bin", "maximal") },
-    { path: "/usr/local/bin/maximal" },
-    { path: "/opt/homebrew/bin/maximal" },
-    { path: "/Applications/maximal.app", recursive: true, appBundle: true }
-  ];
-  return opts.keepApp ? targets.filter((t2) => !t2.appBundle) : targets;
+function installTargets() {
+  if (process.platform === "win32")
+    return [];
+  return ["/usr/local/bin/maximal", "/opt/homebrew/bin/maximal"];
 }
-function removeBinary(opts = {}) {
+function removeBinary() {
   let removed = 0;
-  for (const target of installTargets(opts)) {
-    let stat;
+  for (const target of installTargets()) {
     try {
-      stat = fs23.lstatSync(target.path);
+      fs22.lstatSync(target);
     } catch {
       continue;
     }
     try {
-      fs23.rmSync(target.path, target.recursive && !stat.isSymbolicLink() ? { recursive: true } : undefined);
-      consola.success(`  removed ${target.path}`);
+      fs22.rmSync(target);
+      consola.success(`  removed ${target}`);
       removed++;
     } catch (err) {
-      consola.warn(`  could not remove ${target.path}`, err);
+      consola.warn(`  could not remove ${target}`, err);
     }
   }
   if (removed === 0) {
@@ -73273,40 +73222,9 @@ async function revertAppIntegrations(stillEnabled) {
       consola.warn(`  could not revert ${app.name}`, err);
     }
   }
-  const installerRc = removeFirstLaunchPathBlock();
-  if (installerRc.length > 0) {
-    consola.success(`  removed installer PATH block from ${installerRc.join(", ")}`);
-  }
-}
-function escapeRegExp2(s2) {
-  return s2.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-}
-function removeFirstLaunchPathBlock(homeDir = os10.homedir()) {
-  const rcFiles = [
-    path26.join(homeDir, ".zshrc"),
-    path26.join(homeDir, ".zprofile")
-  ];
-  const re = new RegExp(`\\n?${escapeRegExp2(FIRST_LAUNCH_PATH_MARKER_START)}[\\s\\S]*?${escapeRegExp2(FIRST_LAUNCH_PATH_MARKER_END)}\\n?`, "g");
-  const modified = [];
-  for (const rc of rcFiles) {
-    let existing;
-    try {
-      existing = fs23.readFileSync(rc, "utf8");
-    } catch {
-      continue;
-    }
-    if (!existing.includes(FIRST_LAUNCH_PATH_MARKER_START))
-      continue;
-    try {
-      fs23.writeFileSync(rc, existing.replace(re, `
-`));
-      modified.push(rc);
-    } catch {}
-  }
-  return modified;
 }
 async function maybePurgeSecrets(opts) {
-  const secretsDir = path26.join(PATHS.APP_DIR, "secrets");
+  const secretsDir = path25.join(PATHS.APP_DIR, "secrets");
   const tokenPaths = [PATHS.GITHUB_TOKEN_PATH, PATHS.ACCOUNTS_PATH];
   const willPurge = opts.purge || await confirmPurge(opts);
   if (!willPurge) {
@@ -73314,19 +73232,19 @@ async function maybePurgeSecrets(opts) {
     consola.info(`  \u2139 github tokens kept (${tokenPaths.join(", ")})`);
     return;
   }
-  if (fs23.existsSync(secretsDir)) {
+  if (fs22.existsSync(secretsDir)) {
     try {
-      fs23.rmSync(secretsDir, { recursive: true });
+      fs22.rmSync(secretsDir, { recursive: true });
       consola.success(`  removed ${secretsDir}`);
     } catch (err) {
       consola.warn(`  could not remove ${secretsDir}`, err);
     }
   }
   for (const tokenPath of tokenPaths) {
-    if (!fs23.existsSync(tokenPath))
+    if (!fs22.existsSync(tokenPath))
       continue;
     try {
-      fs23.rmSync(tokenPath);
+      fs22.rmSync(tokenPath);
       consola.success(`  removed ${tokenPath}`);
     } catch (err) {
       consola.warn(`  could not remove ${tokenPath}`, err);
@@ -73344,7 +73262,6 @@ var init_uninstall = __esm(() => {
   init_dist2();
   init_dist();
   init_registry();
-  init_cli_path();
   init_paths();
   uninstall = defineCommand({
     meta: {
@@ -73370,7 +73287,7 @@ var init_uninstall = __esm(() => {
       "keep-app": {
         type: "boolean",
         default: false,
-        description: "Leave /Applications/maximal.app in place (still removes the ~/.local/bin/maximal symlink and other PATH binaries). Used by the in-app uninstall, which can't delete the running bundle."
+        description: "Accepted for the shell's in-app uninstall, which passes it over IPC. Currently a no-op: maximal ships no application bundle, so there is no bundle to keep and the Homebrew binaries are removed either way."
       }
     },
     run({ args }) {
@@ -73409,9 +73326,13 @@ var init_check_usage = __esm(() => {
           if (!snap)
             return `${name}: N/A`;
           const total = snap.entitlement;
-          const used = total - snap.remaining;
+          const remaining = snap.remaining;
+          if (total === undefined || remaining === undefined) {
+            return `${name}: ${snap.unlimited ? "unlimited" : "N/A"}`;
+          }
+          const used = total - remaining;
           const percentUsed = total > 0 ? used / total * 100 : 0;
-          const percentRemaining = snap.percent_remaining;
+          const percentRemaining = snap.percent_remaining ?? (total > 0 ? remaining / total * 100 : 0);
           return `${name}: ${used}/${total} used (${percentUsed.toFixed(1)}% used, ${percentRemaining.toFixed(1)}% remaining)`;
         };
         const usage = await getCopilotUsage();

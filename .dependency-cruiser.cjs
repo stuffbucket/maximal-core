@@ -1,25 +1,30 @@
 /** @type {import('dependency-cruiser').IConfiguration} */
 //
-// Run by `bun run deps:check`, which is wired into `check:deep` and into
-// ci.yml. Until this PR nothing invoked it at all: the config was correct and
-// enforced nothing, because no chain and no workflow ever ran depcruise.
+// This config is NOT run directly. `bun run deps:check` runs
+// `scripts/check-deps.ts`, which cruises with this config and then applies a
+// ratchet to `no-circular`; `check:deep` and ci.yml both go through that script.
+// Running `depcruise --config .dependency-cruiser.cjs src tests` by hand exits
+// non-zero on the standing circular backlog, which is correct and is why the
+// gate is the script.
 //
-// WHAT ACTUALLY FAILS A BUILD. Only the two `error` rules below. depcruise
-// exits 2 when an `error` rule matches and 0 when only `warn` rules do, so a
-// green `deps:check` means "no layering violation" — it does NOT mean "no
-// cycles". `no-circular` currently matches 47 times and is advisory; do not
-// read its silence as absence, read the output.
+// WHAT FAILS A BUILD. All three `error` rules below. `not-to-test` and
+// `no-route-imports-from-lib-or-services` are absolute. `no-circular` is
+// ratcheted: the set of imports that close a cycle is recorded in
+// scripts/check-deps.ts and may only shrink — a new one fails, and fixing one
+// fails until the record is updated. `no-orphans` is the only advisory rule and
+// currently matches nothing.
 module.exports = {
   forbidden: [
     {
       name: "no-circular",
-      severity: "warn",
+      severity: "error",
       comment:
-        "ADVISORY, NOT A GATE — 47 standing violations as of v0.4.0, and `warn` " +
-        "does not affect depcruise's exit code. Circular dependencies make code " +
-        "hard to reason about and refactor. Break cycles by extracting shared " +
-        "types/helpers. Promoting this to `error` requires clearing the backlog " +
-        "first (or adopting a `--ignore-known` baseline).",
+        "A cycle is a defect, so this is `error` — but there is a standing " +
+        "backlog, so the gate is `bun run deps:check` (scripts/check-deps.ts), " +
+        "which holds the known set and fails on any addition to it. Break cycles " +
+        "by extracting the shared type/helper into a module both sides import. " +
+        "`bun run deps:check --list` shows what is left, grouped by component; " +
+        "when it reaches zero, delete the ratchet and this rule stands alone.",
       from: {},
       to: { circular: true },
     },
@@ -27,7 +32,7 @@ module.exports = {
       name: "no-orphans",
       severity: "warn",
       comment:
-        "ADVISORY, NOT A GATE — see no-circular. Orphan modules (not reachable " +
+        "ADVISORY, NOT A GATE. Orphan modules (not reachable " +
         "from any entry) are typically dead code. Either wire them up or delete " +
         "them. Currently matches nothing.",
       from: {

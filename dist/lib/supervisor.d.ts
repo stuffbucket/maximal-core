@@ -99,11 +99,11 @@ type ParsedReadyLine = z.infer<typeof anyReadyLineSchema>;
 /** Thrown when the sidecar never announces readiness. Distinguishes "it died"
  *  from "it is still starting", which a supervisor must report differently. */
 declare class SidecarReadyTimeoutError extends Error {
-    constructor(timeoutMs: number);
+    constructor(timeoutMs: number, output?: string);
 }
 /** Thrown when stdout closed before a ready-line arrived — the sidecar exited. */
 declare class SidecarExitedError extends Error {
-    constructor();
+    constructor(output?: string);
 }
 /**
  * Parse one stdout line, returning the ready payload or null for anything else.

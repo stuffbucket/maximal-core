@@ -123,7 +123,7 @@ export function step(
 
 let current: HysteresisState = initialHysteresisState
 
-/** The current carried state (read-only view for callers/tests). */
+/** The current carried state (read-only view for callers/tests). @internal */
 export function getHysteresisState(): HysteresisState {
   return current
 }
@@ -142,7 +142,7 @@ export function advanceHysteresis(
   return result
 }
 
-/** Reset the shared machine. Test-only. */
+/** Reset the shared machine. Test-only. @internal */
 export function __resetHysteresisForTests(): void {
   current = initialHysteresisState
 }

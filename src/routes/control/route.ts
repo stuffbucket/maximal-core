@@ -1,7 +1,7 @@
 /**
  * /control/* — the decoupled control surface a UI (or third-party consumer)
  * uses to read state, drive actions, and receive a live event stream. Replaces
- * the removed /settings/api + /ws. See docs/spec/control-api.md.
+ * the removed /settings/api + /ws. See docs/spec/archive/control-api-v1.md.
  *
  * Loopback-only: the auth middleware treats /control as unauthenticated (no
  * proxy API key needed for a same-machine UI), so this router re-checks loopback

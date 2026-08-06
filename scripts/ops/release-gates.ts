@@ -20,16 +20,28 @@
  *      this gate is what catches it next time.
  *   3. **A tag matches `package.json`'s version.** Already gone wrong:
  *      `git show v0.1.1:package.json` reads `0.1.0`.
+ *   4. **A tag is greater than every tag that already exists.** Nothing asserted
+ *      this at all: gate 2 compares a milestone against the released version at
+ *      the moment the CHECK runs, which is not the moment the TAG is pushed. Two
+ *      releases prepared concurrently can therefore land in either order, and a
+ *      lower tag carrying more content cannot be repaired afterwards — see
+ *      `evaluateTagOrder`.
+ *   5. **Nothing that claims to ship in this release is still open.** Held up
+ *      only as a side effect of `release:notes` refusing to emit, which
+ *      `release.ts` skips entirely when the changelog entry already exists —
+ *      see `evaluateOpenPrs`.
  *
- * Three subcommands, one for each convention plus the release-time aggregate:
+ * Five subcommands, one per convention plus the release-time aggregate:
  *
  *   pr <number>        gates 1 + 2 for one PR (the PR-time workflow)
- *   milestone <vX.Y.Z> gate 2 across every PR in a milestone (release preflight)
+ *   milestone <vX.Y.Z> gates 2 + 5 across a milestone (release preflight)
+ *   order <vX.Y.Z>     gate 4 (local + remote tags; `--pushed` for a tripwire)
  *   version <vX.Y.Z>   gate 3 (tag vs package.json — preflight + tag tripwire)
  *
  * Usage:
  *   bun run release:check pr 42
  *   bun run release:check milestone v0.3.0
+ *   bun run release:check order v0.3.0
  *   bun run release:check version v0.3.0
  *   bun run release:check pr 42 --repo stuffbucket/maximal-core --mode warn
  *
@@ -37,6 +49,10 @@
  * could not run (bad usage, `gh` failure, unreadable package.json). Callers
  * MUST treat 2 as "not blocking" — a gate that fails closed on its own bugs
  * takes the repo down with it. `release-gates.yml` does exactly that.
+ *
+ * `release.ts` is the exception, and deliberately so: it runs gates 4 and 5
+ * itself before `bumpp`, where a 2 means "refused, nothing happened" rather than
+ * "the repo is wedged". Nothing downstream of that point is reversible.
  *
  * Escape hatches, in increasing blast radius:
  *   - `release-gate-override` label on one PR → every finding downgraded to a
@@ -46,7 +62,8 @@
  *     seconds without a PR).
  *
  * All GitHub access goes through `release-notes.ts`'s single injectable
- * `GhRunner`, so every test here runs offline with no network and no
+ * `GhRunner` and all repository access through `check-bindings.ts`'s `GitRunner`,
+ * so every test here runs offline with no network, no repository and no
  * `mock.module`.
  */
 
@@ -54,6 +71,7 @@ import { Buffer } from "node:buffer"
 import fs from "node:fs"
 import path from "node:path"
 
+import { type GitRunner, realGit } from "./check-bindings"
 import {
   type GhRunner,
   ghJson,
@@ -61,7 +79,7 @@ import {
   parseConventionalTitle,
   realGh,
 } from "./release-notes"
-import { parseSemver } from "./watch-external-drift"
+import { parseSemver, semverGt } from "./watch-external-drift"
 
 // --- versions ---
 
@@ -188,6 +206,13 @@ export type FindingKind =
   | "missing-milestone"
   | "non-adjacent-bump"
   | "non-conforming-title"
+  | "open-pr-earlier-release"
+  | "open-pr-in-release"
+  | "open-pr-unmilestoned"
+  | "prerelease-above-tag"
+  | "tag-already-exists"
+  | "tag-not-a-release"
+  | "tag-not-highest"
   | "version-tag-mismatch"
 
 export interface Finding {
@@ -235,8 +260,16 @@ export const OVERRIDE_LABEL = "release-gate-override"
  * A release commit ships the version bump itself and belongs to no milestone,
  * so gating it on one would deadlock the release it is cutting. Matches the
  * subject `docs/release-runbook.md` §4 prescribes.
+ *
+ * EXPORTED BECAUSE `release.ts` HAS TO PRODUCE A TITLE THAT MATCHES IT.
+ * `release:prepare` opens a real pull request for the release commit — that is
+ * the whole of the two-phase flow — and gate 5 blocks a PR that is open in the
+ * milestone being cut. `exemption` is what stops the release PR from refusing
+ * the release it is cutting, and it keys off this pattern, so the string
+ * `releaseCommitSubject` builds is pinned against this regex by a test rather
+ * than by two files agreeing in prose.
  */
-const RELEASE_COMMIT_RE = /^chore(?:\([\w-]+\))?: release v?\d+\.\d+\.\d+$/u
+export const RELEASE_COMMIT_RE = /^chore(?:\([\w-]+\))?: release v?\d+\.\d+\.\d+$/u
 
 /** Why this PR is not gated, or undefined if it is. */
 export function exemption(pr: GatePullRequest): string | undefined {
@@ -512,9 +545,10 @@ export function evaluateMilestone(input: MilestoneGateInput): GateReport {
  * workflow (`release-tag-check.yml`) DETECTS — it is the only placement that
  * can see the tag that was actually pushed, and it fires within seconds, while
  * the tag is still almost certainly unconsumed and can be deleted rather than
- * moved. It is deliberately NOT on the release commit: the runbook's flow bumps
- * and tags in one `release:manual` invocation, so a push-to-main check would
- * race the tag push it is meant to precede and could not name the tag anyway.
+ * moved. It is deliberately NOT wired onto the release commit as a third
+ * placement: `release:tag` re-reads the MERGED `package.json` and refuses unless
+ * it is exactly the version about to be tagged — the same assertion, one step
+ * earlier, against the only tree the tag can point at.
  */
 export function checkTagVersion(tag: string, packageVersion: string): GateReport {
   const subject = `tag ${tag} vs package.json ${packageVersion}`
@@ -543,6 +577,270 @@ export function readPackageVersion(file: string): string {
     throw new Error(`${file} has no string \`version\` field`)
   }
   return parsed.version
+}
+
+// --- gate 4 (pure) ---
+
+/**
+ * Gate 4: the tag being cut is strictly GREATER than every release tag that
+ * already exists, and does not exist itself.
+ *
+ * WHAT WAS MISSING. Gate 3 asserts tag == `package.json`. Gate 2 asserts the
+ * milestone is ahead of the current release *at the moment the check runs*.
+ * Neither is an assertion about the moment the tag is PUSHED, and nothing
+ * anywhere compared the tag being cut against the tags that already exist. With
+ * two releases in flight at once — which is the normal state of this repo, four
+ * agents deep — `v0.5.0` and `v0.4.4` can be prepared concurrently and land in
+ * either order. If `v0.5.0` lands first, `v0.4.4` is a LOWER-semver tag carrying
+ * strictly more content, and it cannot be repaired: `docs/release-runbook.md`
+ * forbids moving a published tag, because a consumer's `bun.lock` pins the
+ * resolved SHA and only `bun update` re-resolves.
+ *
+ * WHERE IT RUNS, AND WHY THERE — TWICE, ONCE PER RELEASE PHASE.
+ * `release:prepare` runs it ahead of `bumpp`, the same placement argument the
+ * clean-tree guard makes: a refusal there costs a re-run rather than a version
+ * spent. `release:tag` runs it AGAIN, immediately before the tag is created,
+ * because that is now the last line before the tag exists and the release PR may
+ * have sat open for hours — long enough for another agent to push the very tag
+ * this gate is about. Neither placement is a preflight a human runs, because "a
+ * human runs it" is the discipline these gates replace, and neither is only a
+ * tag-push workflow, because by then the tag is immutable. The `order`
+ * subcommand exists for the by-hand path in runbook §4 and for a tag-push
+ * tripwire (`--pushed`), both of which are secondary.
+ *
+ * WHICH TAGS IT COMPARES AGAINST — LOCAL **AND** REMOTE. A local checkout is
+ * stale by default: nothing fetches tags on its own, so a tag another agent (or
+ * another machine) pushed five minutes ago is invisible to `git tag --list`.
+ * That is exactly the race this gate exists for, so the remote is authoritative
+ * and is read every time. The local list is unioned in rather than replaced,
+ * because a tag that exists only locally is still one this release would collide
+ * with on push.
+ *
+ * The remote is read with `git ls-remote --tags`, not `git fetch --tags`, on
+ * purpose: `ls-remote` writes nothing. A guard that mutates the ref store of the
+ * repository it is about to refuse from would leave the tree different from how
+ * it found it — the one property the whole refusal path is built on. An
+ * unreachable remote is a THROW (exit 2, "the gate could not run"), never a
+ * pass: the flow ends in `git push` anyway, so a release that cannot see the
+ * remote was never going to complete.
+ *
+ * PRERELEASES DO NOT BLOCK. `vX.Y.Z-rc.1` is not a release tag to any of this
+ * tooling (`RELEASE_TAG_RE` is exact), and by semver a prerelease sorts BELOW
+ * the release it precedes — `v0.5.0-rc.1` is not evidence that `0.5.0` shipped.
+ * So prereleases are excluded from the comparison and reported as a WARNING when
+ * their base version sorts at or above the tag being cut, which is the case
+ * where one plausibly means "someone else is already cutting 0.5.0".
+ *
+ * No third comparator is written here. Exact release tags go through this file's
+ * `compareVersions`; the prerelease advisory goes through `semverGt` from
+ * `watch-external-drift.ts` (which `release-notes.ts` already reuses), whose
+ * `parseSemver` truncates at the suffix and therefore compares base versions.
+ */
+
+/**
+ * The remote a release is pushed to. `release:prepare` pushes the release branch
+ * there and `release:tag` pushes the tag there; every checkout that has cut a
+ * release here has that on `origin`. Overridable on the CLI (`--remote`) for a
+ * fork or a scratch clone.
+ */
+export const DEFAULT_REMOTE = "origin"
+
+/** A tag carrying a prerelease or build suffix: `v0.5.0-rc.1`, `v0.5.0+meta`. */
+export const PRERELEASE_TAG_RE = /^v\d+\.\d+\.\d+[-+]/u
+
+/**
+ * Tag names out of `git ls-remote --tags <remote>` output.
+ *
+ * Annotated tags appear twice — `refs/tags/v0.4.3` and the peeled
+ * `refs/tags/v0.4.3^{}` — so the suffix is stripped and the result deduped;
+ * counting a tag twice would not change the max, but the "where does it live"
+ * text in a refusal would read as nonsense.
+ */
+export function parseRemoteTags(lsRemote: string): Array<string> {
+  const names = new Set<string>()
+  for (const line of lsRemote.split("\n")) {
+    const ref = line.split("\t")[1]
+    if (!ref?.startsWith("refs/tags/")) continue
+    names.add(ref.slice("refs/tags/".length).replace(/\^\{\}$/u, "").trim())
+  }
+  return [...names]
+}
+
+export interface TagInventory {
+  /** `git tag --list` — what this checkout knows, which may be stale. */
+  local: ReadonlyArray<string>
+  /** `git ls-remote --tags` — what everyone else can already resolve. */
+  remote: ReadonlyArray<string>
+}
+
+export interface TagOrderInput extends TagInventory {
+  tag: string
+  /** The remote name, for the message only. */
+  remoteName?: string
+  /**
+   * The tag has ALREADY been pushed — the tripwire placement. Its own existence
+   * then stops being a finding, and it is compared against every OTHER tag. The
+   * preventive placement (`release.ts`, `release:check order`) leaves this off,
+   * where an existing tag is the whole point.
+   */
+  pushed?: boolean
+}
+
+/** Where a tag was found, for a message that says which clock is wrong. */
+function whereTagLives(
+  name: string,
+  local: ReadonlyArray<string>,
+  remote: ReadonlyArray<string>,
+  remoteName: string,
+): string {
+  const here = local.includes(name)
+  const there = remote.includes(name)
+  if (here && there) return `locally and on \`${remoteName}\``
+  if (there) return `on \`${remoteName}\``
+  return "locally (not yet pushed)"
+}
+
+/** Gate 4, pure. */
+export function evaluateTagOrder(input: TagOrderInput): GateReport {
+  const remoteName = input.remoteName ?? DEFAULT_REMOTE
+  const subject = `tag ${input.tag} vs ${input.local.length} local / ${input.remote.length} ${remoteName} tag(s)`
+  const target = parseReleaseTag(input.tag)
+  if (!target) {
+    return {
+      subject,
+      findings: [
+        {
+          kind: "tag-not-a-release",
+          severity: "error",
+          message: `\`${input.tag}\` is not a release tag — it must be exactly \`vX.Y.Z\`. Prereleases are not modelled by any of this tooling.`,
+        },
+      ],
+    }
+  }
+
+  const findings: Array<Finding> = []
+  const all = [...new Set([...input.local, ...input.remote])]
+
+  if (!input.pushed && all.includes(input.tag.trim())) {
+    findings.push({
+      kind: "tag-already-exists",
+      severity: "error",
+      message: `tag \`${input.tag}\` already exists ${whereTagLives(input.tag.trim(), input.local, input.remote, remoteName)}. A published tag must never be moved — a consumer's \`bun.lock\` pins the SHA the tag resolved to, so re-cutting it means two machines hold different code under one version. Cut the next unused version instead.`,
+    })
+  }
+
+  const others = all.filter((name) => name !== input.tag.trim())
+  const highest = highestTag(others)
+  if (highest && compareVersions(target, highest) <= 0) {
+    const name = formatVersion(highest)
+    findings.push({
+      kind: "tag-not-highest",
+      severity: "error",
+      message: `tag \`${input.tag}\` is not ahead of \`${name}\`, which already exists ${whereTagLives(name, input.local, input.remote, remoteName)}. Cutting it would leave a lower-semver tag containing strictly more content, and nothing can repair that afterwards: a published tag must not be moved. Pick a version above \`${name}\` (see *Choosing the version* in the runbook), retarget the milestone, and re-run.`,
+    })
+  }
+
+  for (const name of others) {
+    if (!PRERELEASE_TAG_RE.test(name)) continue
+    if (semverGt(input.tag, name)) continue
+    findings.push({
+      kind: "prerelease-above-tag",
+      severity: "warn",
+      message: `prerelease tag \`${name}\` exists ${whereTagLives(name, input.local, input.remote, remoteName)} and its base version is at or above \`${input.tag}\`. Prereleases are not release tags to this tooling, so this does not block — but check that nobody is mid-way through cutting that version.`,
+    })
+  }
+
+  return { subject, findings }
+}
+
+// --- gate 5 (pure) ---
+
+/**
+ * Gate 5: what is still OPEN when the tag is cut.
+ *
+ * WHAT WAS ALREADY COVERED, AND WHY THAT WAS NOT ENOUGH. `release:notes`
+ * refuses to emit when a milestone contains an open PR, and `release.ts` calls
+ * it before `bumpp`, so an open PR in the milestone blocks a release today. But
+ * it blocks as a SIDE EFFECT of notes generation, and that side effect has a
+ * hole: `release.ts` skips the whole changelog step — `gh` reads included — when
+ * `CHANGELOG.md` already documents the version. A re-run after a failed `bumpp`,
+ * or a hand-pasted entry, therefore cuts the tag with the open PR unnoticed.
+ * This gate states the rule directly instead, and `release.ts` runs it
+ * unconditionally.
+ *
+ * WHAT IS AND IS NOT CHECKABLE. The milestone model is what makes any of this
+ * decidable: a PR pre-selects its release. So each open PR is classified by
+ * where it points, and only one of the four cases is a violation:
+ *
+ *   - **In the milestone being cut** → BLOCKING. It said it ships here; it will
+ *     not be in the tag and will not be in the notes. Not a judgement call.
+ *   - **In a LOWER release milestone** → warning. That release has not shipped.
+ *     Cutting past it strands it, and cutting it afterwards is the reverse-order
+ *     tag gate 4 will then refuse — so this is gate 4's failure, seen early
+ *     enough to still be free. Legal, though: skipping a version is allowed.
+ *   - **In a HIGHER milestone** → silent. It has explicitly deferred itself.
+ *     Whether it touches the same code is not something a gate can weigh.
+ *   - **No milestone, or one that is not a release tag** → warning, listed by
+ *     number. An unassigned PR is NOT automatically part of this release, and a
+ *     gate that guessed would block a real release on someone's draft. The
+ *     honest answer is to name them and let the releaser decide — the same
+ *     shape `untrackedNote` in `release.ts` uses for the same reason. (The PR
+ *     gate already blocks the missing milestone on the PR itself, so this is a
+ *     reminder, not a second enforcement point.)
+ *
+ * THE RELEASE PR IS EXEMPT, AND THAT IS LOAD-BEARING NOW. `exemption` runs
+ * first here exactly as it does in gates 1 and 2, so a PR titled
+ * `chore: release vX.Y.Z` is skipped. Since `release:prepare` lands the release
+ * commit through a pull request, that PR is by definition open while the
+ * release is being cut — and on a re-run (`CHANGELOG.md` already documents the
+ * version, so the changelog step is skipped and this gate is the only thing
+ * still reading GitHub) it would otherwise be a blocking `open-pr-in-release`
+ * finding against itself. The signal is the TITLE, not the branch name: the
+ * title is what squash-merge turns into the commit subject and what every other
+ * gate in this file already reads, and a branch name is a convention nothing
+ * verifies. See `RELEASE_COMMIT_RE`.
+ */
+export function evaluateOpenPrs(
+  tag: string,
+  open: ReadonlyArray<GatePullRequest>,
+): Array<Finding> {
+  const cutting = parseReleaseTag(tag)
+  if (!cutting) return []
+
+  const findings: Array<Finding> = []
+  for (const pr of open) {
+    if (exemption(pr)) continue
+    const milestoneTitle = pr.milestone?.title
+    const target = milestoneTitle ? parseReleaseTag(milestoneTitle) : undefined
+
+    if (!target) {
+      findings.push({
+        kind: "open-pr-unmilestoned",
+        severity: "warn",
+        number: pr.number,
+        message: `#${pr.number} (\`${pr.title}\`) is open with ${milestoneTitle ? `milestone \`${milestoneTitle}\`, which is not a release tag` : "no milestone"}. Whether it belongs in \`${tag}\` is a judgement call this gate does not make: it lists, it does not block. Assign it and re-run if it ships here — \`gh pr edit ${pr.number} --milestone ${tag}\`.`,
+      })
+      continue
+    }
+
+    const order = compareVersions(target, cutting)
+    if (order === 0) {
+      findings.push({
+        kind: "open-pr-in-release",
+        severity: "error",
+        number: pr.number,
+        message: `#${pr.number} (\`${pr.title}\`) is OPEN and assigned to \`${tag}\`, the release being cut. It would not be in the tag and would not appear in the notes, while the milestone claims it ships. Merge it, or drop it from the milestone.`,
+      })
+    } else if (order < 0) {
+      findings.push({
+        kind: "open-pr-earlier-release",
+        severity: "warn",
+        number: pr.number,
+        message: `#${pr.number} is open in milestone \`${milestoneTitle}\`, which is BELOW the \`${tag}\` being cut — that release has not shipped. Cutting \`${tag}\` first strands it, and cutting \`${milestoneTitle}\` afterwards is a lower tag with more content, which gate 4 will refuse. Merge it first, retarget it, or accept that \`${milestoneTitle}\` will never ship.`,
+      })
+    }
+  }
+  return findings
 }
 
 // --- collection (gh) ---
@@ -591,6 +889,93 @@ export function fetchMilestonePrs(
     "--json",
     "number,title,body,author,labels",
   ])
+}
+
+/**
+ * Every OPEN PR in the repo — gate 5's whole input. Read across the repo rather
+ * than per-milestone on purpose: the PRs this gate has to name are precisely the
+ * ones a milestone-scoped search cannot return (no milestone, or somebody
+ * else's).
+ */
+export function fetchOpenPrs(gh: GhRunner, repo: string): Array<GatePullRequest> {
+  return ghJson<Array<GatePullRequest>>(gh, [
+    "pr",
+    "list",
+    "--repo",
+    repo,
+    "--state",
+    "open",
+    "--limit",
+    String(PR_PAGE_LIMIT),
+    "--json",
+    "number,title,milestone,author,labels",
+  ])
+}
+
+/** Gate 5's `gh` read plus its pure evaluation. */
+export function collectOpenPrGate(
+  tag: string,
+  options: CollectOptions = {},
+): GateReport {
+  const gh = options.gh ?? realGh
+  const repo = options.repo ?? currentRepo(gh)
+  const open = fetchOpenPrs(gh, repo)
+  return {
+    subject: `open pull requests vs ${tag} (${open.length} open)`,
+    findings: evaluateOpenPrs(tag, open),
+  }
+}
+
+/** `git tag --list` — this checkout's view, which nothing keeps up to date. */
+export function listLocalTags(git: GitRunner): Array<string> {
+  const res = git(["tag", "--list"])
+  if (res.status !== 0) {
+    throw new Error(
+      `git tag --list → exit ${res.status}: ${res.stderr.trim() || "(no stderr)"}`,
+    )
+  }
+  return res.stdout.split("\n").map((line) => line.trim()).filter(Boolean)
+}
+
+/**
+ * `git ls-remote --tags <remote>` — the authoritative list, read without writing
+ * a single ref. A failure THROWS: gate 4 must never conclude "nothing exists"
+ * from a network error, because that is the reading that lets a reverse-order
+ * tag through.
+ */
+export function listRemoteTags(
+  git: GitRunner,
+  remote: string = DEFAULT_REMOTE,
+): Array<string> {
+  const res = git(["ls-remote", "--tags", remote])
+  if (res.status !== 0) {
+    throw new Error(
+      `git ls-remote --tags ${remote} → exit ${res.status}: ${res.stderr.trim() || "(no stderr)"}. Gate 4 compares against the tags that already exist, so it cannot run without reading them — and this release ends in a \`git push\` to the same remote.`,
+    )
+  }
+  return parseRemoteTags(res.stdout)
+}
+
+export interface TagOrderOptions {
+  git?: GitRunner
+  remote?: string
+  pushed?: boolean
+}
+
+/** Gate 4's two git reads plus its pure evaluation. */
+export function collectTagOrderGate(
+  tag: string,
+  options: TagOrderOptions = {},
+): GateReport {
+  const git = options.git ?? realGit
+  const remote = options.remote ?? DEFAULT_REMOTE
+  return evaluateTagOrder({
+    tag,
+    local: listLocalTags(git),
+    remote: listRemoteTags(git, remote),
+    remoteName: remote,
+    pushed: options.pushed,
+  })
 }
 
 /** Highest `vX.Y.Z` tag in the list. Undefined when there are none. */
@@ -690,7 +1075,7 @@ export function collectPrGate(
   return evaluatePr({ pr, current, siblings })
 }
 
-/** Full gate-2 pipeline for a whole milestone (the release preflight). */
+/** Full gate-2 + gate-5 pipeline for a whole milestone (the release preflight). */
 export function collectMilestoneGate(
   tag: string,
   options: CollectOptions = {},
@@ -706,11 +1091,21 @@ export function collectMilestoneGate(
     `repos/${repo}`,
   ]).default_branch
   const current = fetchCurrentVersion(gh, repo, defaultBranch ?? "HEAD")
-  return evaluateMilestone({
+  const report = evaluateMilestone({
     tag,
     current,
     prs: parseReleaseTag(tag) ? fetchMilestonePrs(gh, repo, tag) : [],
   })
+  // Gate 5 rides along here rather than in its own subcommand: this is the
+  // command the runbook already tells a releaser to run at preflight, and "what
+  // is still open" is the same question at the same moment. `release.ts` calls
+  // `collectOpenPrGate` directly, so the release path does not depend on anyone
+  // remembering this one.
+  if (!parseReleaseTag(tag)) return report
+  return {
+    subject: report.subject,
+    findings: [...report.findings, ...evaluateOpenPrs(tag, fetchOpenPrs(gh, repo))],
+  }
 }
 
 // --- rendering ---
@@ -769,21 +1164,28 @@ export interface Args {
   subcommand?: string
   target?: string
   repo?: string
+  /** Gate 4's remote. */
+  remote?: string
+  /** Gate 4's tripwire mode: the tag is expected to exist already. */
+  pushed: boolean
   mode: Mode
 }
 
-const VALUE_FLAGS = new Set(["--mode", "--repo"])
+const VALUE_FLAGS = new Set(["--mode", "--remote", "--repo"])
 
 export function parseArgs(argv: ReadonlyArray<string>): Args {
-  const args: Args = { mode: "enforce" }
+  const args: Args = { mode: "enforce", pushed: false }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (VALUE_FLAGS.has(arg)) {
       const value = argv[++i]
       if (arg === "--repo") args.repo = value
+      else if (arg === "--remote") args.remote = value
       // Anything that is not exactly `warn` means enforce — an unrecognised
       // mode string must never silently disable the gate.
       else args.mode = value === "warn" ? "warn" : "enforce"
+    } else if (arg === "--pushed") {
+      args.pushed = true
     } else if (!arg.startsWith("-")) {
       if (args.subcommand === undefined) args.subcommand = arg
       else args.target ??= arg
@@ -792,7 +1194,7 @@ export function parseArgs(argv: ReadonlyArray<string>): Args {
   return args
 }
 
-const USAGE = `usage: bun run release:check <pr <number> | milestone <vX.Y.Z> | version <vX.Y.Z>> [--repo owner/name] [--mode enforce|warn]`
+const USAGE = `usage: bun run release:check <pr <number> | milestone <vX.Y.Z> | order <vX.Y.Z> | version <vX.Y.Z>> [--repo owner/name] [--remote origin] [--pushed] [--mode enforce|warn]`
 
 export interface MainOptions {
   /**
@@ -810,6 +1212,8 @@ export interface MainOptions {
   log?: (line: string) => void
   /** Where the job summary is appended. Defaults to `$GITHUB_STEP_SUMMARY`. */
   summaryPath?: string
+  /** Gate 4's git seam, so a test never shells out to a real repository. */
+  git?: GitRunner
 }
 
 function report(report_: GateReport, mode: Mode, options: MainOptions): number {
@@ -836,7 +1240,7 @@ export function main(
   argv: ReadonlyArray<string>,
   options: MainOptions = {},
 ): number {
-  const { subcommand, target, repo, mode } = parseArgs(argv)
+  const { subcommand, target, repo, remote, pushed, mode } = parseArgs(argv)
   if (!subcommand || !target) {
     console.error(USAGE)
     return 2
@@ -854,6 +1258,12 @@ export function main(
       }
       case "milestone":
         return report(collectMilestoneGate(target, { repo }), mode, options)
+      case "order":
+        return report(
+          collectTagOrderGate(target, { git: options.git, remote, pushed }),
+          mode,
+          options,
+        )
       case "version":
         return report(
           checkTagVersion(target, readPackageVersion(PACKAGE_JSON_PATH)),

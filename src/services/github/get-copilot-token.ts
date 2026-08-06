@@ -1,4 +1,5 @@
 import consola from "consola"
+import { z } from "zod"
 
 import { getCopilotTokenUrl, githubHeaders } from "~/lib/config/api-config"
 import { parseCopilotErrorBody } from "~/lib/errors/copilot-error-parser"
@@ -6,6 +7,54 @@ import { CopilotAuthFatalError, HTTPError } from "~/lib/errors/error"
 import { COPILOT_TOKEN_TIMEOUT_MS } from "~/lib/http/http-timeouts"
 import { sendRequest } from "~/lib/http/send-request"
 import { state } from "~/lib/runtime-state/state"
+
+/**
+ * Observed production cadence of `/copilot_internal/v2/token` (~25 min against
+ * a ~30 min token), and the value `EARLY_REFRESH_BUFFER_MS` in `token.ts` is
+ * tuned around. Used only when the response doesn't carry a usable number.
+ */
+const DEFAULT_REFRESH_IN_SECONDS = 1500
+
+/**
+ * The Copilot token mint response, validated at the boundary.
+ *
+ * `refresh_in` is load-bearing: it is the ONLY throttle on the background
+ * refresh loop. That loop's guards are `Math.max` / `Math.min` comparisons and
+ * a `nextDelayMs > 0` test — and NaN loses every one of them, so a non-numeric
+ * `refresh_in` does not slow the loop down, it deletes the sleep. Each mint
+ * recomputes the deadline from the same field, so it never self-corrects: the
+ * result is an unthrottled mint loop against GitHub for the life of the
+ * process. This is the same defect `get-device-code.ts` documents and coerces
+ * against; a bare `as` cast left this sibling — the one driving a long-lived
+ * loop — unchecked. Coerced with `.catch()` so any non-finite input (missing,
+ * null, NaN, wrong type) becomes a usable number.
+ *
+ * `token` is required and NOT defaulted: without it the mint has failed, and
+ * failing loudly here beats arming the live bearer with `undefined` and turning
+ * every subsequent upstream call into a 401 that reads like a rejected account.
+ *
+ * Everything else is passed through — `.loose()` on both levels, because this
+ * endpoint is undocumented and adding a field must never break a mint.
+ */
+const CopilotTokenResponseSchema = z
+  .object({
+    expires_at: z.number().catch(0),
+    refresh_in: z.number().nonnegative().catch(DEFAULT_REFRESH_IN_SECONDS),
+    token: z.string(),
+    // The authoritative completion host for THIS token. GitHub can migrate an
+    // account between hosts (e.g. individual → enterprise on a plan/billing
+    // change); the bearer minted here is only valid against its own
+    // `endpoints.api`, and POSTing it elsewhere is rejected with 421
+    // Misdirected Request. We re-read this on every mint/refresh so the host
+    // self-heals — and tolerate its absence, since callers already treat a
+    // missing host as "keep the current one".
+    endpoints: z
+      .object({ api: z.string().optional() })
+      .loose()
+      .optional()
+      .catch(undefined),
+  })
+  .loose()
 
 export const getCopilotToken = async () => {
   const response = await sendRequest(getCopilotTokenUrl(), {
@@ -45,44 +94,5 @@ export const getCopilotToken = async () => {
     throw new HTTPError("Failed to get Copilot token", response)
   }
 
-  return (await response.json()) as GetCopilotTokenResponse
-}
-
-/**
- * Back-compat re-export. Older test files import `parseCopilotAuthFailure`
- * from this module; the implementation moved to `~/lib/errors/copilot-error-parser`
- * as `parseCopilotErrorBody`. New callers should import directly from there.
- *
- * Preserves the auth-specific default message ("Copilot rejected this
- * token.") that the shared parser doesn't use — the shared parser's
- * default is generic ("Copilot returned an error.") so the same module
- * can serve non-auth completion-endpoint failures.
- */
-export function parseCopilotAuthFailure(body: string): {
-  message: string
-  remediationUrl: string | null
-} {
-  const parsed = parseCopilotErrorBody(body)
-  if (parsed.message === "Copilot returned an error.") {
-    return { ...parsed, message: "Copilot rejected this token." }
-  }
-  return parsed
-}
-
-// Trimmed for the sake of simplicity
-interface GetCopilotTokenResponse {
-  expires_at: number
-  refresh_in: number
-  token: string
-  // The authoritative completion host for THIS token. GitHub can migrate an
-  // account between hosts (e.g. individual → enterprise on a plan/billing
-  // change); the bearer minted here is only valid against its own
-  // `endpoints.api`, and POSTing it elsewhere is rejected with 421 Misdirected
-  // Request. We re-read this on every mint/refresh so the host self-heals.
-  endpoints?: {
-    api: string
-    "origin-tracker"?: string
-    proxy?: string
-    telemetry?: string
-  }
+  return CopilotTokenResponseSchema.parse(await response.json())
 }

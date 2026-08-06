@@ -21,12 +21,12 @@ The proxy does **not** fetch the model list per request. It serves a
 cached list and refreshes it lazily:
 
 - **Boot fetch** — `cacheModels()` calls `getModels()`:
-  `POST ${copilotBaseUrl}/models` with model-access headers
+  `GET ${copilotBaseUrl}/models` with model-access headers
   (`x-interaction-type: model-access`, `openai-intent: model-access`)
   (`src/services/copilot/get-models.ts:8-26`, `api-config.ts:218-231`).
 - **Lazy stale-while-revalidate** — `staleRefreshMiddleware`
   (`server.ts:101-112`) runs after auth on every authenticated request.
-  `refreshIfStale()` (`src/lib/refresh-models.ts:93-116`) compares
+  `refreshIfStale()` (`src/lib/models/refresh-models.ts:93-116`) compares
   `getModelsLoadedAtMs()` against `STALE_AFTER_MS` (6 h) ± a deterministic
   per-machine jitter of ±1 h (SHA-256 of `state.macMachineId`). When
   stale, it fires a **background** refresh (single-flight guarded by
@@ -106,7 +106,7 @@ Two transforms shape the list (both shapes):
   exposes those as request-time parameters, not separate models
   (`anthropic-id-rewrite.ts:67-72`); only models with
   `model_picker_enabled: true` **or** `type: "embeddings"` are listed
-  (`src/lib/utils.ts:29`).
+  (`src/lib/platform/utils.ts:29`).
 
 ## Response contract — `/:provider/v1/models`
 
@@ -123,8 +123,10 @@ shape is whatever the provider returns (Anthropic models list).
 
 - Unknown provider → `404` `{ "error": { "message", "type":
   "invalid_request_error" } }` (`provider/models/route.ts:20-30`).
-- Upstream Copilot fetch failure → logged; `forwardError()` returns a
-  `500` `{ "error": { "type": "error" } }`.
+- Upstream Copilot fetch failure → logged and **swallowed**. `/models` has no
+  try/catch and no `forwardError()`: `primeModelsCache()` warns and never
+  throws, so a Copilot `/models` outage yields a valid `200` with an empty
+  list, not a `5xx` (`src/routes/models/route.ts:15-26`).
 - Provider upstream errors → status/body relayed as-is.
 
 A background refresh failure is **swallowed** — the stale cache keeps

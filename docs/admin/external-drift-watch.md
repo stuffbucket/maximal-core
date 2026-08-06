@@ -109,9 +109,12 @@ Two paths cover triage, and the drift watcher relies on the second:
   of the product `bun test` root. It is the **parity guard**: rename a pinned
   constant and `extractPin` reds the tooling CI before the watcher can report a
   bogus pin.
-- **Tooling CI:** `.github/workflows/tooling-ci.yml` runs the colocated test on
-  PRs that touch `scripts/ops/**`. The daily watcher also self-checks (runs the
-  test) before it acts. The product's `ci.yml` never runs tooling tests.
+- **Tooling CI:** `.github/workflows/tooling-ci.yml` runs `bun run check:ops`
+  (typecheck *and* the colocated tests) on PRs touching `scripts/ops/**`,
+  `package.json`, `.bun-version`, or the workflow itself — `package.json` is in
+  the filter because the parity guards assert against the real manifest. The
+  daily watcher also self-checks (runs `test:ops`) before it acts. The product's
+  `ci.yml` never runs tooling tests.
 - **Docs:** this file (`docs/admin/`), not `docs/architecture.md`.
 
 ## Reconciling a flag

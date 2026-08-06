@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import path from "node:path"
 
 import {
   assessConfigFlags,
@@ -159,20 +160,27 @@ describe("assessConfigFlags", () => {
 })
 
 describe("resolveConfigPath", () => {
+  // `path.join` on BOTH sides, not a "/"-joined literal: the resolver builds
+  // its result with `path.join`, so the expected value has to be built the
+  // same way or the assertion is really testing `path.sep`. Same discipline as
+  // tests/paths.test.ts, which covers the identical convention in src/.
   it("honors COPILOT_API_HOME on any platform", () => {
     expect(
       resolveConfigPath({
         platform: "darwin",
-        homedir: "/home/u",
-        copilotApiHome: "/custom/home",
+        homedir: path.join("/home", "u"),
+        copilotApiHome: path.join("/custom", "home"),
       }),
-    ).toBe("/custom/home/config.json")
+    ).toBe(path.join("/custom", "home", "config.json"))
   })
 
   it("uses ~/.local/share/maximal on macOS/Linux", () => {
-    expect(resolveConfigPath({ platform: "darwin", homedir: "/home/u" })).toBe(
-      "/home/u/.local/share/maximal/config.json",
-    )
+    expect(
+      resolveConfigPath({
+        platform: "darwin",
+        homedir: path.join("/home", "u"),
+      }),
+    ).toBe(path.join("/home", "u", ".local", "share", "maximal", "config.json"))
   })
 
   it(String.raw`uses %APPDATA%\maximal on win32`, () => {

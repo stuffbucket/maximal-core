@@ -182,7 +182,7 @@ export async function bootstrapUpstream(
   }
 
   consola.warn(
-    "No GitHub token; proxy is up in unauthenticated mode — sign in via /settings or run `maximal auth`.",
+    "No GitHub token; proxy is up in unauthenticated mode — run `maximal auth` to sign in.",
   )
 }
 

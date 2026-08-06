@@ -56,9 +56,15 @@ const SERVER_START_MS = Date.now()
 
 // Control-surface hardening (§6, ADR-0021). Read lazily per request —
 // `runServer` sets the resolved ports before binding, and in-memory tests fall
-// back to the 4141 default. Keyed on the CONTROL port because every
-// CSRF_GUARDED_PREFIX (`/control`, `/_debug/state`) lives on that listener, so
-// "us" for origin purposes means the control origin.
+// back to the 4141 default.
+//
+// Keyed on the CONTROL port on BOTH listeners, deliberately: the only browser
+// page that has any business driving a guarded prefix is one served from the
+// control origin, so that is what "us" means here. It is not the case that every
+// CSRF_GUARDED_PREFIX lives on the control listener — `/_internal` is mounted on
+// `publicApp` (see the `/_internal` comment below) — which makes this stricter
+// than a per-listener key, not looser: a page served from the public port is not
+// an allowed origin either, and gets a 403 on `/_internal/shutdown`.
 const controlPort = (): number => state.controlPort
 
 /**
@@ -176,10 +182,10 @@ publicApp.route("/_internal", internalRoutes)
 publicApp.route("/", productApiRoutes)
 
 // Gate every upstream-touching route on the presence of a GitHub token.
-// When the sidecar boots without one, the HTTP server still listens (so
-// the desktop shell can load Settings and trigger auth on demand) but the
-// proxy endpoints 401 with `not_authenticated` instead of crashing or
-// firing the device-code flow.
+// When the engine boots without one, the HTTP server still listens (so a
+// supervisor can drive sign-in over `/control`, and `maximal auth` can run
+// alongside) but the proxy endpoints 401 with `not_authenticated` instead of
+// crashing or firing the device-code flow.
 publicApp.use("/chat/completions", requireGithubAuth)
 publicApp.use("/chat/completions/*", requireGithubAuth)
 publicApp.use("/models", requireGithubAuth)

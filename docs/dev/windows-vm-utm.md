@@ -142,10 +142,15 @@ clicks in UTM's UI. There's no public API to script those clicks in
 
 ## Known limitations
 
-- **No native Windows runner in CI.** maximal-core has no Windows CI job
-  at all — `ci.yml` is `ubuntu-latest` only, and there is no release or
-  installer workflow in this repo. This VM is local iteration, not a CI
-  replacement.
+- **CI's Windows leg does not cover installers.** `ci.yml` has a
+  `windows` job (`windows-latest`) that runs `bun install`,
+  `build:binary`, `verify:artifact`, `e2e:binary` against the
+  compiled `bun-windows-x64` artifact, and then `bun test`, on every PR
+  — so install-time, artifact-level and unit-level Windows breakage is
+  caught before a tag. 1 case stays `skipIf`-ed on `win32`, in
+  `tests/secrets.test.ts`. What is still
+  missing is any installer workflow — MSI packaging lives in the parent
+  repo. That residue is what this VM is for.
 - **ARM64 emulation of x64 binaries is fast but not native.** The Windows
   Bun output is x64 (`TARGETS` in `scripts/dev/build-binary.ts`); it runs on Windows 11
   ARM via Microsoft's x64 emulation layer, which is fine for installer

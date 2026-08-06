@@ -5,7 +5,8 @@ the tag being cut, and inserted at the anchor below by the release itself:
 
 ```sh
 bun run release:notes v0.2.1     # preview the block
-bun run release:manual v0.2.1    # generate it, insert it, and cut the release
+bun run release:prepare v0.2.1   # generate it, insert it, and open the release PR
+bun run release:tag v0.2.1       # once that PR has merged
 ```
 
 Whatever is assigned to the milestone is what ships, so the contents of a
@@ -37,7 +38,90 @@ Two notes on provenance:
   package, but every link in it points at the parent repo and none of its
   entries describes a `maximal-core` release.
 
-<!-- releases below — newest first; `release:manual vX.Y.Z` inserts the generated block here -->
+<!-- releases below — newest first; `release:prepare vX.Y.Z` inserts the generated block here -->
+
+## [0.4.4](https://github.com/stuffbucket/maximal-core/compare/v0.4.3...v0.4.4) (2026-08-06)
+
+
+### Features
+
+* **release:** land the release commit through a PR, tag main afterwards ([#83](https://github.com/stuffbucket/maximal-core/issues/83)) ([1038e3a](https://github.com/stuffbucket/maximal-core/commit/1038e3ad78430aa24e29558c5abbef6f8859bfda))
+* **release:** publish the package from CI to the GitHub Package Registry ([#82](https://github.com/stuffbucket/maximal-core/issues/82)) ([c390c57](https://github.com/stuffbucket/maximal-core/commit/c390c576b5e9b9ef1ba5c974914e04c2fe92f372))
+
+
+### Bug Fixes
+
+* four boundary and reachability bugs — a corrupt usage DB kills the proxy after boot, and three more ([#68](https://github.com/stuffbucket/maximal-core/issues/68)) ([02bbbb3](https://github.com/stuffbucket/maximal-core/commit/02bbbb300eb52258b154309df04b857bae5078f9))
+* **harness:** drain sidecar stderr from spawn so a failed boot names its cause ([#74](https://github.com/stuffbucket/maximal-core/issues/74)) ([2820a9e](https://github.com/stuffbucket/maximal-core/commit/2820a9e253c9bff79a9b1ba091629ac3405b733d))
+* **harness:** make every e2e failure detail state what was observed ([#78](https://github.com/stuffbucket/maximal-core/issues/78)) ([19d70d6](https://github.com/stuffbucket/maximal-core/commit/19d70d632c88938a8269532d3eb64a19d68c5aaf))
+* **knip:** report src exports whose only importer is a test ([#63](https://github.com/stuffbucket/maximal-core/issues/63)) ([3ad103f](https://github.com/stuffbucket/maximal-core/commit/3ad103fa70c42f6cc2229041105ed2368f6bec61))
+* **mutation:** stop scoring a truncated test run as a surviving mutant ([#80](https://github.com/stuffbucket/maximal-core/issues/80)) ([aacef4d](https://github.com/stuffbucket/maximal-core/commit/aacef4d31bee42505cff5f36ed971ff6ca22083c))
+* **release:** refuse a tag that is not above every tag that exists ([#60](https://github.com/stuffbucket/maximal-core/issues/60)) ([09e4b89](https://github.com/stuffbucket/maximal-core/commit/09e4b8929d01513a9e7b988518b98a45e369d638))
+* **scripts:** fail check:deep with "dependencies are not installed" ([#75](https://github.com/stuffbucket/maximal-core/issues/75)) ([b0c4dc2](https://github.com/stuffbucket/maximal-core/commit/b0c4dc29331cf7869c2e07a90591e2bb05880338))
+* six boundary bugs — a lean quota payload locks an entitled account out of switching, and five more ([#73](https://github.com/stuffbucket/maximal-core/issues/73)) ([cc29cdd](https://github.com/stuffbucket/maximal-core/commit/cc29cdd96b1d5c5a0a56564dcf8148ed37d19d8e))
+* **sqlite:** close the database when initialize throws, unlocking a corrupt store on Windows ([#71](https://github.com/stuffbucket/maximal-core/issues/71)) ([62994e6](https://github.com/stuffbucket/maximal-core/commit/62994e6b7f89843ef61586f9b4b3bac853db3fb1))
+
+
+### Code Refactoring
+
+* remove the macOS-DMG/Windows-installer shim ([#81](https://github.com/stuffbucket/maximal-core/issues/81)) ([c1bbb8b](https://github.com/stuffbucket/maximal-core/commit/c1bbb8b15422c49a32027d97be8605460336ad69))
+
+
+### Build System
+
+* **bundle:** import only `version` from package.json in build-info ([#62](https://github.com/stuffbucket/maximal-core/issues/62)) ([b30d692](https://github.com/stuffbucket/maximal-core/commit/b30d69253af1bac537141b4d29d392cea17c15f7))
+* **deps:** gate circular dependencies with a down-only ratchet ([#56](https://github.com/stuffbucket/maximal-core/issues/56)) ([7107adf](https://github.com/stuffbucket/maximal-core/commit/7107adf6e0660b5301b1650d4feff2e1e95d29cc))
+
+
+### Continuous Integration
+
+* describe what the deps step now enforces ([#57](https://github.com/stuffbucket/maximal-core/issues/57)) ([4ee5a20](https://github.com/stuffbucket/maximal-core/commit/4ee5a20f5583224bedb4e4df14cb1761bb3edb4c))
+* **release:** trip on a tag pushed below one that already exists ([#64](https://github.com/stuffbucket/maximal-core/issues/64)) ([f67fcdf](https://github.com/stuffbucket/maximal-core/commit/f67fcdff2c6f8ca7f66353b36e58f9bcefed7823))
+* run dupes:check, and fail when a check:deep step runs in no required CI job ([#66](https://github.com/stuffbucket/maximal-core/issues/66)) ([978d760](https://github.com/stuffbucket/maximal-core/commit/978d760a1e3dc68b1d7b0b43ba8b8879e9092ae6))
+* run the from-source e2e suite on ubuntu ([#69](https://github.com/stuffbucket/maximal-core/issues/69)) ([991da1e](https://github.com/stuffbucket/maximal-core/commit/991da1e3f0f406be3b80c18aec77de67940cf253))
+* verify main's branch rulesets and document what they enforce ([#59](https://github.com/stuffbucket/maximal-core/issues/59)) ([6b05181](https://github.com/stuffbucket/maximal-core/commit/6b05181ef551e20096a34b06ab3e36a3cfbb6d3c))
+
+
+### Documentation
+
+* adjudicate post-split documentation debt ([#76](https://github.com/stuffbucket/maximal-core/issues/76)) ([938f3b3](https://github.com/stuffbucket/maximal-core/commit/938f3b34be7bb1d0c246998a254d78b49c122a72))
+* **adr:** resolve the two ADRs crediting tests that never existed ([#70](https://github.com/stuffbucket/maximal-core/issues/70)) ([1b290c5](https://github.com/stuffbucket/maximal-core/commit/1b290c5e0bda52f495e486bb83e37dee544765cf))
+* correct 19 checkable claims and close the ADR cross-reference hole ([#67](https://github.com/stuffbucket/maximal-core/issues/67)) ([c835812](https://github.com/stuffbucket/maximal-core/commit/c8358129125a0901e5d9c1997f8542e9b389e4c3))
+* re-verify falsifiable claims against the current repo ([#53](https://github.com/stuffbucket/maximal-core/issues/53)) ([e81a664](https://github.com/stuffbucket/maximal-core/commit/e81a6648db90a6ea832dfe692508f1eb889574fc))
+* rewrite the auth-transport wire spec against current source ([#54](https://github.com/stuffbucket/maximal-core/issues/54)) ([a7c9e09](https://github.com/stuffbucket/maximal-core/commit/a7c9e0901440c39a86e8bf9bd73f8bf2d93d8d85))
+
+
+### Tests
+
+* detect copy-paste with a ratcheted jscpd gate, and stop guessing ports ([#61](https://github.com/stuffbucket/maximal-core/issues/61)) ([1c84524](https://github.com/stuffbucket/maximal-core/commit/1c845249ba58f55fc0f34777f33447466367d437))
+* fix three tests that could not fail, found by mutation testing ([#77](https://github.com/stuffbucket/maximal-core/issues/77)) ([0abbca5](https://github.com/stuffbucket/maximal-core/commit/0abbca5a91a73878130eba0d6bef2f7aca1eadf8))
+* **security:** assert the ADR-0021 §6.6 CLI invariant against the real server ([#72](https://github.com/stuffbucket/maximal-core/issues/72)) ([73613e5](https://github.com/stuffbucket/maximal-core/commit/73613e599f39605aef122bc5cde6ff00b5bc149a))
+* **security:** make the Origin-guard route enumeration real ([#58](https://github.com/stuffbucket/maximal-core/issues/58)) ([6395552](https://github.com/stuffbucket/maximal-core/commit/6395552764f21a81ddf02fff7f1d85270dbcc740))
+* **security:** pin the MAXIMAL_SHELL_KEY auth bypass, found by mutation testing ([#79](https://github.com/stuffbucket/maximal-core/issues/79)) ([1865926](https://github.com/stuffbucket/maximal-core/commit/1865926385b519d3d833cacb934b8bd79decb79a))
+* **windows:** make the unit suite pass on Windows and run it in CI ([#55](https://github.com/stuffbucket/maximal-core/issues/55)) ([3ad020a](https://github.com/stuffbucket/maximal-core/commit/3ad020a56a54d3dea789a8e791757cb1184a9d29))
+
+
+### Miscellaneous Chores
+
+* **repo:** drop pr-artifacts screenshots carried over from the split ([#65](https://github.com/stuffbucket/maximal-core/issues/65)) ([9670b14](https://github.com/stuffbucket/maximal-core/commit/9670b149386a1be1953cb7fd91be67b0279a7ff3))
+
+## [0.4.3](https://github.com/stuffbucket/maximal-core/compare/v0.4.2...v0.4.3) (2026-08-06)
+
+
+### Bug Fixes
+
+* **ci:** make the prepare script run on Windows ([#46](https://github.com/stuffbucket/maximal-core/issues/46)) ([d4870dc](https://github.com/stuffbucket/maximal-core/commit/d4870dc8fc8164c178ed77bd4555fe288a190e5c))
+* **ops:** stop fixture-driven tests emitting real CI annotations ([#50](https://github.com/stuffbucket/maximal-core/issues/50)) ([83c990a](https://github.com/stuffbucket/maximal-core/commit/83c990a7bff8ad88c38a10cecd627a78ca879598))
+
+
+### Continuous Integration
+
+* run the Windows release leg on every PR ([#49](https://github.com/stuffbucket/maximal-core/issues/49)) ([44d9093](https://github.com/stuffbucket/maximal-core/commit/44d9093960e695e3fb9ce33caf48f6f6edf46392))
+
+
+### Tests
+
+* **e2e:** cover --replace takeover, refusal, and the credential-free shutdown POST ([#47](https://github.com/stuffbucket/maximal-core/issues/47)) ([1c5b626](https://github.com/stuffbucket/maximal-core/commit/1c5b626dfa1d8da46bd853b338d8e676d0b493b4))
 
 ## [0.4.2](https://github.com/stuffbucket/maximal-core/compare/v0.4.1...v0.4.2) (2026-08-06)
 

@@ -18,8 +18,8 @@
  * `build` (`bun build`, Bun's own bundler) into `dist/`, whose bytes are a
  * function of the Bun version — measured on a 2x2 of {ubuntu, macos} x {1.3.11,
  * 1.3.14} in maximal-core#31, where the OS made no difference and the version
- * made all of it. `release:manual` invokes `bun publish` with whatever Bun the
- * releaser has on PATH, so the tarball could carry a `dist/main.js` that
+ * made all of it. `release:manual` used to invoke `bun publish` with whatever
+ * Bun the releaser had on PATH, so the tarball could carry a `dist/main.js` that
  * disagrees with the committed, verified one and that nobody can regenerate.
  * Measured here, off-pin, on `main` at v0.3.2:
  *
@@ -27,7 +27,7 @@
  *     tarball   dist/main.js   ffdee378…  (= Bun 1.3.14, whatever was on PATH)
  *
  * WHY THE INTERPRETER IS NOT ENOUGH, AND WHY THIS FILE EXISTS AT ALL. The
- * obvious fix — "run `release:manual` with the pinned Bun" — does not work, and
+ * obvious fix — "run the release with the pinned Bun" — does not work, and
  * this is the trap `check-bindings.ts` already hit. Bun runs lifecycle scripts
  * through a shell whose PATH contains NEITHER `node_modules/.bin` NOR Bun's own
  * bindir, so the bare `bun` in `bun run build` re-resolves from the developer's
@@ -46,13 +46,13 @@
  * output and one command to run.
  *
  * WHY THE PREFLIGHT (`--check`) EXISTS, AND WHY IT IS THE PRIMARY GATE.
- * `release:manual` is `bumpp && bun publish`, and `bumpp` COMMITS, TAGS AND
- * PUSHES before `bun publish` is reached. A refusal at `prepack` time is
- * therefore already too late to be cheap: the tag is public, and
+ * `release:tag` ends at a pushed tag, and `publish-package.yml` publishes
+ * from that tag — so by the time `prepack` runs in CI, the tag is public and
  * `docs/release-runbook.md` is explicit that a published tag must not be moved.
- * `--check` runs the identical assertion with no build, wired ahead of `bumpp`,
- * so the common failure costs nothing. `prepack` keeps the same assertion as a
- * backstop for anyone who runs `bun publish` or `bun pm pack` directly.
+ * A refusal there is already too late to be cheap. `--check` runs the identical
+ * assertion with no build, wired ahead of `bumpp`, so the common failure costs
+ * nothing. `prepack` keeps the same assertion as a backstop for that workflow
+ * and for anyone who runs `bun publish` or `bun pm pack` directly.
  *
  * Both measure the same thing: each is launched by a bare `bun` resolved from
  * PATH through a shell, so the preflight's interpreter is the interpreter
@@ -71,13 +71,15 @@
  * on a no-op one. The invariant that DOES hold across a bump is the toolchain,
  * which is what is asserted here.
  *
- * WHY NOT PUBLISH FROM CI, which would pin the version by construction. That is
- * the better end state and it is a bigger change than the exposure warrants
- * today: `@stuffbucket/maximal-core` has never been published (the registry
- * 404s), there is no npm token or OIDC trusted-publishing config in this repo,
- * and `release-artifacts.yml` already covers the artifacts that DO ship. This
- * guard is what makes the manual path safe now and stays correct as a
- * belt-and-braces check inside a CI publish later.
+ * PUBLISHING NOW HAPPENS IN CI, which pins the version by construction —
+ * `publish-package.yml` installs `.bun-version`'s Bun and runs `bun publish` on
+ * the tag. That was always the better end state and this file is what made the
+ * manual path safe until it existed. It stays as the belt-and-braces check
+ * inside that workflow, and as the only guard on a by-hand `bun pm pack`.
+ *
+ * IT ALSO STAYS BECAUSE OF WHAT IT REFUSES: `process.versions.bun` is
+ * `undefined` under node, so `npm publish` cannot get past this assertion at
+ * all. The workflow uses `bun publish` for that reason and says so.
  *
  * Usage:
  *   bun scripts/ops/prepack.ts            # assert the pin, then build

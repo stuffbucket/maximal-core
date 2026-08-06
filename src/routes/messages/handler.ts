@@ -1,5 +1,7 @@
 import type { Context } from "hono"
 
+import { z } from "zod"
+
 import type { Model } from "~/services/copilot/get-models"
 
 import { isMessagesApiEnabled } from "~/lib/config/config"
@@ -10,7 +12,7 @@ import {
   reverseId,
 } from "~/lib/models/anthropic-id-rewrite"
 import { type AnthropicMessagesPayload } from "~/lib/models/anthropic-types"
-import { COMPACT_REQUEST } from "~/lib/models/compact"
+import { COMPACT_REQUEST, type CompactType } from "~/lib/models/compact"
 import { findEndpointModel } from "~/lib/models/models"
 import {
   createHandlerLogger,
@@ -40,6 +42,47 @@ import { isWarmupRequest, respondToWarmup } from "./warmup"
 import { handleWithWebToolsAgent, splitWebTools } from "./web-tools"
 
 const logger = createHandlerLogger("messages-handler")
+
+/**
+ * The only structural claim `/v1/messages` makes about an inbound body before
+ * the preprocessing pipeline runs: an object carrying a `messages` array.
+ *
+ * Everything past that is Anthropic's wire format, which this proxy does not
+ * own and deliberately does not re-declare — a stricter schema here would
+ * reject payloads Copilot accepts, and every new optional field upstream adds
+ * would be a bug report. What it MUST catch is the shape that reaches a
+ * property access and throws: without it, `forwardError`'s catch-all turned a
+ * malformed request into a 500 whose message was a raw JS `TypeError`. A
+ * client retries a 500 and does not retry a 400.
+ */
+const MessagesRequestShape = z
+  .object({ messages: z.array(z.unknown()) })
+  .loose()
+
+/** The inbound body when it satisfies {@link MessagesRequestShape}, else `null`.
+ *  A body that isn't JSON at all lands in the same `null` — `c.req.json()`
+ *  throws on an empty or truncated body, and that is a client error too. */
+const readMessagesPayload = async (
+  c: Context,
+): Promise<AnthropicMessagesPayload | null> => {
+  const body: unknown = await c.req.json().catch(() => null)
+  if (!MessagesRequestShape.safeParse(body).success) return null
+  // Checked immediately above: an object carrying a `messages` array is the
+  // whole structural precondition of the pipeline.
+  return body as AnthropicMessagesPayload
+}
+
+const invalidRequest = (c: Context) =>
+  c.json(
+    {
+      error: {
+        message:
+          "Invalid request body: expected a JSON object with a `messages` array.",
+        type: "invalid_request_error",
+      },
+    },
+    400,
+  )
 
 // Reverse the dash-date sentinel form (added by /v1/models for Claude
 // Desktop's normalizer) back to Copilot's original dot-form, then route
@@ -80,13 +123,48 @@ const defaultDeps: HandleCompletionDeps = {
   handleWithChatCompletions,
 }
 
+/**
+ * The canned warmup response, or `null` when this is a real request.
+ *
+ * Claude Code 2.0.28+ fires a tool-less "Warmup" request on startup (and around
+ * subagent spawns) that today round-trips upstream (~4s p50). When the request
+ * precisely matches the warmup shape, short-circuit it with a canned local
+ * response — no upstream call, no model mutation. The detector errs tight (a
+ * false positive would canned-respond to a real request); we also require the
+ * anthropic-beta header (warmups always carry it) to be extra conservative.
+ * Non-warmup no-tool turns fall through untouched.
+ */
+function respondIfWarmup(
+  c: Context,
+  payload: AnthropicMessagesPayload,
+  ctx: { anthropicBeta: string | undefined; compactType: CompactType },
+): Response | null {
+  const noTools = !payload.tools || payload.tools.length === 0
+  if (!ctx.anthropicBeta || !noTools || ctx.compactType !== 0) return null
+
+  if (isWarmupRequest(payload)) {
+    logger.debug("warmup short-circuit", {
+      model: payload.model,
+      stream: payload.stream ?? false,
+    })
+    return respondToWarmup(c, payload)
+  }
+
+  debugLazy(logger, () => [
+    "no-tool beta request, not warmup-shaped",
+    { msgCount: payload.messages.length },
+  ])
+  return null
+}
+
 export async function handleCompletion(
   c: Context,
   deps: HandleCompletionDeps = defaultDeps,
 ) {
   await checkRateLimit(state)
 
-  const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+  const anthropicPayload = await readMessagesPayload(c)
+  if (!anthropicPayload) return invalidRequest(c)
   stripUnsupportedTopLevelAnthropicFields(anthropicPayload)
   debugJson(logger, "Anthropic request payload:", anthropicPayload)
 
@@ -113,29 +191,13 @@ export async function handleCompletion(
   // claude code and opencode compact / auto-continue detection
   const compactType = getCompactType(anthropicPayload)
 
-  // Claude Code 2.0.28+ fires a tool-less "Warmup" request on startup (and
-  // around subagent spawns) that today round-trips upstream (~4s p50). When
-  // the request precisely matches the warmup shape, short-circuit it with a
-  // canned local response — no upstream call, no model mutation. The detector
-  // errs tight (a false positive would canned-respond to a real request); we
-  // also require the anthropic-beta header (warmups always carry it) to be
-  // extra conservative. Non-warmup no-tool turns fall through untouched.
   const anthropicBeta = c.req.header("anthropic-beta")
   logger.debug("Anthropic Beta header:", anthropicBeta)
-  const noTools = !anthropicPayload.tools || anthropicPayload.tools.length === 0
-  if (anthropicBeta && noTools && compactType === 0) {
-    if (isWarmupRequest(anthropicPayload)) {
-      logger.debug("warmup short-circuit", {
-        model: anthropicPayload.model,
-        stream: anthropicPayload.stream ?? false,
-      })
-      return respondToWarmup(c, anthropicPayload)
-    }
-    debugLazy(logger, () => [
-      "no-tool beta request, not warmup-shaped",
-      { msgCount: anthropicPayload.messages.length },
-    ])
-  }
+  const warmup = respondIfWarmup(c, anthropicPayload, {
+    anthropicBeta,
+    compactType,
+  })
+  if (warmup) return warmup
 
   if (compactType) {
     logger.debug("Compact request type:", compactType)

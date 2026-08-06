@@ -29,7 +29,7 @@ These complement, and sit alongside, the strategy/spec docs already in
 | [`responses-wire-prd.md`](responses-wire-prd.md) | `POST /responses`, `/v1/responses` | Copilot `/responses` |
 | [`embeddings-wire-prd.md`](embeddings-wire-prd.md) | `POST /embeddings`, `/v1/embeddings` | Copilot `/embeddings` |
 | [`models-wire-prd.md`](models-wire-prd.md) | `GET /models`, `/v1/models`, `/:provider/v1/models` | Copilot `/models`; provider `/v1/models` |
-| [`usage-status-wire-prd.md`](usage-status-wire-prd.md) | `/status`, `/setup-status`, `/usage`, `/token-usage(/events)`, `/token`, `/_internal/shutdown`, `/_debug/state` | GitHub usage API |
+| [`usage-status-wire-prd.md`](usage-status-wire-prd.md) | `/status`, `/setup-status`, `/openapi.json`, `/usage`, `/token-usage(/events)`, `/_internal/shutdown`, `/_debug/state` | GitHub usage API |
 
 **Read `auth-transport-wire-prd.md` first.** Every other surface inherits
 its middleware stack, its client-auth contract, and its upstream

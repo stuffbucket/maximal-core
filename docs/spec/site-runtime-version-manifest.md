@@ -4,6 +4,12 @@
 **Date:** 2026-07-03.
 **Authors:** consolidated from a parallel investigation (root-cause, data-contract, CI/workflow).
 
+> **Not dead — this is the schema record for a live parser.** The producer side
+> below (the Astro site, `deploy-pages.yml`) left with the core split, but
+> `parseManifestVersion` in `src/lib/update/update-check.ts` still parses the
+> manifest this document specifies. Moved here from `docs/decisions/` because it
+> is a spec, not a decision record.
+
 ## Problem statement
 
 Two entangled issues, one root cause:

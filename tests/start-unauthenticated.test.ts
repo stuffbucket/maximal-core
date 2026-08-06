@@ -118,7 +118,9 @@ describe("start in unauthenticated mode", () => {
     expect(res.status).toBe(401)
     const body = (await res.json()) as { error: string; hint: string }
     expect(body.error).toBe("not_authenticated")
-    expect(body.hint).toContain("Settings")
+    // The hint has to name a route out that core actually offers. `maximal
+    // auth` is the CLI flow; there is no Settings UI in this repo.
+    expect(body.hint).toContain("maximal auth")
   })
 
   test("GET /chat/completions also gates on github auth", async () => {

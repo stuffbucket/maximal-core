@@ -39,19 +39,46 @@ import {
  */
 export type { ParsedReadyLine, ReadyLine } from "~/lib/start/boot-status"
 
+/**
+ * Append what the sidecar actually emitted to a boot-failure message.
+ *
+ * A failed boot is usually observed once, in a log, by someone who cannot
+ * re-run it. "It did not become ready" names the symptom; the child's own
+ * output names the cause, and it is almost always on stderr — which this module
+ * never sees, by construction (it is handed stdout and nothing else). So the
+ * transcript arrives as a string from the supervisor that owns the pipes.
+ *
+ * Optional, so `new SidecarExitedError()` keeps working for a host that has
+ * nothing to add.
+ */
+function withOutput(message: string, output?: string): string {
+  const trimmed = output?.trim()
+  return trimmed ? `${message}\n${trimmed}` : message
+}
+
 /** Thrown when the sidecar never announces readiness. Distinguishes "it died"
  *  from "it is still starting", which a supervisor must report differently. */
 export class SidecarReadyTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(`Sidecar did not emit a ready-line within ${timeoutMs}ms`)
+  constructor(timeoutMs: number, output?: string) {
+    super(
+      withOutput(
+        `Sidecar did not emit a ready-line within ${timeoutMs}ms`,
+        output,
+      ),
+    )
     this.name = "SidecarReadyTimeoutError"
   }
 }
 
 /** Thrown when stdout closed before a ready-line arrived — the sidecar exited. */
 export class SidecarExitedError extends Error {
-  constructor() {
-    super("Sidecar stdout closed before it emitted a ready-line")
+  constructor(output?: string) {
+    super(
+      withOutput(
+        "Sidecar stdout closed before it emitted a ready-line",
+        output,
+      ),
+    )
     this.name = "SidecarExitedError"
   }
 }

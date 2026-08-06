@@ -12,6 +12,7 @@
 > **Do not build a client against this document.** For the current surface see
 > the *Control API* section of [`docs/architecture.md`](../../architecture.md);
 > for the wire types, `src/lib/live/contract.ts` (published as
+> `./contract`) and `src/lib/jsonrpc/contract.ts` (published as
 > `./control-contract`); for the callable method set, call `server/discover` at
 > runtime — it is generated from the live registry and so cannot under-report.
 >

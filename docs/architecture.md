@@ -192,12 +192,14 @@ See also: `docs/codegen-feedback-loops-practices.md` → Dispatch and review loo
 
 ## Testing gotchas
 
-The rule is in [`AGENTS.md`](../AGENTS.md); the mechanism, the four incidents
+The rule is in [`AGENTS.md`](../AGENTS.md); the mechanism, the five incidents
 behind it, and the mutant-disposition procedure are in
 [`dev/testing-strategy.md`](dev/testing-strategy.md) §5.1 (module-mock leakage,
-`mockModuleLeakGuard`, why an awaited restore is still unsafe) and §6 (mutation
-testing — every surviving mutant is killable, dead, or proven-equivalent). The
-decision itself is [ADR-0011](decisions/0011-mock-module-leakage-discipline.md).
+`mockModuleLeakGuard`, why a restore must hand back a spread copy captured
+*before* the install — and why even a correct one is cleanup, not protection)
+and §6 (mutation testing — every surviving mutant is killable, dead, or
+proven-equivalent). The decision itself is
+[ADR-0011](decisions/0011-mock-module-leakage-discipline.md).
 
 
 ## Release & PR conventions
@@ -229,3 +231,13 @@ decision itself is [ADR-0011](decisions/0011-mock-module-leakage-discipline.md).
   unrecognized token, and since the notes are generated from PR titles it
   is the title — not the body's individual commits, which a squash
   discards — that has to be right.
+- **`main` is protected by two rulesets, and they are what make every other
+  gate blocking.** A PR is mandatory, squash is the only merge method,
+  `test` / `windows` / `gate` are required status checks, the branch must be
+  up to date before it merges (the substitute for a Merge Queue this
+  user-owned repo cannot have), and `main` cannot be deleted or force-pushed.
+  There is **no bypass actor on either ruleset** — the release commit goes
+  through a PR like everything else (`release:prepare`, then `release:tag` on the
+  merged head), and a bypass reappearing is drift. Verified by
+  `bun run rules:check`; described in
+  [`docs/admin/branch-rulesets.md`](admin/branch-rulesets.md).

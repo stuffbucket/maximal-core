@@ -48,7 +48,7 @@ const EXCLUDED_TREES: Array<{ path: string; why: string }> = [
   },
   {
     path: "docs/decisions",
-    why: "ADRs are immutable point-in-time records. An ADR cites the code as it stood when the decision was made; updating those paths would rewrite history.",
+    why: "ADRs are immutable point-in-time records. An ADR cites the code as it stood when the decision was made; updating those paths would rewrite history. NARROWED: this exemption covers src/ and tests/ citations only. An ADR's reference to a SIBLING ADR is not a point-in-time code citation — the target either exists or the reader gets a 404 — so those are checked separately, below.",
   },
   {
     path: "docs/spec",
@@ -456,6 +456,90 @@ describe("docs reference parity", () => {
       }
     }
     expect(report("workflow references", violations)).toBe("")
+  })
+
+  // -------------------------------------------------------------------------
+  // 5. ADR-to-ADR references
+  // -------------------------------------------------------------------------
+
+  /**
+   * `docs/decisions` is exempt from the path check above because an ADR cites
+   * the code as it stood when the decision was made. That reasoning covers
+   * `src/…` and `tests/…`; it does not cover a reference to a *sibling ADR*,
+   * which is not a point-in-time citation — the file either exists or the
+   * reader gets a 404. That gap is how ADR-0014 kept pointing at ADR-0013 for
+   * months after the core split deleted it.
+   *
+   * Scanned over RAW lines, because these references live in YAML frontmatter
+   * (`related_adrs:`, `supersedes:`) as often as in prose, and frontmatter is
+   * not an inline code span.
+   *
+   * An ADR that genuinely lives in the parent repo is cited by its full URL;
+   * `https://github.com/…/docs/decisions/0013-…md` contains this pattern as a
+   * substring, so URL-embedded matches are skipped. The bare `ADR-NNNN` prose
+   * form is deliberately NOT checked: several ADRs here were inherited from
+   * `stuffbucket/maximal` and legitimately cite parent-repo ADRs (0002, 0004,
+   * 0012) that never existed in core, so checking it would fire on correct
+   * text. Precision over recall, as above.
+   */
+  it("every ADR reference to a sibling ADR resolves", () => {
+    const violations: Array<Violation> = []
+    const adrRef = /docs\/decisions\/\d{4}-[a-z0-9-]+\.md/g
+    for (const path of allDocs().filter((p) => inTree(p, "docs/decisions"))) {
+      const doc = buildDoc(path)
+      for (const [i, line] of doc.raw.entries()) {
+        for (const match of line.matchAll(adrRef)) {
+          // Part of an absolute URL — points at another repo, not at us.
+          if (/https?:\/\/\S*$/.test(line.slice(0, match.index))) continue
+          if (existsSync(join(REPO_ROOT, match[0]))) continue
+          if (isNegated(doc, i)) continue
+          violations.push({
+            file: doc.path,
+            line: i + 1,
+            reference: match[0],
+            problem: `${match[0]} does not exist in this repo.`,
+            fix: "If the ADR lives in stuffbucket/maximal, cite it by full URL. If it was dropped outright, say so at the citation — do not silently delete the reference.",
+          })
+        }
+      }
+    }
+    expect(report("ADR cross-references", violations)).toBe("")
+  })
+
+  // -------------------------------------------------------------------------
+  // 6. The ADR namespace
+  // -------------------------------------------------------------------------
+
+  /**
+   * The check above can only resolve a citation of the form
+   * `docs/decisions/NNNN-slug.md`. A file in `docs/decisions/` that is not
+   * named that way is therefore invisible to it — uncitable by the convention
+   * and unenforced by the mechanism. This closes the namespace so that gap
+   * cannot reappear.
+   *
+   * Cheap and precision-safe by construction: it reads a directory listing and
+   * tests filenames against the same shape the citation regex already assumes.
+   * The only way to fail is to add a file to `docs/decisions/` that is not a
+   * numbered ADR, which is exactly the event worth a red result.
+   *
+   * No exemptions, deliberately. The one unnumbered file this would have caught
+   * (`site-runtime-version-manifest.md`) was a misfiled spec, not a decision
+   * record, and was moved to `docs/spec/` rather than allow-listed here. An
+   * allow-list on a check whose whole job is naming would only be a slower way
+   * of not enforcing it.
+   */
+  it("every file in docs/decisions is a numbered ADR", () => {
+    const unnumbered = allDocs()
+      .filter((p) => inTree(p, "docs/decisions"))
+      .map((p) => p.slice("docs/decisions/".length))
+      .filter((n) => !/^\d{4}-[a-z0-9-]+\.md$/.test(n))
+
+    expect(
+      unnumbered.length === 0 ?
+        ""
+      : `Not named as ADRs, so no ADR can cite them and the cross-reference check above cannot see them: ${unnumbered.join(", ")}.\n`
+          + "  Rename to docs/decisions/NNNN-slug.md, or move the file to docs/spec/ if it is a spec rather than a decision.\n",
+    ).toBe("")
   })
 
   // -------------------------------------------------------------------------

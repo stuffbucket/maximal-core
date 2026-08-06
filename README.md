@@ -58,7 +58,18 @@ the server still listens but upstream routes answer `401 not_authenticated`.
 ## Install
 
 `maximal-core` is published as `@stuffbucket/maximal-core` and installs the
-`maximal` command (`dist/main.js`). Run from source for development:
+`maximal` command (`dist/main.js`). It is on the **GitHub Package Registry**,
+not npmjs, so an install needs the scope pointed at it and an authenticated
+token:
+
+```sh
+echo "@stuffbucket:registry=https://npm.pkg.github.com" >> .npmrc
+bun add @stuffbucket/maximal-core
+```
+
+Tags v0.2.0 … v0.4.3 predate the package and exist only as git refs; a git
+dependency on this repo still resolves and still works. Run from source for
+development:
 
 ```sh
 bun install
@@ -215,7 +226,8 @@ downstream/                Simulated consumer, compiled by `bun run typecheck:do
 docs/spec/                 Feature specs (tool-bridge, observability, wire PRDs);
                            docs/spec/archive/ holds superseded ones (web-tools).
 docs/decisions/            ADRs.
-docs/admin/                Operator/MDM reference.
+docs/admin/                Operator/MDM reference, and what `main` enforces
+                           (docs/admin/branch-rulesets.md).
 scripts/                   Dev harnesses (scripts/dev/) and release/ops tooling (scripts/ops/).
 LICENSE                    MIT.
 THIRD-PARTY-LICENSE        Bundled-dependency license pointer (npm SBOM).
@@ -227,12 +239,19 @@ THIRD-PARTY-LICENSE        Bundled-dependency license pointer (npm SBOM).
 milestone whose title is the tag**: assigning a PR to `vX.Y.Z` pre-selects its
 release, so what ships is reviewable before the tag exists. `bun run
 release:notes vX.Y.Z` turns the milestone into changelog-shaped Markdown, and
-`bun run release:manual vX.Y.Z` cuts it — refusing a dirty tree, an off-pin
-Bun, or a milestone `release:notes` would not emit for, then bumping, writing the
-changelog entry, rebuilding `dist/`, staging both into the one release commit,
-tagging and pushing. Cutting a release is a deliberate
-human step; pushing the tag is what builds and publishes the binaries
-(`release-artifacts.yml`).
+and cutting it takes two commands with a merged pull request between them.
+`bun run release:prepare vX.Y.Z` refuses a dirty tree, an off-pin Bun, or a
+milestone `release:notes` would not emit for, then bumps, rebuilds `dist/`,
+writes the changelog entry, commits all of it on `release/vX.Y.Z`, pushes the
+branch and opens the PR — it cuts no tag. Once that PR is merged,
+`bun run release:tag vX.Y.Z` cuts the annotated tag on `main`'s merged HEAD,
+which is what builds and publishes the binaries (`release-artifacts.yml`) and
+publishes the package (`publish-package.yml`).
+
+`main` requires a pull request, three green checks (`test`, `windows`, `gate`)
+and a branch that is up to date before it will merge. There is no exemption and
+no bypass actor — the release commit included, which is why it takes a PR at all
+— see [`docs/admin/branch-rulesets.md`](docs/admin/branch-rulesets.md).
 
 ## Status
 

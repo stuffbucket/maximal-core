@@ -9,17 +9,28 @@ This page covers getting maximal onto your machine. Once it's installed, head to
 You'll need:
 
 - **A GitHub Copilot plan.** maximal runs your tools on the models in your existing Copilot subscription, so you need an active plan. GitHub Enterprise works too.
-- **A Mac with Apple Silicon** (M1 or newer) for the app. Windows is coming soon.
+- **A Mac with Apple Silicon** (M1 or newer) or a **Windows x64** machine for the app.
 
 That's it. You don't need any Anthropic or OpenAI API keys.
 
 ## Install on your Mac
 
-1. Download the latest `.dmg` from the [releases page](https://github.com/stuffbucket/maximal/releases).
-2. Open the `.dmg` and drag **maximal** into your Applications folder.
-3. Open maximal. It runs quietly in the background — click its icon any time to open it.
+maximal ships no installer — there is no `.dmg` and no drag-to-Applications step. Install the command-line tool with Homebrew:
 
-> **First launch on macOS:** because maximal is pre-alpha and not yet notarized, macOS may warn you the first time you open it. If it does, right-click the app and choose **Open**, then confirm. You only need to do this once.
+```sh
+brew install stuffbucket/tap/maximal
+```
+
+Then sign in and start it:
+
+```sh
+maximal auth       # sign in with GitHub
+maximal start      # start the service
+```
+
+It runs quietly in the background from there.
+
+> **Not a Homebrew user?** Every release also carries a standalone `darwin-arm64` binary on the [releases page](https://github.com/stuffbucket/maximal/releases). Download it, `chmod +x` it, and put it somewhere on your `PATH`. Because maximal is pre-alpha and not yet notarized, macOS quarantines a downloaded binary the first time you run it — clear it with `xattr -d com.apple.quarantine ./maximal`, or approve it under **System Settings → Privacy & Security**.
 
 ## Next steps
 
@@ -35,8 +46,13 @@ Something not working? See [Troubleshooting](./troubleshooting.md).
 
 ### Windows and other platforms
 
-- **Windows** — support is on the way. The app already speaks Windows in a few places, but there's no packaged installer yet. Check the [releases page](https://github.com/stuffbucket/maximal/releases) for the latest.
-- **Linux and everything else** — grab a release binary from the [releases page](https://github.com/stuffbucket/maximal/releases), or run from source with [Bun](https://bun.sh). Clone the repo and start it:
+- **Windows** — shipping, but with no installer: every release carries a
+  standalone `windows-x64` executable. Grab it from the
+  [releases page](https://github.com/stuffbucket/maximal/releases) and put it
+  somewhere on your `PATH`.
+- **Linux and everything else** — no binary is built for these; the release
+  targets are macOS Apple Silicon and Windows x64 only. Run from source with
+  [Bun](https://bun.sh). Clone the repo and start it:
 
   ```sh
   git clone https://github.com/stuffbucket/maximal
@@ -44,23 +60,6 @@ Something not working? See [Troubleshooting](./troubleshooting.md).
   bun install
   bun run ./src/main.ts start
   ```
-
-### Homebrew CLI
-
-Prefer the terminal? Install the `maximal` command-line tool with Homebrew:
-
-```sh
-brew install stuffbucket/tap/maximal
-```
-
-From there you can sign in and start the local service straight from your terminal:
-
-```sh
-maximal auth       # sign in with GitHub
-maximal start      # start the service
-```
-
-Most people install both the app and the CLI eventually, but either one gets you running.
 
 ### Confirm it's running
 

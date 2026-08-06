@@ -39,6 +39,23 @@ afterEach(() => {
   mock.restore()
 })
 
+// No test may terminate the runner. Product code calls `process.exit` in seven
+// modules (the `/_internal/shutdown` handler, port acquisition, config load,
+// shutdown); every one is reachable in-process from `app.request` or a CLI
+// entry. A real call truncates the run *and exits 0*, which `bun test` reports
+// as nothing at all — no summary, no failure — and which Stryker's command
+// runner reads as "the suite passed, this mutant survived". Throwing instead
+// keeps the run alive: the throw is attributed to the test in flight (or to the
+// timer that scheduled it), that test fails, and the summary is still written.
+// Product code that wants a testable exit takes it as an injected dependency,
+// as `createInternalRoutes({ exit })` does.
+process.exit = (code?: number): never => {
+  throw new Error(
+    `process.exit(${String(code)}) was called during a test run. Nothing may`
+      + " kill the runner — inject the exit as a dependency instead.",
+  )
+}
+
 if (!process.env.COPILOT_API_HOME) {
   const dir = path.join(os.tmpdir(), `maximal-test-home-${process.pid}`)
   fs.mkdirSync(dir, { recursive: true })

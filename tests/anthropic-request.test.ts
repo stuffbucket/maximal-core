@@ -1,10 +1,15 @@
-import { describe, test, expect } from "bun:test"
+import { afterEach, beforeEach, describe, test, expect } from "bun:test"
 import { z } from "zod"
 
 import type { AnthropicMessagesPayload } from "~/lib/models/anthropic-types"
+import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
 
 import { COMPACT_REQUEST } from "../src/lib/models/compact"
-import { translateToOpenAI } from "../src/routes/messages/non-stream-translation"
+import { state } from "../src/lib/runtime-state/state"
+import {
+  normalizeToolSchema,
+  translateToOpenAI,
+} from "../src/routes/messages/non-stream-translation"
 import { getCompactType } from "../src/routes/messages/preprocess"
 
 // Zod schema for a single message in the chat completion request.
@@ -115,8 +120,103 @@ describe("Anthropic to OpenAI translation logic", () => {
     }
     const openAIPayload = translateToOpenAI(anthropicPayload)
     expect(isValidChatCompletionRequest(openAIPayload)).toBe(true)
+
+    // The schema check above is a floor, not the assertion. `tools` is
+    // `z.array(z.any())`, `tool_choice` is `string | object`, and `messages`
+    // only has to be non-empty — so it stayed green with every tool mapped to
+    // `undefined`, `tool_choice` reduced to `""`, and the system prompt dropped
+    // entirely. Mutation testing found all three. Pin the whole payload
+    // instead: this is the wire body sent upstream, and its field values are
+    // the entire contract of this function.
+    expect(openAIPayload).toEqual({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "You are a helpful assistant." },
+        { role: "user", content: "What is the weather like in Boston?" },
+        {
+          role: "assistant",
+          content: "The weather in Boston is sunny and 75°F.",
+        },
+      ],
+      max_tokens: 150,
+      stop: undefined,
+      stream: false,
+      temperature: 0.7,
+      top_p: 1,
+      user: "user-123",
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "getWeather",
+            description: "Gets weather info",
+            parameters: { location: { type: "string" } },
+          },
+        },
+      ],
+      tool_choice: "auto",
+      thinking_budget: undefined,
+    })
+  })
+})
+
+describe("Anthropic to OpenAI translation — system prompt and tool_choice", () => {
+  test("system prompt as an array of text blocks joins with a blank line", () => {
+    // The `else` arm of handleSystemPrompt had no fixture at all: every other
+    // test passes `system` as a string. The join separator is a wire-shape
+    // decision (two newlines, not one, not none), so pin it.
+    const openAIPayload = translateToOpenAI({
+      model: "gpt-4o",
+      system: [
+        { type: "text", text: "First instruction." },
+        { type: "text", text: "Second instruction." },
+      ],
+      messages: [{ role: "user", content: "Hi" }],
+      max_tokens: 10,
+    })
+    expect(openAIPayload.messages[0]).toEqual({
+      role: "system",
+      content: "First instruction.\n\nSecond instruction.",
+    })
   })
 
+  test.each<
+    [
+      AnthropicMessagesPayload["tool_choice"],
+      ChatCompletionsPayload["tool_choice"],
+    ]
+  >([
+    [{ type: "auto" }, "auto"],
+    [{ type: "any" }, "required"],
+    [{ type: "none" }, "none"],
+    [
+      { type: "tool", name: "getWeather" },
+      { type: "function", function: { name: "getWeather" } },
+    ],
+    // A `tool` choice with no name cannot be expressed on the OpenAI side.
+    [{ type: "tool" }, undefined],
+    [undefined, undefined],
+  ])("tool_choice %o maps to %o", (input, expected) => {
+    const openAIPayload = translateToOpenAI({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "Hi" }],
+      max_tokens: 10,
+      tool_choice: input,
+    })
+    expect(openAIPayload.tool_choice).toEqual(expected)
+  })
+
+  test("tools are omitted entirely when the request declares none", () => {
+    const openAIPayload = translateToOpenAI({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "Hi" }],
+      max_tokens: 10,
+    })
+    expect(openAIPayload.tools).toBeUndefined()
+  })
+})
+
+describe("Anthropic to OpenAI translation — messages and thinking blocks", () => {
   test("should handle missing fields gracefully", () => {
     const anthropicPayload: AnthropicMessagesPayload = {
       model: "gpt-4o",
@@ -251,6 +351,159 @@ describe("Anthropic to OpenAI translation logic", () => {
         ],
       },
     ])
+  })
+})
+
+/**
+ * `normalizeToolSchema` is exported, pure, and had **zero** tests — every one of
+ * its mutants survived, including emptying the whole function body. It is also
+ * shared: `responses-translation.ts` calls it on the Responses path too. Its
+ * whole job is to stop OpenAI rejecting an `object` schema with no `properties`,
+ * so getting it wrong is a 400 from upstream on every tool-carrying request.
+ */
+describe("normalizeToolSchema", () => {
+  test("adds an empty properties object to an object schema that lacks one", () => {
+    expect(normalizeToolSchema({ type: "object" })).toEqual({
+      type: "object",
+      properties: {},
+    })
+  })
+
+  test("leaves an object schema that already has properties untouched", () => {
+    const schema = { type: "object", properties: { a: { type: "string" } } }
+    expect(normalizeToolSchema(schema)).toBe(schema)
+  })
+
+  test("leaves a non-object schema untouched even without properties", () => {
+    // Both halves of the `&&` matter: widening it to `||` would inject
+    // `properties: {}` into an array/string schema, which is not valid there.
+    const arraySchema = { type: "array", items: { type: "string" } }
+    expect(normalizeToolSchema(arraySchema)).toBe(arraySchema)
+    const stringSchema = { type: "string" }
+    expect(normalizeToolSchema(stringSchema)).toBe(stringSchema)
+  })
+
+  test("preserves the rest of the schema when adding properties", () => {
+    expect(
+      normalizeToolSchema({ type: "object", required: ["a"], extra: 1 }),
+    ).toEqual({ type: "object", required: ["a"], extra: 1, properties: {} })
+  })
+})
+
+/**
+ * The `thinking_budget` clamp had zero coverage: no test both set
+ * `payload.thinking` and put a matching entry in `state.models`, so the whole of
+ * `getThinkingBudget` was unobservable — `Math.min`↔`Math.max`,
+ * `maxOutputTokens - 1`↔`+ 1`, and the `> 0` boundary all survived. A wrong
+ * clamp here is the silently-wrong-transform case: the request still succeeds,
+ * it just reasons for the wrong number of tokens.
+ *
+ * `state.models` is process-global (testing-strategy.md §5.6), so it is reset in
+ * BOTH `beforeEach` and `afterEach`.
+ */
+const modelWithBudgets = (
+  maxThinkingBudget: number,
+  maxOutputTokens: number,
+  minThinkingBudget: number,
+) => ({
+  capabilities: {
+    family: "claude-sonnet-4.6",
+    limits: { max_output_tokens: maxOutputTokens },
+    object: "model_capabilities" as const,
+    supports: {
+      max_thinking_budget: maxThinkingBudget,
+      min_thinking_budget: minThinkingBudget,
+    },
+    tokenizer: "o200k_base",
+    type: "chat" as const,
+  },
+  id: "claude-sonnet-4-6",
+  model_picker_enabled: true,
+  name: "Sonnet",
+  object: "model" as const,
+  preview: false,
+  vendor: "Anthropic",
+  version: "claude-sonnet-4.6",
+  supported_endpoints: ["/v1/messages"],
+})
+
+const budgetFor = (requested: number | undefined) =>
+  translateToOpenAI({
+    model: "claude-sonnet-4-6",
+    messages: [{ role: "user", content: "Hi" }],
+    max_tokens: 100,
+    thinking: {
+      type: "enabled",
+      ...(requested === undefined ? {} : { budget_tokens: requested }),
+    },
+  }).thinking_budget
+
+describe("thinking budget clamp", () => {
+  const originalModels = state.models
+
+  beforeEach(() => {
+    state.models = undefined
+  })
+  afterEach(() => {
+    state.models = originalModels
+  })
+
+  test("a requested budget under both ceilings passes through", () => {
+    state.models = {
+      data: [modelWithBudgets(20_000, 32_000, 1024)],
+      object: "list",
+    }
+    expect(budgetFor(5000)).toBe(5000)
+  })
+
+  test("the ceiling is the LOWER of maxThinkingBudget and maxOutputTokens - 1", () => {
+    // maxOutputTokens - 1 = 7999 is the binding constraint, not the 20000
+    // thinking budget. `Math.min` → `Math.max` would give 20000, and
+    // `maxOutputTokens - 1` → `+ 1` would give 8001.
+    state.models = {
+      data: [modelWithBudgets(20_000, 8000, 1024)],
+      object: "list",
+    }
+    expect(budgetFor(50_000)).toBe(7999)
+  })
+
+  test("maxThinkingBudget binds when it is the lower of the two", () => {
+    state.models = {
+      data: [modelWithBudgets(6000, 32_000, 1024)],
+      object: "list",
+    }
+    expect(budgetFor(50_000)).toBe(6000)
+  })
+
+  test("a requested budget below the floor is raised to minThinkingBudget", () => {
+    // `Math.max(budgetTokens, minThinkingBudget)` → `Math.min` would give 10.
+    state.models = {
+      data: [modelWithBudgets(20_000, 32_000, 2048)],
+      object: "list",
+    }
+    expect(budgetFor(10)).toBe(2048)
+  })
+
+  test("an absent budget_tokens defaults to the ceiling", () => {
+    // The `??=` default. Mutated to `&&=` the field stays undefined and
+    // Math.min(undefined, …) is NaN.
+    state.models = {
+      data: [modelWithBudgets(9000, 32_000, 1024)],
+      object: "list",
+    }
+    expect(budgetFor(undefined)).toBe(9000)
+  })
+
+  test("a model with no thinking budget at all yields no thinking_budget", () => {
+    // maxThinkingBudget resolves to 0, so the `> 0` gate must reject. Both
+    // `>= 0` and `true` would emit a budget here.
+    state.models = { data: [modelWithBudgets(0, 32_000, 1024)], object: "list" }
+    expect(budgetFor(5000)).toBeUndefined()
+  })
+
+  test("no thinking_budget when the model is not in the catalog", () => {
+    state.models = { data: [], object: "list" }
+    expect(budgetFor(5000)).toBeUndefined()
   })
 })
 

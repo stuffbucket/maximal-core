@@ -136,10 +136,11 @@ export const handleWithChatCompletions = async (
           continue
         }
 
-        // Read only through `translateChunkToAnthropicEvents` and
-        // `normalizeOpenAIUsage`, both total over a malformed frame.
-        // casts-keep: reached only through total readers; tolerance proven in tests/stream-boundary-tolerance.test.ts
-        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+        const chunk = readChatCompletionFrame(rawEvent.data)
+        if (chunk === null) {
+          logger.debug("Skipping unparseable chat-completions frame")
+          continue
+        }
         if (asRecord(chunk)?.usage) {
           usage = normalizeOpenAIUsage(readUsage(chunk))
         }
@@ -438,13 +439,40 @@ const getMetadataSessionId = (
 ): string | null => parseUserIdMetadata(payload.metadata?.user_id).sessionId
 
 /**
+ * Decode one `/chat/completions` SSE frame, or `null` when there is nothing
+ * translatable in it.
+ *
+ * The `try` is the point. A body that parses to junk — `null`, `"hello"`, `42`
+ * — is already survivable here: `translateChunkToAnthropicEvents` and
+ * `normalizeOpenAIUsage` are total over it (proven in
+ * `tests/stream-boundary-tolerance.test.ts`), so the frame is skipped and the
+ * message continues. Without this `try`, the same junk that did NOT parse hit
+ * the flow-level catch and ended the message with an error event instead — the
+ * outcome decided by whether the garbage happened to be valid JSON. Every
+ * sibling reader in this codebase skips and continues; so does this one.
+ */
+const readChatCompletionFrame = (data: string): ChatCompletionChunk | null => {
+  try {
+    // Read only through `translateChunkToAnthropicEvents` and
+    // `normalizeOpenAIUsage`, both total over a malformed frame.
+    // casts-keep: reached only through total readers; tolerance proven in tests/stream-boundary-tolerance.test.ts
+    return JSON.parse(data) as ChatCompletionChunk
+  } catch {
+    return null
+  }
+}
+
+/**
  * Decode one `/responses` SSE frame into the event to translate plus, on a
  * terminal frame, the usage to record.
  *
  * `null` means "nothing translatable in this frame": the `[DONE]` sentinel —
  * which `JSON.parse` throws on, and which the two sibling stream loops both
- * special-case — or a body that parsed to something other than an object.
- * Both used to reach `.type` and abort the rest of the stream.
+ * special-case — a body that does not parse at all, or a body that parsed to
+ * something other than an object. All used to reach `.type` and abort the rest
+ * of the stream; the last two now take the same skip-and-continue path, which
+ * is what the `!asRecord(event)` check below has always done for the parseable
+ * half of the same garbage.
  */
 const readResponsesFrame = (
   data: string,
@@ -453,11 +481,17 @@ const readResponsesFrame = (
     return null
   }
 
-  // Only `.type` is read directly, and only after the `asRecord` check below;
-  // the body is reached via `readNestedUsage` and
-  // `translateResponsesStreamEvent`, both total over a malformed frame.
-  // casts-keep: `.type` read behind an asRecord check, body via total readers; tolerance proven in tests/stream-boundary-tolerance.test.ts
-  const event = JSON.parse(data) as ResponseStreamEvent
+  let event: ResponseStreamEvent
+  try {
+    // Only `.type` is read directly, and only after the `asRecord` check below;
+    // the body is reached via `readNestedUsage` and
+    // `translateResponsesStreamEvent`, both total over a malformed frame.
+    // casts-keep: `.type` read behind an asRecord check, body via total readers; tolerance proven in tests/stream-boundary-tolerance.test.ts
+    event = JSON.parse(data) as ResponseStreamEvent
+  } catch {
+    return null
+  }
+
   if (!asRecord(event)) {
     return null
   }

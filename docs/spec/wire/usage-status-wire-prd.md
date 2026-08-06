@@ -1,8 +1,8 @@
 # PRD: Usage, Status & Control Surfaces (Wire)
 
 The non-completion endpoints: liveness/identity, setup probe, Copilot
-quota, the proxy's own token-usage ledger, the raw token, the debug
-dump, and the shutdown control. Read
+quota, the proxy's own token-usage ledger, the debug dump, and the
+shutdown control. Read
 [`auth-transport-wire-prd.md`](auth-transport-wire-prd.md) first for the
 auth/loopback model these inherit.
 
@@ -12,19 +12,20 @@ auth/loopback model these inherit.
 |---|---|---|---|
 | `GET` | `/status` | unauthenticated | `application/json` |
 | `GET` | `/setup-status` | unauthenticated | `application/json` |
+| `GET` | `/openapi.json` | unauthenticated | `application/json` |
 | `GET` | `/usage` | loopback-only | `application/json` |
 | `GET` | `/token-usage` | loopback-only | `application/json` |
 | `GET` | `/token-usage/events` | loopback-only | `application/json` |
-| `GET` | `/token` | API-key (default chain) | `application/json` |
 | `GET` | `/_debug/state` | unauthenticated, `verbose`-gated | `application/json` |
 | `POST` | `/_internal/shutdown` | loopback-only (+ in-handler enforce) | `application/json` |
 
-(Dashboard assets — `/ui/dashboard/*` — are served `no-store`; they are
-UI, not a wire contract, and are out of scope here.)
+(`/_debug/*` binds the **control** listener; everything else here binds
+the public one — see `docs/architecture.md` → *Two listeners*.)
 
 ## `/status` — identity + liveness
 
-Cheap, in-memory, no upstream call (`src/lib/status.ts:48-93`). This is
+Cheap, in-memory, no upstream call (`src/lib/runtime-state/status.ts`,
+`buildStatus`). This is
 the unambiguous "is the thing on this port actually Maximal, and is it
 ready?" probe the Claude Code shim keys off `service: "maximal"`.
 
@@ -47,9 +48,10 @@ reshaping the contract.
 
 ## `/setup-status` — first-run readiness
 
-`src/lib/setup-status.ts:36-90`. Unauthenticated by design (must work
-before any key exists). See `docs/first-run-setup-prd.md` for the
-consuming UI.
+`src/lib/config/setup-status.ts`. Unauthenticated by design (must work
+before any key exists). The consuming first-run UI lives in the parent
+repo `stuffbucket/maximal`; its PRD was not carried over at the core
+split.
 
 ```json
 {
@@ -115,14 +117,8 @@ subscriber enqueues a SQLite write to `token_usage_events`
 (`src/lib/token-usage/index.ts:65-136`, `store.ts:130-174`). Normalizers
 coerce missing/non-finite counts to `0`, unknown model → `"unknown"`,
 and resolve session ID from request-context → input → fallback. (The
-live SSE feed the dashboard uses is `/settings/api/events`, a different
-surface — not this endpoint.)
-
-## `/token` — raw Copilot token
-
-Returns `{ "token": "<copilotToken>" | null }`; on failure `500`
-`{ "error": "Failed to fetch token", "token": null }`
-(`src/routes/token/route.ts:7-16`).
+live push feed is the control plane's `subscriptions/listen` SSE stream,
+a different surface — not this endpoint.)
 
 ## `/_debug/state` — live diagnostics
 

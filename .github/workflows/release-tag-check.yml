@@ -1,4 +1,5 @@
-# Tag tripwire — gate 3: a pushed tag must match package.json's version.
+# Tag tripwire — gates 3 and 4 on a pushed tag: it must match package.json's
+# version, and it must be above every release tag that already exists.
 #
 # This is the repo's FIRST tag-triggered workflow, and it is deliberately a
 # detector rather than a preventer. The preventive placement is the preflight
@@ -12,16 +13,25 @@
 # discipline these gates replace, and because this is the only placement that
 # can see the tag that was ACTUALLY pushed rather than the one someone meant to
 # push. It fires within seconds, while the tag is almost certainly unconsumed
-# and can be deleted and re-cut rather than moved. It is not on the release
-# COMMIT: `release:manual` bumps and tags in one invocation, so a push-to-main
-# check would race the tag push it is meant to precede, and could not name the
-# tag anyway. The full argument is in checkTagVersion's doc comment.
+# and can be deleted and re-cut rather than moved. It is not wired onto the
+# release COMMIT: that commit now lands through a PR, where ci.yml's `test` job
+# already runs, and `release:tag` re-reads the merged package.json before cutting
+# the tag. The full argument is in checkTagVersion's doc comment.
 #
 # Precedent for the failure it catches: `git show v0.1.1:package.json` reads
 # `0.1.0`.
 #
-# Permissions: `contents: read` only — it checks out the tag and compares two
-# strings. It writes nothing and needs no token beyond the checkout.
+# Gate 4 is here for the same reason one step further out. Its preventive
+# placements are inside `release:prepare`, ahead of `bumpp`, and inside
+# `release:tag`, immediately before the tag is created — but a tag cut by hand
+# (`git tag && git push`, the runbook's by-hand path in §4) never goes through
+# either, so nothing at all saw it. `--pushed` is the shape this placement
+# needs: the tag exists by definition here, so its own existence stops being a
+# finding and it is compared against every OTHER tag.
+#
+# Permissions: `contents: read` only — it checks out the tag, compares two
+# strings, and reads the remote tag list with `git ls-remote`, which writes
+# nothing. It needs no token beyond the checkout.
 name: release-tag-check
 
 on:
@@ -65,5 +75,33 @@ jobs:
           case "$code" in
             0) exit 0 ;;
             1) echo "::error title=release-tag-check::Tag ${{ github.ref_name }} does not match package.json. Delete and re-cut the tag NOW, while it is still unconsumed — do not move a tag anyone may already have resolved."; exit 1 ;;
+            *) echo "::warning title=release-tag-check::The check could not run (exit $code); not failing the tag on the gate's own bug."; exit 0 ;;
+          esac
+
+      # Gate 4 shells out to git only: `git tag --list` for this checkout's view
+      # and `git ls-remote --tags origin` for the authoritative one, unioned. The
+      # default checkout above is enough for both, verified against a
+      # `--depth 1 --branch v0.4.3` clone of this repo rather than assumed:
+      # `git tag --list` printed the one pushed tag (`fetch-depth: 1` and
+      # `fetch-tags: false` are checkout@v6's defaults) and `git ls-remote --tags
+      # origin` printed all 11. So no fetch is added here — the remote half is
+      # the half that matters, `persist-credentials` defaults to true so `origin`
+      # keeps its credential, and a tag that exists in CI is on the remote by
+      # definition.
+      #
+      # `!cancelled()` so a gate-3 failure does not hide this one: both end in
+      # "delete the tag", and you want every reason before you pick the version
+      # you re-cut at.
+      - name: Tag is above every tag that exists
+        if: ${{ !cancelled() }}
+        run: |
+          set -uo pipefail
+          # Same reason as above: `bash -e` would abort before `code=$?`.
+          set +e
+          bun run scripts/ops/release-gates.ts order "${{ github.ref_name }}" --pushed
+          code=$?
+          case "$code" in
+            0) exit 0 ;;
+            1) echo "::error title=release-tag-check::Tag ${{ github.ref_name }} is not above every release tag that already exists. Delete it NOW, while it is still unconsumed — a lower tag carrying strictly more content cannot be repaired once anyone has resolved it, and a published tag must never be moved. Re-cut above the highest existing tag."; exit 1 ;;
             *) echo "::warning title=release-tag-check::The check could not run (exit $code); not failing the tag on the gate's own bug."; exit 0 ;;
           esac

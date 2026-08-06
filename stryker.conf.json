@@ -1,10 +1,12 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "_comment": "Manual mutation testing. Not wired into check:fast or check:deep. Scope is intentionally narrow — point it at one pure-logic module at a time. Expect ~30s-2min per run depending on the module's mutant count and test runtime.",
+  "_comment": "Manual mutation testing (docs/dev/testing-strategy.md §6). Not wired into check:fast or check:deep. Narrow the SOURCE scope per run with `--mutate`; never narrow the TEST command — a runner that skips a test file reports every mutant only that file would kill as a survivor, and hand-triaging those false survivors costs more than the runtime saved.",
+  "commandRunner_comment": "The runner is `bun run test:mutation` = scripts/dev/run-mutation-tests.ts, the whole suite minus six port-binding / process-spawning files. Those bind real ports (docs/dev/testing-strategy.md §5.8), so under Stryker's concurrent workers they fail on collision and FALSELY KILL mutants — measured: tests/start-run-server.test.ts failed 2 of 4 concurrent full-suite runs. None of the six exercise pure request-path logic, so excluding them costs no kills.",
+  "exitCode_comment": "A command runner scores a mutant from the child's EXIT CODE, so exit 0 from a run that DIED mid-suite reads as `survived`. That is why test:mutation is a script: it passes bun's exit code through only once bun has written its end-of-run summary, and fails loudly otherwise. Do not inline it back to a `bun test …` one-liner.",
   "packageManager": "npm",
   "testRunner": "command",
   "commandRunner": {
-    "command": "bun test tests/find-endpoint-model.test.ts"
+    "command": "bun run test:mutation"
   },
   "mutate": [
     "src/lib/models/models.ts"

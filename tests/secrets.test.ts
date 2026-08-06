@@ -46,6 +46,32 @@ function writeSecret(name: string, value: string, mode: number): string {
   return filePath
 }
 
+/**
+ * The permission gate is a POSIX-only invariant, so the case that asserts a
+ * BROAD mode is refused runs on POSIX only.
+ *
+ * It is not that the assertion is awkward on Windows — it is that the fixture
+ * cannot exist there. Windows has no POSIX mode bits: `fs.chmodSync(f, 0o644)`
+ * sets nothing (Node maps only the read-only attribute), and `fs.stat` reports
+ * 0o666 for every writable file regardless. There is no way to construct the
+ * "group/world readable" file this case needs, and no `fs` call that would
+ * observe it if there were. `readSecret` therefore skips the gate on win32
+ * (see `modeIsOwnerOnly` in src/lib/auth/secrets.ts) and leans on the
+ * `%APPDATA%` directory ACL instead.
+ *
+ * WHAT THIS LEAVES UNCOVERED ON WINDOWS: that a secrets file with a
+ * permissive ACL is refused. It is not covered because the product does not do
+ * it — checking a Windows ACL needs an API Node does not expose. Every other
+ * case in this file (precedence, trimming, empty handling, the happy path)
+ * runs on Windows, and before this change none of them did: the mode gate
+ * rejected every file, so the entire file tier was untested there.
+ */
+const itPosixMode = it.skipIf(process.platform === "win32")
+
+/** The win32 counterpart of the case above, so the platform split is asserted
+ *  from both sides rather than being a hole in the run. */
+const itWindowsMode = it.skipIf(process.platform !== "win32")
+
 describe("readSecret", () => {
   it("returns env source when env var is set, even if file exists", () => {
     writeSecret("ollama", "from-file", 0o600)
@@ -82,7 +108,7 @@ describe("readSecret", () => {
     expect(r.value).toBeUndefined()
   })
 
-  it("refuses to load a file with mode broader than 0600", () => {
+  itPosixMode("refuses to load a file with mode broader than 0600", () => {
     writeSecret("ollama", "should-not-load", 0o644)
     const r = readSecret({
       envVar: "OLLAMA_API_KEY",
@@ -94,6 +120,27 @@ describe("readSecret", () => {
     expect(r.value).toBeUndefined()
     expect(r.diagnostic).toContain("insecure mode")
   })
+
+  itWindowsMode(
+    "loads a 0644-requested file on win32 (no POSIX mode bits)",
+    () => {
+      // The same fixture as the POSIX case above. On Windows `chmod(0o644)` is a
+      // no-op and `stat` reports 0o666 for it AND for a 0o600 file alike, so a
+      // mode comparison here can only produce a false negative. Asserting the
+      // value LOADS pins the deliberate win32 branch of `modeIsOwnerOnly` — and
+      // is the regression guard for the bug this replaced, where the same
+      // comparison made every secrets file unreadable on Windows.
+      writeSecret("ollama", "loads-on-windows", 0o644)
+      const r = readSecret({
+        envVar: "OLLAMA_API_KEY",
+        fileName: "ollama",
+        env: {},
+        dir: secretsDir,
+      })
+      expect(r.source).toBe("file")
+      expect(r.value).toBe("loads-on-windows")
+    },
+  )
 
   it("treats empty file as unset", () => {
     writeSecret("ollama", "", 0o600)

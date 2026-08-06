@@ -1,0 +1,153 @@
+# Publish `@stuffbucket/maximal-core` to the GitHub Package Registry.
+#
+# Until this workflow the package had never been published at all — the npm
+# registry 404s for it and every release ran `release:manual --no-publish`, so
+# (that command is now `release:prepare` plus `release:tag` — see the runbook)
+# `stuffbucket/maximal` consumed this repo as a git dependency. This is the
+# publish path now; `scripts/ops/release.ts` no longer runs `bun publish`.
+#
+# ## Why GitHub Packages rather than npmjs
+#
+# No npm token and no OIDC trusted-publishing config exists in this repo, and
+# adding either is a credential decision. GHP needs neither: `GITHUB_TOKEN` is
+# minted per run, and `packages: write` on this workflow is the whole grant.
+# GHP requires the package scope to equal the owning org — `@stuffbucket`
+# already does, so `package.json` needed only `publishConfig.registry`.
+#
+# ## Why `bun publish` and NOT `npm publish` — do not "simplify" this
+#
+# The `prepack` lifecycle runs `scripts/ops/prepack.ts`, which asserts
+# `process.versions.bun` equals `.bun-version` and REFUSES when it is
+# `undefined`. Under a node-driven `npm publish` it is always `undefined`, so
+# that assertion fails by construction and no tarball is ever produced. The
+# assertion is not incidental: `bun build` bundles with Bun's own bundler, so
+# `dist/main.js` is a function of the Bun version, and an off-pin tarball ships
+# a `bin` bundle that disagrees with the committed one `bindings:check`
+# verifies. See that file's header for the measured hashes.
+#
+# ## Why `.npmrc` is written here rather than committed
+#
+# It carries `_authToken`. A committed `.npmrc` with a token interpolated into
+# it is a leaked credential; `secret-scan.yml` would catch one, which is not a
+# reason to write one. The file is created in the runner workspace, lives for
+# the length of the job, and is never an artifact.
+#
+# **THE `@stuffbucket:registry=` LINE IS NOT REDUNDANT WITH
+# `publishConfig.registry`, AND REMOVING IT SENDS THE PACKAGE TO NPMJS.**
+# Measured on Bun 1.3.11 with `publishConfig.registry` already set in
+# `package.json`:
+#
+#     bun publish --dry-run            → Registry: https://registry.npmjs.org/
+#     bun publish --dry-run (+.npmrc)  → Registry: https://npm.pkg.github.com
+#
+# Bun resolves the publish registry from `.npmrc`/bunfig, not from
+# `publishConfig`. Both are set: `publishConfig` is what npm-compatible tooling
+# and a human reading the manifest go by, and this file is what Bun obeys.
+#
+# ## Ordering
+#
+# The tag-vs-manifest gate runs before the publish step, using the same
+# `release-gates.ts version` subcommand and the same exit-code convention as
+# `release-tag-check.yml` — 0 clean, 1 a blocking finding, anything else "the
+# gate could not run", which must not fail the release on the gate's own bug.
+# It only has something to compare on a tag ref; a `workflow_dispatch` of a
+# branch has no tag, and the publish step refuses to do a real publish from one.
+#
+# A registry publish cannot be taken back — a version is burned even if it is
+# unpublished. `dry_run` therefore defaults to TRUE, mirroring how
+# `release-artifacts.yml` defaults `publish` to false: a dispatch rehearses,
+# and only a tag push publishes without being asked to.
+name: publish-package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Resolve and pack without uploading. Leave on to rehearse.
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Checks out the tag itself, so ./package.json IS the manifest published.
+      - uses: actions/checkout@v6
+
+      - name: Read Bun version
+        id: bun
+        run: |
+          set -euo pipefail
+          echo "version=$(cat .bun-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ steps.bun.outputs.version }}
+
+      - name: Install dependencies
+        # `prepack` runs `bun build` and `bun x tsup`; neither resolves without
+        # node_modules. Plain `bun install`, matching release-artifacts.yml.
+        run: bun install
+
+      - name: Tag matches package.json
+        # Only a tag ref carries a version claim to check.
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -uo pipefail
+          # GitHub's default shell is `bash -e`; without this it would abort on
+          # the script's non-zero exit before `code=$?`, so the case statement
+          # below could not distinguish a mismatch (1) from a gate that could
+          # not run (2).
+          set +e
+          bun run scripts/ops/release-gates.ts version "${{ github.ref_name }}"
+          code=$?
+          case "$code" in
+            0) exit 0 ;;
+            1) echo "::error title=publish-package::Tag ${{ github.ref_name }} does not match package.json; refusing to publish. Delete and re-cut the tag."; exit 1 ;;
+            *) echo "::warning title=publish-package::The check could not run (exit $code); not blocking the publish on the gate's own bug."; exit 0 ;;
+          esac
+
+      - name: Publish
+        env:
+          # Through the environment rather than a `${{ }}` interpolated into the
+          # script body, so the token is never part of the command text the
+          # runner logs. It reaches exactly one place: the `.npmrc` below.
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Empty string on a tag push, where a real publish is the point.
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" != "true" ] && [ "${GITHUB_REF#refs/tags/}" = "$GITHUB_REF" ]; then
+            echo "::error title=publish-package::Refusing a real publish from a non-tag ref — nothing has asserted what version this is."
+            exit 1
+          fi
+
+          # Written here, never committed. `trap` so it does not survive a
+          # failing publish.
+          trap 'rm -f .npmrc' EXIT
+          {
+            echo "@stuffbucket:registry=https://npm.pkg.github.com"
+            echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}"
+          } > .npmrc
+
+          # `bun publish`, never `npm publish` — see the header. `prepack`
+          # asserts `process.versions.bun`, which node does not have.
+          if [ "$DRY_RUN" = "true" ]; then
+            bun publish --dry-run
+          else
+            bun publish
+          fi

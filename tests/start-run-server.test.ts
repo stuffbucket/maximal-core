@@ -26,6 +26,8 @@ import {
   type Mock,
 } from "bun:test"
 
+import { pickFreePort } from "./helpers/free-port"
+
 // --- Mocks for the chunky boot dependencies ------------------------
 //
 // Every `real*Module` below is a spread COPY of the namespace, captured before
@@ -194,10 +196,22 @@ function resetState(): void {
   cacheModelsMock.mockClear()
 }
 
-function pickFreePort(): number {
-  return 41000 + Math.floor(Math.random() * 1000)
-}
-
+/**
+ * A port the OS has just confirmed free.
+ *
+ * NOT `41000 + random(1000)`, which is what this was: that picks a number and
+ * hopes. `runServer` bind-tests the requested port through `resolvePort`, so a
+ * collision makes the policy fall back to the next port and
+ * `expect(publicArg.port).toBe(port)` fails — green on a quiet laptop, red on a
+ * CI runner where sibling suites are binding ports concurrently. That is how it
+ * failed on the #58 rebase.
+ *
+ * The implementation now lives in `tests/helpers/free-port.ts`, which
+ * `tests/start-port-policy.test.ts` also needs and which documents why this is
+ * the *weakest* of the ways to get a port here. It is nonetheless the right one
+ * for this file: `runServer` takes a port *number* and binds it itself, so the
+ * test cannot hold the socket.
+ */
 function baseOptions(
   over: Partial<Parameters<typeof runServer>[0]> = {},
 ): Parameters<typeof runServer>[0] {

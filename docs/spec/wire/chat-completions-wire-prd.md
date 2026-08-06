@@ -25,7 +25,7 @@ Body is a `ChatCompletionsPayload`
   `logprobs`, `response_format`, `seed`, `tools[]`, `tool_choice`,
   `user`, `thinking_budget`.
 
-Client headers consumed (`src/lib/trace.ts`, `request-context.ts`):
+Client headers consumed (`src/lib/http/trace.ts`, `src/lib/http/request-context.ts`):
 `x-trace-id` (echoed back), `user-agent` (forwarded only for opencode;
 otherwise replaced), optional `x-session-affinity` and
 `x-parent-session-id` (forwarded upstream when present).

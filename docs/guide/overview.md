@@ -8,7 +8,7 @@ Here's the whole idea: you install a small desktop app, sign in with GitHub once
 
 - You have a **GitHub Copilot** plan — your own, or one from work or GitHub Enterprise.
 - You use an AI coding tool like **Claude Code**, **Claude Desktop**, **Codex**, or **opencode** — or you'd like to.
-- You're on a **Mac**. (Windows is coming soon.)
+- You're on a **Mac** (Apple Silicon) or **Windows** (x64).
 
 You don't need to be a developer, and you don't need any other accounts or keys. If you have Copilot, you have everything maximal needs.
 

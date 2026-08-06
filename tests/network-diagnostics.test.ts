@@ -18,14 +18,11 @@ import {
   diagnoseNetworkError,
   formatDiagnosisForLog,
   formatTransportError,
-  getLastNetworkDiagnosis,
   hostFromUrl,
   HTTPS_PORT,
   IP_FAMILY,
-  isDnsFailure,
-  isOffline,
-  isScopeUnreachable,
   isTransportError,
+  NETWORK_DIAGNOSIS_KIND,
   NETWORK_SCOPE,
   probeNetwork,
   summarizeTransportError,
@@ -282,22 +279,22 @@ describe("probeNetwork", () => {
   })
 })
 
-describe("kind predicates (rot-free interpretation)", () => {
+describe("classifyNetworkFailure verdicts", () => {
   const summary = summarizeTransportError(bunConnRefused())
   const at = (probe: NetworkProbe) => classifyNetworkFailure(summary, probe)
 
-  test("callers interpret a verdict without comparing raw strings", () => {
+  test("each probe shape maps to its own kind", () => {
     const offline = at({ ...okProbe, ipReachable: false })
-    expect(isOffline(offline)).toBe(true)
-    expect(isDnsFailure(offline)).toBe(false)
+    expect(offline.kind).toBe(NETWORK_DIAGNOSIS_KIND.offline)
+    expect(offline.kind).not.toBe(NETWORK_DIAGNOSIS_KIND.dnsFailure)
 
     const dns = at({ ...okProbe, dnsResolves: false })
-    expect(isDnsFailure(dns)).toBe(true)
-    expect(isScopeUnreachable(dns)).toBe(false)
+    expect(dns.kind).toBe(NETWORK_DIAGNOSIS_KIND.dnsFailure)
+    expect(dns.kind).not.toBe(NETWORK_DIAGNOSIS_KIND.scopeUnreachable)
 
     const scope = at(okProbe)
-    expect(isScopeUnreachable(scope)).toBe(true)
-    expect(isOffline(scope)).toBe(false)
+    expect(scope.kind).toBe(NETWORK_DIAGNOSIS_KIND.scopeUnreachable)
+    expect(scope.kind).not.toBe(NETWORK_DIAGNOSIS_KIND.offline)
   })
 })
 
@@ -370,23 +367,6 @@ describe("diagnoseNetworkError caching", () => {
     await diagnoseNetworkError(bunConnRefused(), { ...deps, now })
     expect(probes).toBeGreaterThan(afterFirst)
   })
-
-  test("getLastNetworkDiagnosis exposes the latest verdict, null after reset", () => {
-    expect(getLastNetworkDiagnosis()).toBeNull()
-  })
-
-  test("getLastNetworkDiagnosis returns the cached diagnosis after a probe", async () => {
-    await diagnoseNetworkError(bunConnRefused(), {
-      tcpConnect: () => Promise.resolve(true),
-      dnsLookup: () => Promise.resolve(true),
-      interfaces: () => ["en0"],
-      target: {
-        scope: NETWORK_SCOPE.githubCopilotAuth,
-        url: RESERVED_RESOLVABLE_URL,
-      },
-    })
-    expect(getLastNetworkDiagnosis()?.kind).toBe("scope-unreachable")
-  })
 })
 
 describe("formatDiagnosisForLog", () => {
@@ -458,7 +438,7 @@ describe("real-world scenarios (RFC-reserved fixtures, deterministic)", () => {
         url: RESERVED_RESOLVABLE_URL,
       },
     })
-    expect(isScopeUnreachable(diag)).toBe(true)
+    expect(diag.kind).toBe(NETWORK_DIAGNOSIS_KIND.scopeUnreachable)
     expect(diag.scope).toBe(NETWORK_SCOPE.githubCopilotAuth)
   })
 
@@ -472,7 +452,7 @@ describe("real-world scenarios (RFC-reserved fixtures, deterministic)", () => {
         url: RESERVED_RESOLVABLE_URL,
       },
     })
-    expect(isOffline(diag)).toBe(true)
+    expect(diag.kind).toBe(NETWORK_DIAGNOSIS_KIND.offline)
   })
 
   test("egress works but the resolver is down -> dns-failure", async () => {
@@ -485,7 +465,7 @@ describe("real-world scenarios (RFC-reserved fixtures, deterministic)", () => {
         url: RESERVED_RESOLVABLE_URL,
       },
     })
-    expect(isDnsFailure(diag)).toBe(true)
+    expect(diag.kind).toBe(NETWORK_DIAGNOSIS_KIND.dnsFailure)
   })
 
   test("a caller-supplied .invalid target (NXDOMAIN) -> dns-failure", async () => {
@@ -500,7 +480,7 @@ describe("real-world scenarios (RFC-reserved fixtures, deterministic)", () => {
         url: GUARANTEED_NXDOMAIN_URL,
       },
     })
-    expect(isDnsFailure(diag)).toBe(true)
+    expect(diag.kind).toBe(NETWORK_DIAGNOSIS_KIND.dnsFailure)
   })
 
   test("probe differentiates a nonexistent name from a dead resolver", async () => {

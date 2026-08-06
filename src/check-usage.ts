@@ -19,13 +19,21 @@ export const checkUsage = defineCommand({
     try {
       const usage = await getCopilotUsage()
 
-      // Helper to summarize a quota snapshot
+      // Helper to summarize a quota snapshot. Every field is optional at the
+      // boundary (GitHub varies the payload per plan — an `unlimited` snapshot
+      // carries no counters), so a snapshot that omits them reports what it has
+      // rather than printing NaN.
       function summarizeQuota(name: string, snap: QuotaDetail | undefined) {
         if (!snap) return `${name}: N/A`
         const total = snap.entitlement
-        const used = total - snap.remaining
+        const remaining = snap.remaining
+        if (total === undefined || remaining === undefined) {
+          return `${name}: ${snap.unlimited ? "unlimited" : "N/A"}`
+        }
+        const used = total - remaining
         const percentUsed = total > 0 ? (used / total) * 100 : 0
-        const percentRemaining = snap.percent_remaining
+        const percentRemaining =
+          snap.percent_remaining ?? (total > 0 ? (remaining / total) * 100 : 0)
         return `${name}: ${used}/${total} used (${percentUsed.toFixed(1)}% used, ${percentRemaining.toFixed(1)}% remaining)`
       }
 

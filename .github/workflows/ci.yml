@@ -5,10 +5,42 @@ on:
     branches: ["main", "dev"]
   pull_request:
     types: [opened, synchronize, reopened]
+  # `test` and `windows` below are REQUIRED status checks on `main`
+  # (docs/admin/branch-rulesets.md), so renaming either job wedges every PR:
+  # GitHub waits forever for a context that no longer reports. The parity guard
+  # is in scripts/ops/check-rulesets.test.ts.
+  #
   # GitHub merge queue: dispatched against synthetic
   # gh-readonly-queue/<base>/... refs. Required status checks must run
-  # here too or the queue blocks indefinitely waiting for them.
+  # here too or the queue blocks indefinitely waiting for them. No queue is
+  # enabled today — it is unavailable on a user-owned repo, and the ruleset's
+  # strict-update policy (branch must be up to date before merge) stands in for
+  # it — so this trigger is inert, and kept for the day that changes.
   merge_group:
+  # MANUAL DISPATCH, and it is not a convenience.
+  #
+  # `test` and `windows` are REQUIRED status checks, and the ONLY things that
+  # created them were the `push` and `pull_request` events above. When GitHub
+  # stops turning those events into workflow runs, every PR in the repo is
+  # unmergeable with no lever at all — not a re-run (`gh run rerun` re-runs an
+  # existing run at its ORIGINAL head SHA, so it cannot produce checks for a
+  # SHA that never had a run), not a re-push (same throttled path), nothing.
+  #
+  # That is not hypothetical. On 2026-08-06 Actions ran a multi-hour incident in
+  # which runners recovered but event->run dispatch stayed throttled: eight open
+  # PRs sat with ZERO checks, and `gh workflow run ci.yml` answered
+  # `HTTP 422: Workflow does not have 'workflow_dispatch' trigger`.
+  #
+  # A dispatch is an API call rather than an event, so it does not travel the
+  # path that failed. `release-tag-check.yml` gained the same escape hatch for
+  # the same reason and in the same week.
+  #
+  # It takes no inputs on purpose: the ref IS the input (`--ref <branch>`), and
+  # a dispatched run reports its check runs against that ref's head commit —
+  # which is what a required status check is matched on. So dispatching a PR's
+  # head branch satisfies that PR's contexts exactly as a push-triggered run
+  # would.
+  workflow_dispatch:
 
 jobs:
   test:
@@ -41,6 +73,13 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      - name: Run fast linter
+        # oxlint — the first step of `check:fast`, and it ran in no workflow at
+        # all until `ci:check` below was written and named it. `lint:all` is
+        # not a superset: nothing disables the ESLint rules oxlint covers, and
+        # nothing enables oxlint's in ESLint.
+        run: bun run lint:fast
 
       - name: Run linter
         run: bun run lint:all
@@ -88,17 +127,62 @@ jobs:
       - name: Knip (unused files / exports / deps)
         run: bun run knip
 
-      - name: Dependency layer rules
+      - name: Dependency rules and the circular-dependency ratchet
         # `.dependency-cruiser.cjs` had been in the repo, correct, and invoked by
         # nothing — not check:fast, not check:deep, not any workflow. Its two
-        # `error` rules (`not-to-test`, `no-route-imports-from-lib-or-services`)
-        # do fire and do exit 2; they had simply never been run. Its `warn` rules
-        # (`no-circular`, 47 standing matches) do not affect the exit code, so a
-        # green step here means "no layering violation", not "no cycles".
+        # layering `error` rules (`not-to-test`,
+        # `no-route-imports-from-lib-or-services`) do fire and do exit 2; they
+        # had simply never been run.
+        #
+        # `no-circular` used to be `warn`, which never affects depcruise's exit
+        # code, so a green step here meant "no layering violation", not "no
+        # cycles" — and the standing match count was hand-typed into this comment
+        # with nothing checking it. It is now `error`, and `deps:check` runs
+        # scripts/check-deps.ts: the standing backlog is a recorded set of
+        # cycle-closing imports there, a new one fails this step by name, and
+        # fixing one fails until the set is re-recorded. The count lives in that
+        # file, generated — do not restate it here.
         run: bun run deps:check
+
+      - name: Check for new copy-paste duplication
+        # A down-only ratchet on the SET of `src` file pairs that share
+        # copy-pasted code, recorded in scripts/check-dupes.ts; a new pair
+        # fails here by name. Not jscpd's own percentage threshold: `src` is
+        # 31k lines, so a 40-line function copied into a second file moves it
+        # 0.33% -> 0.46%, and any threshold loose enough to be green today
+        # swallows the entire class of event this exists to catch.
+        run: bun run dupes:check
+
+      - name: Every check:deep step runs in a required CI job
+        # The gate against this repo's most-repeated failure shape: a check
+        # that exists, is correct, and runs nowhere — `dupes:check` above
+        # shipped into check:deep and no workflow, `.dependency-cruiser.cjs`
+        # sat uninvoked for months. It expands check:deep and asserts each step
+        # is named by a job that is a REQUIRED status check; a step that runs
+        # only in a non-required or path-filtered job does not count.
+        # scripts/ops/check-ci-coverage.ts holds the exclusions and the reasons.
+        run: bun run ci:check
 
       - name: Build
         run: bun run build
+
+      - name: End-to-end suite, from source
+        # seam / feed / lifecycle / replace, run against `src/` rather than a
+        # compiled artifact. Until now these four ran in exactly one place: the
+        # `windows` job below, via `e2e:binary`. So the from-source path — the
+        # one `bun run dev` and `bun start` use — was exercised by no workflow,
+        # and neither was Linux: a regression in the control seam, the SSE feed,
+        # shutdown, or port takeover reached a tag before anything on ubuntu
+        # noticed.
+        #
+        # MEASURED at 9.3s locally, against this job's ~79s and the concurrent
+        # `windows` job's ~112s. It costs the merge nothing it was not already
+        # waiting on — the same argument that put `bun test` on the Windows leg.
+        #
+        # After Build, because `e2e:replace` and `e2e:lifecycle` spawn real
+        # servers on ephemeral ports, and a failure here should not mask a
+        # build failure by short-circuiting ahead of it.
+        run: bun run e2e
 
   windows:
     # The `bun-windows-x64` release leg, run before a tag exists.
@@ -112,18 +196,19 @@ jobs:
     # outright, the leg died at install, `publish` never ran. Every PR was
     # green, because every PR only ever ran on ubuntu-latest.
     #
-    # This is that leg minus the rename/checksum/upload: same runner, same
-    # `bun install`, same three package.json scripts, same order.
+    # This is that leg minus the rename/checksum/upload — same runner, same
+    # `bun install`, same three package.json scripts, same order — plus the
+    # unit suite appended after it.
     #
-    # MEASURED on this repo (one run, all legs concurrent; job wall clock):
+    # MEASURED on this repo (job wall clock, all legs concurrent):
     #
     #   ubuntu `test` (the job above)                       79s
     #   windows, checkout + setup-bun + `bun install`       66s
-    #   windows, + build:binary + verify:artifact + e2e     95s  <- this job
-    #   windows, `bun test` instead of the above           112s, RED
+    #   windows, + build:binary + verify:artifact + e2e     95s
+    #   windows, + `bun test`                              112s  <- this job
     #
-    # Per-step, on this job: checkout 7s, setup-bun 12s, `bun install` 54s,
-    # everything after it 16s. Two conclusions the numbers make for us:
+    # Per-step: checkout 7s, setup-bun 12s, `bun install` 54s, the release leg
+    # 16s, `bun test` ~17s. Three conclusions the numbers make for us:
     #
     # 1. The install IS the cost, and it is the check — running the lifecycle
     #    scripts under Bun's Windows shell is the whole of what catches #38.
@@ -132,16 +217,18 @@ jobs:
     #    (`e2e:lifecycle` spawning POSIX `sleep`). 16s is not a reason to ship
     #    a check that only covers the first step of the thing it is proxying.
     #
-    # 2. `bun test` is deliberately absent. It does not pass on Windows and has
-    #    not: 22 of 1574 assert POSIX directly — mode 0600, symlinks,
-    #    `~/.local/share`, `claude` on PATH — not portable product behaviour.
-    #    Adding it would make this job red on arrival for reasons that are not
-    #    release risk. Porting those is a tests/** change, not a CI one.
+    # 2. `bun test` adds ~17s on top of that, entirely inside the wall clock
+    #    the concurrent ubuntu `test` job already spends. It costs the merge
+    #    queue nothing it was not already waiting for.
     #
-    # It runs concurrently with `test` and carries no path filter, so it costs
-    # CI ~16s of wall clock and reports in the merge queue like any other check
-    # (a path-filtered required check never reports there — see the note on
-    # `bindings:check` above).
+    # 3. What it buys: `resolveConfigPath`, the secrets file tier, CLI
+    #    detection and the atomic JSON writers had ZERO Windows coverage, and
+    #    the first `bun test` run here found a Windows-only product bug in the
+    #    secrets loader that every green ubuntu run had missed.
+    #
+    # It runs concurrently with `test` and carries no path filter, so it
+    # reports in the merge queue like any other check (a path-filtered required
+    # check never reports there — see the note on `bindings:check` above).
     #
     # WHAT THIS STILL CANNOT CATCH: the macOS leg, the second target's compile,
     # and the publish job's rename/checksum/ARTIFACTS.md assembly. Those need
@@ -225,3 +312,26 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.bun/bin:$PATH"
           bun run e2e:binary -- --binary=dist-release/maximal.exe
+
+      - name: Run tests
+        # The unit suite, on the platform we ship a `windows-x64` binary for.
+        #
+        # Deliberately LAST, after the release leg above and not interleaved
+        # with it. Two reasons: the leg's step sequence stays byte-for-byte the
+        # shape release-artifacts.yml runs (the KEEP IN SYNC note below is only
+        # checkable if nothing is spliced into the middle), and a unit failure
+        # can never mask a build/verify/e2e failure by short-circuiting ahead
+        # of it.
+        #
+        # This was absent until now because 22 of 1574 cases failed here. All
+        # 22 were POSIX assumptions in `tests/**` except one, which was a real
+        # product bug on Windows that no other check could have found — see the
+        # PR that added this step.
+        #
+        # 1 case stays skipped on win32, with the reason at its skip site:
+        # secrets.test.ts's "refuses a group/world-readable secrets file"
+        # fixture cannot be constructed without POSIX mode bits.
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun test

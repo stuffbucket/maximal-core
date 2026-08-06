@@ -10,9 +10,12 @@ tier drives the engine over the loopback `/control` JSON-RPC 2.0 surface.
 - **`bun run check:fast` after each edit** — oxlint + `tsc` + ESLint. This is
   the inner loop.
 - **`bun run check:deep` before you call the task done** — adds `casts:check`,
-  `bun test`, knip, `deps:check`, the build, `typecheck:downstream`, and
-  `bindings:check`. It is a superset of what CI runs, so green here means green
-  there. If you touched `scripts/ops/`, also run `bun run check:ops`.
+  `bun test`, knip, `deps:check`, `dupes:check`, the build,
+  `typecheck:downstream`, and `bindings:check`. It is a superset of CI's `test`
+  job, so green here means green there. It does **not** cover `ci.yml`'s
+  `windows` job, which compiles the `bun-windows-x64` artifact and runs
+  `verify:artifact` + `e2e:binary` against it on a Windows runner. If you
+  touched `scripts/ops/`, also run `bun run check:ops`.
 - Single test file: `bun test tests/foo.test.ts`. Tests live in `tests/` as
   `*.test.ts` on Bun's built-in runner.
 - **`bun run e2e` if you changed the control plane, the ready-line, or
@@ -65,6 +68,15 @@ Each rule states the prohibition; the linked doc is its only elaboration.
   [`docs/architecture.md`](docs/architecture.md) → _Release & PR conventions_.
 - **Assign every PR to a release milestone.** The milestone title is the tag
   that will be cut; it is how a PR pre-selects the release it ships in.
+- **`main` requires a PR, three green checks, and an up-to-date branch.** `test`
+  and `windows` (`ci.yml`) plus `gate` (`release-gates.yml`) are *required*
+  status checks — a red one blocks the merge button, and so does a branch that
+  has fallen behind `main` (`gh pr update-branch`; nothing rebases for you
+  here). Direct pushes to `main` are rejected, and `main` cannot be deleted or
+  force-pushed by anyone. There is **no exemption and no bypass actor**, the
+  release included: `release:prepare` lands the release commit through a PR and
+  `release:tag` cuts the tag on the merged head afterwards.
+  [`docs/admin/branch-rulesets.md`](docs/admin/branch-rulesets.md).
 
 ## Read before you touch
 
@@ -74,6 +86,7 @@ Each rule states the prohibition; the linked doc is its only elaboration.
 | Tests, especially mocks or mutation testing | [`docs/architecture.md`](docs/architecture.md) → _Testing gotchas_, then [`docs/dev/testing-strategy.md`](docs/dev/testing-strategy.md) |
 | Running scripts or setting up the dev environment | [`docs/commands.md`](docs/commands.md) |
 | Opening a PR or cutting a release | [`docs/architecture.md`](docs/architecture.md) → _Release & PR conventions_, then [`docs/release-runbook.md`](docs/release-runbook.md) |
+| Branch protection, required checks, or anything in repo settings | [`docs/admin/branch-rulesets.md`](docs/admin/branch-rulesets.md) |
 | Spawning parallel agents or using worktrees | [`docs/architecture.md`](docs/architecture.md) → _Parallel-agent convention_ |
 | Changing the pinned Bun version | [`docs/bun-version-policy.md`](docs/bun-version-policy.md) |
 | The Claude Code or Opencode plugin | [`docs/plugins.md`](docs/plugins.md) |

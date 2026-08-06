@@ -91,7 +91,7 @@ The **Endpoint** section has copy-curl and copy-env-var helpers so you don't hav
 
 ### A note on API keys
 
-- **Mint a stable key for anything long-running.** In **API clients**, create a named key and use it in your tools. The auto-generated endpoint key rotates every time maximal restarts. So it's fine for a quick test, but not for a tool you leave running.
+- **Mint a stable key for anything long-running.** In **API clients**, create a named key and use it in your tools. The auto-generated "Default" endpoint key is minted once and persisted, so it survives a restart — but it is the shared fallback, not yours, and a named key is separately revocable.
 - **Keys are not enforced by default.** maximal accepts every local request without checking auth until enforcement is turned on (`auth.enforce`) — minting a key does not lock local access down on its own. Turn enforcement on as well if that's what you want.
 
 See [Endpoint and API keys](./usage-and-settings.md) for the full details.

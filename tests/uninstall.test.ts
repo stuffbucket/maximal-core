@@ -136,75 +136,16 @@ describe("uninstall — Claude Code settings revert integration", () => {
   })
 })
 
-describe("uninstall — install-target selection (--keep-app)", () => {
-  const home = os.homedir()
-  const symlinkPath = path.join(home, ".local", "bin", "maximal")
-  const appBundlePath = "/Applications/maximal.app"
-
-  it("default removal targets the .app bundle and the PATH symlink", async () => {
+describe("uninstall — install-target selection", () => {
+  it("targets the Homebrew binaries and nothing installer-shaped", async () => {
     const { installTargets } = await import("~/uninstall")
-    if (process.platform === "win32") return // .app path is macOS/Linux only
-    const paths = installTargets().map((t) => t.path)
-    expect(paths).toContain(symlinkPath)
-    expect(paths).toContain(appBundlePath)
-  })
-
-  it("--keep-app leaves the .app bundle untouched but still removes the symlink", async () => {
-    const { installTargets } = await import("~/uninstall")
-    if (process.platform === "win32") return
-    const paths = installTargets({ keepApp: true }).map((t) => t.path)
-    // The running bundle survives…
-    expect(paths).not.toContain(appBundlePath)
-    expect(paths.some((p) => p.endsWith(".app"))).toBe(false)
-    // …but the on-PATH CLI symlink (and the other PATH binaries) still go.
-    expect(paths).toContain(symlinkPath)
+    if (process.platform === "win32") return // brew targets are POSIX-only
+    const paths = installTargets()
     expect(paths).toContain("/opt/homebrew/bin/maximal")
-  })
-})
-
-describe("uninstall — first-launch installer PATH block removal", () => {
-  it("strips the # >>> maximal PATH >>> block, preserving other rc content", async () => {
-    const { removeFirstLaunchPathBlock } = await import("~/uninstall")
-    const zshrc = path.join(workDir, ".zshrc")
-    fs.writeFileSync(
-      zshrc,
-      "# my stuff\nexport FOO=bar\n\n"
-        + "# >>> maximal PATH >>>\n"
-        + 'export PATH="$HOME/.local/bin:$PATH"\n'
-        + "# <<< maximal PATH <<<\n",
-    )
-
-    const modified = removeFirstLaunchPathBlock(workDir)
-    expect(modified).toContain(zshrc)
-
-    const after = fs.readFileSync(zshrc, "utf8")
-    expect(after).toContain("export FOO=bar") // user content preserved
-    expect(after).not.toContain("maximal PATH") // our block gone
-    expect(after).not.toContain(".local/bin")
-  })
-
-  it("no-ops (returns []) when the block isn't present", async () => {
-    const { removeFirstLaunchPathBlock } = await import("~/uninstall")
-    fs.writeFileSync(path.join(workDir, ".zshrc"), "export FOO=bar\n")
-    expect(removeFirstLaunchPathBlock(workDir)).toEqual([])
-  })
-
-  it("touches only the # >>> maximal PATH >>> block, leaving other content", async () => {
-    const { removeFirstLaunchPathBlock } = await import("~/uninstall")
-    const zshrc = path.join(workDir, ".zshrc")
-    // Installer block plus an unrelated user PATH line that must survive.
-    fs.writeFileSync(
-      zshrc,
-      "# >>> maximal PATH >>>\n"
-        + 'export PATH="$HOME/.local/bin:$PATH"\n'
-        + "# <<< maximal PATH <<<\n"
-        + 'export PATH="$HOME/mytools:$PATH"\n',
-    )
-
-    removeFirstLaunchPathBlock(workDir)
-    const after = fs.readFileSync(zshrc, "utf8")
-    expect(after).not.toContain("maximal PATH") // installer block removed
-    expect(after).toContain("mytools") // unrelated user line untouched
+    expect(paths).toContain("/usr/local/bin/maximal")
+    // maximal ships no OS installer: no .app bundle, no PATH symlink.
+    expect(paths.some((p) => p.endsWith(".app"))).toBe(false)
+    expect(paths.some((p) => p.includes("/.local/bin/"))).toBe(false)
   })
 })
 
@@ -575,45 +516,5 @@ describe("uninstall — revertAppIntegrations (registry sweep)", () => {
 
     expect(badUninstall).toHaveBeenCalledTimes(1)
     expect(goodUninstall).toHaveBeenCalledTimes(1) // sweep continued past the throw
-  })
-
-  it("strips the first-launch installer PATH block via removeFirstLaunchPathBlock", async () => {
-    // revertAppIntegrations calls removeFirstLaunchPathBlock(), which reads the
-    // rc files under os.homedir(). Point HOME at a temp dir holding a seeded
-    // installer block and assert it gets stripped — proof the call is invoked.
-    const fakeHome = fs.mkdtempSync(
-      path.join(os.tmpdir(), "maximal-revert-home-"),
-    )
-    const zshrc = path.join(fakeHome, ".zshrc")
-    fs.writeFileSync(
-      zshrc,
-      "export KEEPME=1\n"
-        + "# >>> maximal PATH >>>\n"
-        + 'export PATH="$HOME/.local/bin:$PATH"\n'
-        + "# <<< maximal PATH <<<\n",
-    )
-    // removeFirstLaunchPathBlock() reads rc files under os.homedir(); point it
-    // at our temp home so the call is observable via the stripped block.
-    const homedirSpy = spyOn(os, "homedir").mockReturnValue(fakeHome)
-    try {
-      await mock.module("~/apps/registry", () => ({
-        getAllApps: () => [
-          makeFakeApp({
-            id: "claude-code",
-            name: "Claude Code",
-            enabled: false,
-          }),
-        ],
-      }))
-      const { revertAppIntegrations } = await import("~/uninstall")
-      await revertAppIntegrations([])
-
-      const after = fs.readFileSync(zshrc, "utf8")
-      expect(after).not.toContain("maximal PATH") // installer block stripped
-      expect(after).toContain("KEEPME=1") // unrelated content preserved
-    } finally {
-      homedirSpy.mockRestore()
-      fs.rmSync(fakeHome, { recursive: true, force: true })
-    }
   })
 })

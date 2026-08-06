@@ -5,6 +5,10 @@
  * `~/Library/Application Support/Claude-3p` is never touched. Mirrors the
  * behaviour validated live on 2026-06-22 (the app boots into 3P, discovers
  * gateway models, no Anthropic sign-in).
+ *
+ * On win32 the throwaway `home` is NOT sufficient on its own — `getClaude3pDir`
+ * prefers `%LOCALAPPDATA%` over it — so `redirectLocalAppData` confines that
+ * variable to the same temp dir. See `tests/helpers/win-appdata.ts`.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
@@ -22,13 +26,18 @@ import {
   revertConfigLibraryProfile,
 } from "~/apps/claude-desktop/config"
 
+import { redirectLocalAppData } from "./helpers/win-appdata"
+
 let home: string
+let restoreLocalAppData: () => void
 
 beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "cd-3p-"))
+  restoreLocalAppData = redirectLocalAppData(home)
 })
 
 afterEach(() => {
+  restoreLocalAppData()
   try {
     fs.rmSync(home, { recursive: true, force: true })
   } catch {
@@ -167,6 +176,43 @@ describe("applyConfigLibraryProfile", () => {
     expect(top.coworkUserFilesPath).toBe("/keep/me")
     expect((top.preferences as Record<string, unknown>).theme).toBe("dark")
   })
+
+  // `_meta.json` is Claude Desktop's file, not ours, and it was read with a
+  // bare `as MetaFile` cast. A file without `entries` therefore reached
+  // `meta.entries.some(...)` and threw — AFTER `<profileId>.json` had already
+  // been written, so apply left the profile on disk, `_meta.json` unupdated and
+  // `deploymentMode` unset: a half-applied config that neither works nor
+  // reverts. Every shape below is one a hand-edit, a truncated write, or a
+  // schema change in the app can produce.
+  const brokenMeta: Array<[string, unknown]> = [
+    ["no entries key", { appliedId: "abc-123" }],
+    ["entries null", { appliedId: "abc-123", entries: null }],
+    ["entries is a string", { appliedId: "abc-123", entries: "nope" }],
+    ["empty object", {}],
+    ["appliedId is a number", { appliedId: 7, entries: [] }],
+  ]
+
+  it.each(brokenMeta)(
+    "applies over a malformed _meta.json (%s) instead of half-writing",
+    (_label, meta) => {
+      const lib = libDir()
+      fs.mkdirSync(lib, { recursive: true })
+      fs.writeFileSync(path.join(lib, "_meta.json"), JSON.stringify(meta))
+
+      const result = applyConfigLibraryProfile(home)
+
+      expect(result.wrote).toBe(true)
+      expect(topConfig().deploymentMode).toBe("3p")
+      const written = readJson(path.join(lib, "_meta.json"))
+      expect(written.appliedId).toBe(result.profileId)
+      expect(
+        (written.entries as Array<{ id: string }>).some(
+          (e) => e.id === result.profileId,
+        ),
+      ).toBe(true)
+      expect(isConfigLibraryApplied(home)).toBe(true)
+    },
+  )
 })
 
 describe("isConfigLibraryApplied", () => {

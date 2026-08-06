@@ -2,11 +2,12 @@
 
 Pinned in `.bun-version` — read by `bun install`, by Bun's own version manager,
 and at runtime by every CI workflow that needs Bun: `ci.yml`, `tooling-ci.yml`,
-`watch-external-drift.yml`, `release-gates.yml`, and `release-tag-check.yml`
-each `cat .bun-version` into `setup-bun`. No workflow — and no doc — holds a
-copy of the version literal, so dev/CI drift is not representable — which is
-the point: drift is what got us a 22-test failure on a Bun `latest` regression
-once.
+`watch-external-drift.yml`, `watch-branch-rules.yml`, `randomized-test-order.yml`,
+`release-gates.yml`, `release-tag-check.yml`, `release-artifacts.yml`, and
+`publish-package.yml` each
+`cat .bun-version` into `setup-bun`. No workflow holds a copy of the version
+literal, so dev/CI drift is not representable — which is the point: drift is
+what got us a 22-test failure on a Bun `latest` regression once.
 
 Bump intentionally — edit `.bun-version`, then regenerate the one committed
 artifact that the version decides:
@@ -45,8 +46,9 @@ Bun a developer happened to have.
 `dist/lib` is not affected: `build:lib` is tsup, which bundles with esbuild, a
 pinned dependency in `package.json`. Bun is only the process runner there, and
 its version provably does not move those bytes. That asymmetry is why
-`bindings:check` was green for `dist/lib` across two years of dev-machine drift
-and went red the moment `dist/main.js` came under the same gate.
+`bindings:check` stayed green for `dist/lib` under dev-machine Bun drift from
+the day it landed (maximal-core#24) and went red the moment `dist/main.js` came
+under the same gate (maximal-core#31).
 
 `bun run bindings:check` enforces this from both sides: it compares the
 committed bundle against a fresh build, and when the running Bun is not the
@@ -81,7 +83,15 @@ bundle:
 
 ```
 $ /path/to/1.3.11/bin/bun pm pack     # tarball dist/main.js → ffdee378… (1.3.14)
+$ /tmp/bun1311/bin/bun run build      # dist/main.js → a 1.3.14 bundle
 ```
+
+`bun run build` is exposed the same way, and that one is **step 3 above** (and
+the by-hand release path in the runbook's § 4): the nested `bun build` inside
+the npm script re-resolves `bun` from PATH, so the rebuild that blesses a new
+pin gets built by whatever Bun is on PATH instead. `bindings:check` caught it as
+stale. Put the pinned Bun first on your PATH; invoking it by absolute path is
+not enough.
 
 That is the same trap `check-bindings.ts` solved with `process.execPath`, and it
 is why `prepack` is [`scripts/ops/prepack.ts`](../scripts/ops/prepack.ts) rather
@@ -89,9 +99,10 @@ than `bun run build && bun run build:lib`: it version-checks
 `process.versions.bun` and then bundles with `process.execPath`, so the binary
 that was checked is the binary that bundles. Off-pin it refuses — before writing
 anything into `dist/` — instead of shipping a tarball nobody can regenerate.
-`bun run release:preflight` runs the same assertion with no build, ahead of
-`bumpp`, because everything after `bumpp` is a pushed tag or an irreversible
-publish. See [`docs/release-runbook.md`](release-runbook.md) § 4.
+`bun run release:preflight` runs the same assertion with no build, and
+`release:prepare` runs it ahead of `bumpp`, because the bundle `bumpp` commits is
+the bundle a git-dependency consumer executes. See
+[`docs/release-runbook.md`](release-runbook.md) § 4.
 
 Don't float `latest`. Bun ships fast; a release in a single afternoon
 can ship a regression that breaks our test loader, and the difference

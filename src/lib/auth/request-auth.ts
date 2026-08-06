@@ -16,28 +16,19 @@ interface AuthMiddlewareOptions {
   isEnforcing?: () => boolean
   allowUnauthenticatedPaths?: Array<string>
   /**
-   * Path prefixes that bypass auth. Used by the static settings bundle
-   * at /settings/* (which has many hashed asset URLs). Data endpoints
-   * under /settings/api/* are NOT in this list — they're auth-gated like
-   * everything else.
+   * Path prefixes that bypass auth entirely. `/control` is the only caller:
+   * it is a same-machine surface protected by the loopback-only bind, the
+   * control router's own peer-IP 404, and the Origin guard, so it never takes
+   * part in the API-key dance.
+   *
+   * There is deliberately no "…except these sub-prefixes" escape hatch. The
+   * `requireAuthPrefixes` / `alwaysEnforcePrefixes` options that used to sit
+   * here were the `/settings/api` hardening levers from ADR-0021 §6.2; that
+   * surface was removed at the core split, `server.ts` passed neither, and
+   * unreachable auth configuration is a liability on a security path. Bring one
+   * back with the caller that needs it, not before.
    */
   allowUnauthenticatedPrefixes?: Array<string>
-  /**
-   * Path prefixes that re-enable auth even when they fall under one of
-   * the prefixes in `allowUnauthenticatedPrefixes`. Lets us say
-   * "/settings/* is open, but /settings/api/* is still auth-gated"
-   * without having to enumerate every static asset path.
-   */
-  requireAuthPrefixes?: Array<string>
-  /**
-   * Path prefixes where a valid key is ALWAYS required, independent of the
-   * user-facing `enforce` toggle (§6.2). The control surface (`/settings/api`)
-   * must stay authenticated even when "Block unknown connections" is off, so a
-   * malicious local page can't drive it. The `state.shellApiKey` bypass and
-   * per-request client attribution are unaffected — this only removes the
-   * `enforce=false` early-allow for these prefixes, not the shell-key path.
-   */
-  alwaysEnforcePrefixes?: Array<string>
   allowOptionsBypass?: boolean
   /**
    * Paths that should skip auth when the request comes from loopback
@@ -162,11 +153,10 @@ export function extractRequestApiKey(c: Context): string | null {
 }
 
 /**
- * Shell-internal key match. When the desktop shell spawns the sidecar it
- * injects MAXIMAL_SHELL_KEY as env; a request carrying that exact key bypasses
- * the enforce flag so a user who turns on "Block unknown connections" can't lock
- * themselves out of their own Settings UI — and it keeps the mandatory-auth
- * prefixes (§6.2) usable by the Settings UI itself.
+ * Shell-internal key match. When a desktop shell spawns the sidecar it injects
+ * MAXIMAL_SHELL_KEY as env; a request carrying that exact key bypasses the
+ * enforce flag so a user who turns on "Block unknown connections" can't lock
+ * their own shell out. Core itself never sets it.
  */
 function isShellKey(requestApiKey: string | null): boolean {
   return (
@@ -198,8 +188,6 @@ export function createAuthMiddleware(
   const allowUnauthenticatedPaths = options.allowUnauthenticatedPaths ?? ["/"]
   const allowUnauthenticatedPrefixes =
     options.allowUnauthenticatedPrefixes ?? []
-  const requireAuthPrefixes = options.requireAuthPrefixes ?? []
-  const alwaysEnforcePrefixes = options.alwaysEnforcePrefixes ?? []
   const allowOptionsBypass = options.allowOptionsBypass ?? true
   const loopbackOnlyPaths = options.loopbackOnlyPaths ?? []
   const getRequestIp = options.getRequestIp ?? defaultGetRequestIp
@@ -208,10 +196,7 @@ export function createAuthMiddleware(
     if (allowOptionsBypass && c.req.method === "OPTIONS") return true
     if (allowUnauthenticatedPaths.includes(c.req.path)) return true
     const path = c.req.path
-    if (
-      allowUnauthenticatedPrefixes.some((p) => pathMatchesPrefix(path, p))
-      && !requireAuthPrefixes.some((p) => pathMatchesPrefix(path, p))
-    ) {
+    if (allowUnauthenticatedPrefixes.some((p) => pathMatchesPrefix(path, p))) {
       return true
     }
     // Loopback exemption: the local usage dashboard hits these endpoints
@@ -226,17 +211,11 @@ export function createAuthMiddleware(
     return false
   }
 
-  const decideAuth = (
-    requestApiKey: string | null,
-    mandatory: boolean,
-  ): AuthDecision => {
+  const decideAuth = (requestApiKey: string | null): AuthDecision => {
     if (isShellKey(requestApiKey)) {
       return { allow: true, id: null, label: "Maximal Settings" }
     }
-    // `mandatory` (a §6.2 always-enforce prefix) forces enforcement on even when
-    // the user-facing toggle is off, so the control surface can't be driven
-    // key-less by a local browser page.
-    if (!mandatory && !isEnforcing()) {
+    if (!isEnforcing()) {
       const entry = requestApiKey ? findApiKeyEntry(requestApiKey) : null
       return { allow: true, id: entry?.id ?? null, label: entry?.label ?? null }
     }
@@ -249,10 +228,7 @@ export function createAuthMiddleware(
 
   return async (c, next) => {
     if (shouldBypass(c)) return next()
-    const mandatory = alwaysEnforcePrefixes.some((p) =>
-      pathMatchesPrefix(c.req.path, p),
-    )
-    const decision = decideAuth(extractRequestApiKey(c), mandatory)
+    const decision = decideAuth(extractRequestApiKey(c))
     if (!decision.allow) return createUnauthorizedResponse(c)
     recordClient({
       apiKeyId: decision.id,
@@ -272,8 +248,8 @@ type AuthDecision =
  * to {@link createAuthMiddleware} (which validates the *client's* API key);
  * this one short-circuits when the proxy itself has no GitHub token to
  * forward with. Lets the HTTP server come up in "unauthenticated mode"
- * (settings + diagnostics still reachable) without the desktop shell
- * needing to handshake the device-code flow before port 4141 listens.
+ * (the `/control` surface and `/status` still reachable) so a supervisor can
+ * drive sign-in on demand, instead of crashing or firing the device-code flow.
  */
 export const requireGithubAuth: MiddlewareHandler = async (c, next) => {
   if (hasGithubToken()) {
@@ -282,7 +258,10 @@ export const requireGithubAuth: MiddlewareHandler = async (c, next) => {
   return c.json(
     {
       error: "not_authenticated",
-      hint: "Open Settings → Account to sign in, or run `maximal auth`.",
+      // Name something core actually has. There is no Settings UI here: the CLI
+      // flow is `maximal auth`, and a supervisor drives the same flow over the
+      // control listener.
+      hint: "Run `maximal auth` to sign in, or start the flow over the /control API.",
     },
     401,
   )

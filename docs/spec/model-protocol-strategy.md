@@ -15,8 +15,8 @@ doc — informs a future PRD when scheduled.
   no automated way to notice any of these — it fails when a user
   hits it.
 - Today protocol literals live in 9+ files. Five regex patterns in
-  `src/lib/models.ts` cover Claude ID rewriting; tool versions are
-  hardcoded in `web-tools-vocab.ts`; beta headers are parsed inline
+  `src/lib/models/models.ts` cover Claude ID rewriting; tool versions are
+  hardcoded in `web-tools/vocab.ts`; beta headers are parsed inline
   in handlers; OpenAI surface drift is mostly inherited from
   upstream `caozhiyuan/copilot-api`. Adding a new protocol string
   requires touching multiple files and missing one is silent.
@@ -47,15 +47,15 @@ header passthrough. Manual, reactive, error-prone.
 
 The state today (evidence base for the strategy):
 
-- **`src/lib/models.ts`** has 5 regex patterns covering the
+- **`src/lib/models/models.ts`** has 5 regex patterns covering the
   dot/dash/dash-date forms. Adding a 6th form requires editing the
   parser and hoping no test breaks.
-- **`src/lib/anthropic-id-rewrite.ts`** has its own three regexes
+- **`src/lib/models/anthropic-id-rewrite.ts`** has its own three regexes
   (`FORWARD_RE`, `REVERSE_RE`, `VARIANT_RE`) plus a hardcoded
   `SENTINEL_DATE = "20260301"`. This file does the actual
   request-time rewriting — the `models.ts` parser is a parallel,
   unrelated code path that isn't called from this rewrite layer.
-- **`src/routes/messages/web-tools-vocab.ts`** hardcodes
+- **`src/routes/messages/web-tools/vocab.ts`** hardcodes
   `web_search_20250305` and `web_fetch_20250910`. The rewriter
   matches these literally; Anthropic's `web_search_20260209` would
   pass through unrewritten and Copilot would reject it.
@@ -77,22 +77,23 @@ Walking the actual flow makes the consolidation target concrete:
    `GET ${copilotBaseUrl(state)}/models` with `copilotModelsHeaders`.
    Base URL depends on account type — individual / business /
    enterprise / opencode-OAuth — five branches in
-   `src/lib/api-config.ts:156`.
-2. **Filter + cache.** `src/lib/utils.ts:23 cacheModels()` keeps only
+   `src/lib/config/api-config.ts:171`.
+2. **Filter + cache.** `src/lib/platform/utils.ts:47 cacheModels()` keeps only
    `model_picker_enabled || capabilities.type === "embeddings"` and
    writes via `setModels()` into both legacy `state.models` and the
    new `SingletonCache` (post-`3c1f749` so `/_debug/state` shows
    refresh time + count).
-3. **When.** Once at startup (`runServer()` in `start.ts`), with a
-   lazy fallback in `routes/models/route.ts:12-15` if `state.models`
-   is unset on a `GET /v1/models`. **No refresh after that** — stale
-   until process restart. (Tracked as deferred item "Models-list
-   refresh strategy" in the cleanup PRD.)
-4. **Outbound `/v1/models`.** `routes/models/route.ts` filters
-   variant IDs (`isVariantId`), rewrites Anthropic IDs via
-   `forwardId` (`claude-opus-4.6` → `claude-opus-4-6-20260301`), and
-   reshapes each entry. Hides Copilot's effort/context-window
-   suffixes from the picker.
+3. **When.** Once at startup (`runServer()`, now
+   `src/lib/start/run-server.ts` and re-exported from `src/start.ts`),
+   with a lazy prime in `src/routes/models/route.ts` if the cache is
+   empty on a `GET /v1/models`. **L1a below has since shipped**, so the
+   cache no longer stays stale until process restart — see the note
+   under *L1a*.
+4. **Outbound `/v1/models`.** `src/routes/models/route.ts` filters
+   variant IDs (`isVariantId`) and reshapes each entry; the Anthropic-ID
+   rewrite (`forwardId`: `claude-opus-4.6` → `claude-opus-4-6-20260301`)
+   now lives in `src/routes/models/wire-models.ts`. Hides Copilot's
+   effort/context-window suffixes from the picker.
 5. **Inbound routing.** When a request arrives, `reverseId` undoes
    the forward rewrite, then `pickCopilotVariantId` consults the
    `state.models` ID list as the routing oracle: `effort: "high"`
@@ -112,12 +113,12 @@ Concrete migration targets when L2 is built:
 
 | Today | Registry replacement |
 |---|---|
-| `src/lib/models.ts` 5-regex `parseClaudeId` | `parseModelId(input)` reads from `models[]` table; new model = one row |
+| `src/lib/models/models.ts` 5-regex `normalizeSdkModelId` | `parseModelId(input)` reads from `models[]` table; new model = one row |
 | `anthropic-id-rewrite.ts` `FORWARD_RE` / `REVERSE_RE` | Derived from registry's family + version + dash-date convention; round-trip is a registry method, not a hand-written regex pair |
 | `anthropic-id-rewrite.ts` `SENTINEL_DATE = "20260301"` | Registry constant; can be a per-model field if Anthropic ever varies it |
 | `anthropic-id-rewrite.ts` `VARIANT_RE` (`low|medium|high|xhigh|max|1m`) | Registry's `variantSuffixes[]` table; routing logic walks the table |
 | `pickCopilotVariantId` candidate-building (`-high`, `-1m-internal`, `-1m`) | Registry's variant-priority table per family |
-| `web-tools-vocab.ts` `TOOL_TYPE.webSearch = "web_search_20250305"` | Registry's `toolVersions[].latest` per tool name; rewriter accepts any in `supported[]` |
+| `web-tools/vocab.ts` `TOOL_TYPE.webSearch = "web_search_20250305"` | Registry's `toolVersions[].latest` per tool name; rewriter accepts any in `supported[]` |
 | `state.models` as routing oracle | Stays — but its values are validated against the registry at refresh time, surfacing diffs through L1 |
 
 Net effect: ~150 LOC of regex deletion + ~250 LOC of registry table.
@@ -132,6 +133,17 @@ Notice when something has changed before users hit it. Two tiers,
 the in-proxy one is primary.
 
 #### L1a. Lazy refresh on activity (in-proxy, primary)
+
+> **Shipped.** This is the one part of this strategy doc that is no longer
+> a proposal: it lives in `src/lib/models/refresh-models.ts` (~230 lines)
+> and is wired into both apps' middleware stack in `src/server.ts` via
+> `staleRefreshMiddleware`. The constants below are real
+> (`STALE_AFTER_MS` = 6h, `JITTER_MS` = 2h total spread), and the shipped
+> module goes further than this sketch: a `refreshInFlight` single-flight
+> guard, a `primeModelsCache` path for an empty cache with a
+> `PRIME_COOLDOWN_MS` (60s) backoff, and injectable clock/deps for tests.
+> The pseudocode is kept because it is still the clearest statement of
+> the *intent*; read the module for the behaviour.
 
 The `SingletonCache` wrapping `state.models` already tracks
 `loaded_at_ms`. Add a tiny middleware that runs at request entry:
@@ -223,7 +235,7 @@ Consolidate every protocol literal into one typed table.
   `parseModelId(input): ParsedModel` and `formatModelId(parsed,
   style)` that consult the registry. New models add a row, not a
   regex.
-- **Replace hardcoded `TOOL_TYPE` strings in `web-tools-vocab.ts`**
+- **Replace hardcoded `TOOL_TYPE` strings in `web-tools/vocab.ts`**
   with reads from the registry. The rewriter accepts any version in
   the `supported` list; emits `latest` to upstream when it
   synthesizes blocks.
@@ -297,9 +309,9 @@ Make the registry the test surface.
 |---|---|---|
 | `src/lib/protocol-registry.ts` | ~400 | The three sub-tables. Adding a model is a one-line edit. |
 | `src/lib/parse-model-id.ts` | ~80 | Replaces the 5 regexes in `models.ts`. |
-| `src/routes/messages/web-tools-vocab.ts` refactor | net 0 | Reads from registry instead of hardcoding. |
+| `src/routes/messages/web-tools/vocab.ts` refactor | net 0 | Reads from registry instead of hardcoding. |
 | Validation hook in `handler.ts` | ~40 | Walk payload, emit `unknown_protocol_string` warnings. |
-| **L1a lazy refresh middleware** in `src/lib/refresh-models.ts` + Hono middleware | ~30 | Activity-driven `cacheModels()` re-trigger when `loaded_at_ms` is older than 6h ± jitter. Single-flight guard. |
+| ~~**L1a lazy refresh middleware**~~ — **SHIPPED** as `src/lib/models/refresh-models.ts` + `staleRefreshMiddleware` in `src/server.ts` | ~230 (not the ~30 estimated) | Activity-driven `cacheModels()` re-trigger when `loaded_at_ms` is older than 6h ± jitter. Single-flight guard, plus an empty-cache prime path with a 60s cooldown that this estimate did not anticipate. |
 | L1a refresh test (clock-injected `SingletonCache`) | ~50 | Asserts staleness check, single-flight, jitter bounds, failure-keeps-stale. |
 | `scripts/audit-models.ts` (L1b) | ~150 | Daily fetch + diff for the idle-proxy case. |
 | `.github/workflows/audit-models.yml` (L1b) | ~40 | Cron job that opens an issue on diff. |
@@ -392,7 +404,7 @@ days. The break-even point is "we hit this twice in one quarter."
 When scheduled, the milestone delivers if:
 
 1. Adding a new model is a single registry-row PR — no editing of
-   `models.ts`, `web-tools-vocab.ts`, or any handler.
+   `models.ts`, `web-tools/vocab.ts`, or any handler.
 2. Adding a new tool version (e.g. `web_search_20260209`) updates
    one row and a test; the rewriter accepts both old and new
    without code changes.
@@ -421,28 +433,30 @@ When scheduled, the milestone delivers if:
 
 Code surface to consolidate:
 
-- `src/lib/models.ts:45-71` — five-pattern Claude ID parser (parallel
+- `src/lib/models/models.ts:45-71` — five-pattern Claude ID parser (parallel
   to the rewrite layer; not actually called from rewriting today)
-- `src/lib/anthropic-id-rewrite.ts` — the actual rewrite layer:
+- `src/lib/models/anthropic-id-rewrite.ts` — the actual rewrite layer:
   `forwardId` (line 31), `reverseId` (line 51), `isVariantId` (line
   69), `pickCopilotVariantId` (line 84). Hardcodes `SENTINEL_DATE =
   "20260301"` (line 15), the family list (`opus|sonnet|haiku`), and
   the variant suffix regex (`low|medium|high|xhigh|max|1m` optional
   `-internal`)
-- `src/routes/messages/web-tools-vocab.ts:9-12` — hardcoded
+- `src/routes/messages/web-tools/vocab.ts:9-12` — hardcoded
   `web_search_20250305`, `web_fetch_20250910`
 - `src/services/copilot/get-models.ts` — the fetch
-- `src/lib/utils.ts:23 cacheModels()` — the filter + cache step
+- `src/lib/platform/utils.ts:47 cacheModels()` — the filter + cache step
 - `src/routes/models/route.ts` — the outbound listing transform
-- `src/lib/api-config.ts:156 copilotBaseUrl()` — five-branch base-URL
+- `src/lib/config/api-config.ts:171 copilotBaseUrl()` — five-branch base-URL
   selection (account type, enterprise, opencode-OAuth, override,
   default)
 
-Files referencing protocol literals today (9):
-`anthropic-id-rewrite.ts`, `web-tools-types.ts`,
+Files referencing protocol literals today (11):
+`anthropic-id-rewrite.ts`, `web-tools/types.ts`,
 `count-tokens-handler.ts`, `responses/handler.ts`,
-`web-tools-rewriter.ts`, `web-tools-vocab.ts`, `messages/handler.ts`,
+`web-tools/rewriter.ts`, `web-tools/vocab.ts`, `messages/handler.ts`,
 `services/copilot/create-messages.ts`,
+`services/copilot/upstream-request.ts`,
+`lib/errors/upstream-error-advice.ts`,
 `services/providers/anthropic-proxy.ts`.
 
 Upstream model-list sources (L1 detection targets):

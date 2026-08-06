@@ -1,38 +1,113 @@
-import { describe, expect, test } from "bun:test"
-import { Hono } from "hono"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 
-import { createOriginGuardMiddleware } from "~/lib/auth/origin-guard"
+import type { ModelsResponse } from "~/services/copilot/get-models"
+
+import { getConfig, writeConfig } from "~/lib/config/config"
+import { setModels, state } from "~/lib/runtime-state/state"
+import { publicApp } from "~/server"
 
 /**
- * CLI/plugin non-regression (spec §6.6, §11.1 blocker).
+ * CLI/plugin non-regression (ADR-0021 §6.6).
  *
  * Claude Code, opencode, and SDK clients are non-browser callers that send NO
- * `Origin` and hit `/v1/*` (+ the `api claude-code` key mint) with
- * `Authorization: Bearer <key>` — NOT `/settings/api`. The Origin gate must let a
- * missing-Origin request through. Skipped until the middleware body lands.
+ * `Origin` and hit `/v1/*` with `Authorization: Bearer <key>`. The Origin gate
+ * must let a missing-Origin request through, and the auth middleware behind it
+ * must accept the Bearer key.
  *
- * The OTHER half of the invariant — that the enforce-decoupled mandatory
- * `/settings/api` auth (§6.2) does NOT gate `/v1/*` — is asserted where that auth
- * lives (a mode of `createAuthMiddleware`, `request-auth.ts`), not here; there is
- * no separate settings-api gate to regress.
+ * This drives the real `publicApp` — the whole `applyCommonMiddleware` stack,
+ * the real route table. The version it replaced built its own Hono app and
+ * mounted only the Origin guard, so its `Bearer` header was inert and no change
+ * to `src/server.ts` or `request-auth.ts` could fail it, while ADR-0021 credited
+ * it with the end-to-end claim.
  */
 
-/** Mounts the Origin guard in front of a `/v1` route (a no-Origin surface). */
-function mountWithGuard() {
-  const app = new Hono()
-  // The guard is mounted globally in server.ts; a no-Origin request must pass
-  // straight through on non-guarded paths.
-  app.use("*", createOriginGuardMiddleware({ boundPort: () => 4141 }))
-  app.post("/v1/messages", (c) => c.json({ ok: true }))
-  return app
+/** Matches API_KEY_VALUE_PATTERN so `writeConfig` accepts it. */
+const KEY = "cli-regression-key-0021"
+
+/** Seeded through `setModels` so the catalog is both non-empty and freshly
+ *  stamped: the handler's on-demand prime and `staleRefreshMiddleware`'s
+ *  never-primed prime both decline, so no request here touches the network. */
+const SEEDED_MODEL_ID = "seeded-model-0021"
+
+const prior = {
+  config: getConfig(),
+  githubToken: state.githubToken,
+  models: state.models,
 }
 
-describe("no-Origin Bearer client on /v1/* still succeeds — unskip when implemented", () => {
-  test("a Bearer request with no Origin header reaches /v1/messages", async () => {
-    const res = await mountWithGuard().request("/v1/messages", {
-      method: "POST",
-      headers: { authorization: "Bearer sk-test" }, // NOTE: no `origin` header
+beforeAll(() => {
+  // Enforcement ON, or the credential is decorative: the middleware allows every
+  // request when `auth.enforce` is false and only uses the key for attribution.
+  writeConfig({
+    ...prior.config,
+    auth: { ...prior.config.auth, enforce: true, apiKeys: [KEY] },
+  })
+  // `/v1/*` also sits behind `requireGithubAuth`, which 401s when the proxy has
+  // no upstream token of its own.
+  state.githubToken = "gh-token-for-cli-regression"
+  setModels({
+    object: "list",
+    data: [{ id: SEEDED_MODEL_ID }],
+  } as unknown as ModelsResponse)
+})
+
+afterAll(() => {
+  writeConfig(prior.config)
+  state.githubToken = prior.githubToken
+  state.models = prior.models
+})
+
+describe("no-Origin Bearer client on /v1/* still succeeds (real server)", () => {
+  test("a Bearer request with no Origin reaches the real /v1/models handler", async () => {
+    const res = await publicApp.request("/v1/models", {
+      headers: { authorization: `Bearer ${KEY}` }, // NOTE: no `origin` header
     })
+
     expect(res.status).toBe(200)
+    // The seeded id proves the real handler ran, not that some middleware
+    // happened to 200. A 403 `csrf_error` here means the Origin guard grew to
+    // cover `/v1`; a 401 means auth rejected the Bearer key.
+    expect(await res.text()).toContain(SEEDED_MODEL_ID)
+  })
+
+  test("the same request without a credential 401s — auth is really in the stack", async () => {
+    // Guards the test above against vacuity. If `createAuthMiddleware` were
+    // unmounted, dropped from the `/v1` path, or its enforcement inverted, the
+    // 200 above would still pass while asserting nothing about credentials.
+    const res = await publicApp.request("/v1/models")
+
+    expect(res.status).toBe(401)
+    const body = (await res.json()) as { error?: { type?: string } }
+    expect(body.error?.type).toBe("authentication_error")
+  })
+
+  test("on a guarded path the Origin guard 403s ahead of auth, credential or not", async () => {
+    // Pins the mount ORDER that `server.ts` calls out: the guard runs before
+    // auth so a cross-origin browser request is refused regardless of any key.
+    // Swap the two `app.use` calls and this returns 401 instead.
+    const res = await publicApp.request("/_internal/shutdown", {
+      method: "POST",
+      headers: { origin: "https://evil.example" }, // no credential
+    })
+
+    expect(res.status).toBe(403)
+    const body = (await res.json()) as { error?: { type?: string } }
+    expect(body.error?.type).toBe("csrf_error")
+  })
+
+  test("a missing Origin passes the guard even on a guarded path", async () => {
+    // The §6.6 invariant at its widest: `Origin` is a Forbidden header, so its
+    // absence means a non-browser caller and the guard must not fire. Same path
+    // as above, no `Origin` — whatever refuses this, it is not the CSRF gate.
+    // Flip `isAllowedOrigin`'s `origin === null` arm and this returns 403.
+    const res = await publicApp.request("/_internal/shutdown", {
+      method: "POST",
+    })
+
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: { type?: string }
+    }
+    expect(body.error?.type).not.toBe("csrf_error")
+    expect(res.status).not.toBe(403)
   })
 })

@@ -20,7 +20,6 @@ import {
   mergeConfigWithDefaults,
 } from "~/lib/config/config"
 import { initProxyFromEnv } from "~/lib/http/proxy"
-import { ensureCliSymlink } from "~/lib/platform/cli-path"
 import { initOpencodeVersion } from "~/lib/platform/opencode"
 import { ensurePaths } from "~/lib/platform/paths"
 import { writePidfile } from "~/lib/platform/replace-running"
@@ -58,7 +57,7 @@ import { installShutdownHandlers } from "./shutdown"
 type ServeFn = typeof serve
 let serveImpl: ServeFn = serve
 
-/** Test-only: swap the srvx `serve` binder. Pass `null` to restore the real one. */
+/** Test-only: swap the srvx `serve` binder. Pass `null` to restore the real one. @internal */
 export function __setServeForTests(fn: ServeFn | null): void {
   serveImpl = fn ?? serve
 }
@@ -77,7 +76,7 @@ export function __setServeForTests(fn: ServeFn | null): void {
 type BootSecretsFn = typeof bootSecrets
 let bootSecretsImpl: BootSecretsFn = bootSecrets
 
-/** Test-only: swap the file-secrets boot step. Pass `null` to restore the real one. */
+/** Test-only: swap the file-secrets boot step. Pass `null` to restore the real one. @internal */
 export function __setBootSecretsForTests(fn: BootSecretsFn | null): void {
   bootSecretsImpl = fn ?? bootSecrets
 }
@@ -208,21 +207,6 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   const removedShim = removeLegacyShimIfPresent()
   if (removedShim) {
     consola.info(`Removed legacy Claude Code shim at ${removedShim}`)
-  }
-
-  // First-launch CLI shim (macOS .dmg only). The .app bundle's CLI
-  // lives at …/Maximal.app/Contents/MacOS/maximal, off every default
-  // PATH; symlink it into ~/.local/bin so `maximal` works in a
-  // terminal. Idempotent + best-effort — never blocks boot. No-op for
-  // Homebrew/dev launches (not an .app bundle). See lib/platform/cli-path.ts.
-  const link = ensureCliSymlink()
-  if (link.linked) {
-    consola.info(`Linked CLI onto PATH: ${link.symlinkPath} → ${link.target}`)
-    if (link.pathBlockAdded) {
-      consola.info(
-        "Added ~/.local/bin to PATH in ~/.zprofile (open a new terminal to pick it up).",
-      )
-    }
   }
 
   await cacheVSCodeVersion()

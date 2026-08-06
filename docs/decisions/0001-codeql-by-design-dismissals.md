@@ -120,7 +120,7 @@ duplicated across ~13 sites in `src/services/{copilot,github}/*` (plus a
 second, un-suppressed sink in `anthropic-proxy.ts`). CodeQL flagged each
 because each was a distinct file→HTTP sink.
 
-We collapsed them into a single mechanism, `src/lib/send-request.ts`
+We collapsed them into a single mechanism, `src/lib/http/send-request.ts`
 (`sendRequest` / `sendRequestJson` / `sendProviderRequest`), with three
 properties:
 
@@ -205,8 +205,10 @@ The header was **inert**. `/_internal/shutdown` has never been key-gated:
 
 1. It is listed in `loopbackOnlyPaths` in `server.ts`, and
    `createAuthMiddleware`'s `shouldBypass` returns `next()` for a loopback
-   caller on that path *before* any key is extracted. `alwaysEnforcePrefixes`
-   is evaluated only after `shouldBypass`, so it cannot re-arm the check.
+   caller on that path *before* any key is extracted. Nothing downstream of
+   `shouldBypass` can re-arm the check. (ADR-0021's `alwaysEnforcePrefixes`
+   option, which ran after `shouldBypass` and so could not have re-armed it
+   either, was deleted in v0.4.4 — see ADR-0021's 2026-08-06 amendment.)
 2. `routes/internal/route.ts` then re-checks the peer IP itself and returns
    `404` to a non-loopback caller **regardless of a valid key** — the property
    the endpoint exists to have.
