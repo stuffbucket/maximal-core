@@ -2,7 +2,9 @@
  * Unit coverage for the CLI-on-PATH plumbing: launch-source
  * classification and the macOS first-launch symlink shim. All tests
  * drive the pure-arg overloads (execPath / home / platform) so they
- * run identically on any host without touching the real `~/.local/bin`.
+ * run identically on any host without touching the real `~/.local/bin` —
+ * except the four cases that must actually create a symlink, which are
+ * win32-skipped for the reason documented on `itMacosShim` below.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
@@ -19,6 +21,30 @@ import {
 } from "~/lib/platform/cli-path"
 
 const APP_EXEC = "/Applications/Maximal.app/Contents/MacOS/maximal"
+
+/**
+ * The four cases that create and read back a symlink are skipped on win32, and
+ * the skip is the honest answer rather than a dodge:
+ *
+ * `ensureCliSymlink` is macOS-only by construction — on any other platform it
+ * returns `skipped: "not-macos"` BEFORE touching the filesystem, which is what
+ * "skips non-macOS" (unskipped, and the case that matters on Windows) asserts.
+ * The only way to reach the symlink body on a Windows host is to force
+ * `platform: "darwin"`, and there the assertions become unsatisfiable rather
+ * than merely differently-shaped: Win32 rewrites a link target on the way in
+ * (`/Applications/…` reads back as `D:\Applications\…`), so the
+ * `readlink() === target` staleness comparison the shim depends on can never
+ * hold, and every call reports `linked: true`. Rewriting the assertions to
+ * accept that would assert a Windows artifact of code that never runs on
+ * Windows. Creating the link at all also needs Developer Mode or an elevated
+ * process, which a contributor's machine may not have even though the CI
+ * runner does.
+ *
+ * WHAT THIS LEAVES UNCOVERED ON WINDOWS: nothing that ships there. The
+ * `platform !== "darwin"` early return is the whole of this module's Windows
+ * behaviour and it is asserted above, unskipped.
+ */
+const itMacosShim = it.skipIf(process.platform === "win32")
 
 let dir: string
 
@@ -93,37 +119,43 @@ describe("ensureCliSymlink", () => {
     )
   })
 
-  it("creates the bin dir, symlink, and PATH block on a fresh machine", () => {
-    const r = ensureCliSymlink({
-      execPath: APP_EXEC,
-      home: dir,
-      platform: "darwin",
-    })
-    expect(r.linked).toBe(true)
-    expect(r.binDirCreated).toBe(true)
-    expect(r.pathBlockAdded).toBe(true)
-    const link = path.join(dir, ".local", "bin", "maximal")
-    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true)
-    expect(fs.readlinkSync(link)).toBe(APP_EXEC)
-    const zprofile = fs.readFileSync(path.join(dir, ".zprofile"), "utf8")
-    expect(zprofile).toContain(FIRST_LAUNCH_PATH_MARKER_START)
-    expect(zprofile).toContain('export PATH="$HOME/.local/bin:$PATH"')
-  })
+  itMacosShim(
+    "creates the bin dir, symlink, and PATH block on a fresh machine",
+    () => {
+      const r = ensureCliSymlink({
+        execPath: APP_EXEC,
+        home: dir,
+        platform: "darwin",
+      })
+      expect(r.linked).toBe(true)
+      expect(r.binDirCreated).toBe(true)
+      expect(r.pathBlockAdded).toBe(true)
+      const link = path.join(dir, ".local", "bin", "maximal")
+      expect(fs.lstatSync(link).isSymbolicLink()).toBe(true)
+      expect(fs.readlinkSync(link)).toBe(APP_EXEC)
+      const zprofile = fs.readFileSync(path.join(dir, ".zprofile"), "utf8")
+      expect(zprofile).toContain(FIRST_LAUNCH_PATH_MARKER_START)
+      expect(zprofile).toContain('export PATH="$HOME/.local/bin:$PATH"')
+    },
+  )
 
-  it("does NOT touch shell profiles when ~/.local/bin already exists", () => {
-    fs.mkdirSync(path.join(dir, ".local", "bin"), { recursive: true })
-    const r = ensureCliSymlink({
-      execPath: APP_EXEC,
-      home: dir,
-      platform: "darwin",
-    })
-    expect(r.linked).toBe(true)
-    expect(r.binDirCreated).toBe(false)
-    expect(r.pathBlockAdded).toBe(false)
-    expect(fs.existsSync(path.join(dir, ".zprofile"))).toBe(false)
-  })
+  itMacosShim(
+    "does NOT touch shell profiles when ~/.local/bin already exists",
+    () => {
+      fs.mkdirSync(path.join(dir, ".local", "bin"), { recursive: true })
+      const r = ensureCliSymlink({
+        execPath: APP_EXEC,
+        home: dir,
+        platform: "darwin",
+      })
+      expect(r.linked).toBe(true)
+      expect(r.binDirCreated).toBe(false)
+      expect(r.pathBlockAdded).toBe(false)
+      expect(fs.existsSync(path.join(dir, ".zprofile"))).toBe(false)
+    },
+  )
 
-  it("is idempotent — a second call relinks nothing", () => {
+  itMacosShim("is idempotent — a second call relinks nothing", () => {
     const opts = { execPath: APP_EXEC, home: dir, platform: "darwin" as const }
     ensureCliSymlink(opts)
     const second = ensureCliSymlink(opts)
@@ -131,7 +163,7 @@ describe("ensureCliSymlink", () => {
     expect(second.binDirCreated).toBe(false)
   })
 
-  it("repoints a stale symlink to the new bundle path", () => {
+  itMacosShim("repoints a stale symlink to the new bundle path", () => {
     const bin = path.join(dir, ".local", "bin")
     fs.mkdirSync(bin, { recursive: true })
     const link = path.join(bin, "maximal")
