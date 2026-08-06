@@ -42,12 +42,14 @@ import {
 // resolved bindings). Production callers see defaultCreateResponses.
 let createResponses: typeof defaultCreateResponses = defaultCreateResponses
 
+/** @internal test seam */
 export function __setCreateResponsesForTests(
   impl: typeof defaultCreateResponses,
 ): void {
   createResponses = impl
 }
 
+/** @internal test seam */
 export function __resetCreateResponsesForTests(): void {
   createResponses = defaultCreateResponses
 }

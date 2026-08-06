@@ -72,7 +72,8 @@ export function getControlHub(): ControlHub<ControlSnapshot> {
 }
 
 /** Tear down producer subscriptions + the flush timer. For tests and a clean
- *  sidecar restart. */
+ *  sidecar restart.
+ *  @internal */
 export function stopControlHub(): void {
   for (const stop of teardown) stop()
   teardown = []

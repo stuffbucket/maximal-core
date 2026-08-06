@@ -48,27 +48,6 @@ export const getCopilotToken = async () => {
   return (await response.json()) as GetCopilotTokenResponse
 }
 
-/**
- * Back-compat re-export. Older test files import `parseCopilotAuthFailure`
- * from this module; the implementation moved to `~/lib/errors/copilot-error-parser`
- * as `parseCopilotErrorBody`. New callers should import directly from there.
- *
- * Preserves the auth-specific default message ("Copilot rejected this
- * token.") that the shared parser doesn't use — the shared parser's
- * default is generic ("Copilot returned an error.") so the same module
- * can serve non-auth completion-endpoint failures.
- */
-export function parseCopilotAuthFailure(body: string): {
-  message: string
-  remediationUrl: string | null
-} {
-  const parsed = parseCopilotErrorBody(body)
-  if (parsed.message === "Copilot returned an error.") {
-    return { ...parsed, message: "Copilot rejected this token." }
-  }
-  return parsed
-}
-
 // Trimmed for the sake of simplicity
 interface GetCopilotTokenResponse {
   expires_at: number

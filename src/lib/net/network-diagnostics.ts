@@ -345,8 +345,8 @@ export const NETWORK_DIAGNOSIS_KIND = {
 
 /**
  * The verdict discriminant. Callers must interpret it through the exported
- * `NETWORK_DIAGNOSIS_KIND` constants or the `is*` predicate helpers below —
- * never by comparing against a raw string literal, which rots on rename.
+ * `NETWORK_DIAGNOSIS_KIND` constants — never by comparing against a raw string
+ * literal, which rots on rename.
  */
 export type NetworkDiagnosisKind =
   (typeof NETWORK_DIAGNOSIS_KIND)[keyof typeof NETWORK_DIAGNOSIS_KIND]
@@ -399,18 +399,6 @@ export function classifyNetworkFailure(
 }
 
 /**
- * Typed predicates so callers interpret a verdict without hard-coding a string
- * comparison (`diag.kind === "offline"`), which rots on rename. Prefer these,
- * or an exhaustive `switch` over `NETWORK_DIAGNOSIS_KIND`, at every call site.
- */
-export const isOffline = (d: NetworkDiagnosis): boolean =>
-  d.kind === NETWORK_DIAGNOSIS_KIND.offline
-export const isDnsFailure = (d: NetworkDiagnosis): boolean =>
-  d.kind === NETWORK_DIAGNOSIS_KIND.dnsFailure
-export const isScopeUnreachable = (d: NetworkDiagnosis): boolean =>
-  d.kind === NETWORK_DIAGNOSIS_KIND.scopeUnreachable
-
-/**
  * Render a diagnosis as a single developer-log line. This is dev-facing log
  * content (no translation), so inlining English here is fine — distinct from
  * the user-facing message, which the UI must build via i18n.
@@ -445,13 +433,8 @@ const setLastDiagnosis = (value: NetworkDiagnosis, at: number): void => {
   lastDiagnosis = { at, value }
 }
 
-/** The most recent diagnosis, if any — for a future UI banner to read without
- *  re-probing (see follow-up doc). */
-export function getLastNetworkDiagnosis(): NetworkDiagnosis | null {
-  return lastDiagnosis?.value ?? null
-}
-
-/** Reset cached state. Test-only. */
+/** Reset cached state. Test-only.
+ *  @internal */
 export function __resetNetworkDiagnosisCacheForTests(): void {
   lastDiagnosis = null
 }

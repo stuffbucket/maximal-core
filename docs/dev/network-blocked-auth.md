@@ -41,8 +41,7 @@ Historically this was invisible:
     litmus. Diagnosing a new service = add a `NETWORK_SCOPE` entry + pass its
     URL; no library change.
   - Callers interpret the verdict via the exported `NETWORK_DIAGNOSIS_KIND`
-    constants or the `isOffline` / `isDnsFailure` / `isScopeUnreachable`
-    predicates — never a raw `kind === "offline"` string compare (rots on
+    constants — never a raw `kind === "offline"` string compare (rots on
     rename). All magic values (IPs, port, families, scope) are named constants.
 - `token.ts` refresh loop + first-mint path log the typed classification via
   `formatDiagnosisForLog` (a dev-log string — no i18n; survives the file sink's
@@ -54,8 +53,6 @@ Historically this was invisible:
   content keys); transport errors are logged as safe strings instead.
 - `auth-controller.ts` `runDegrade` now tees a line to `auth-*.log` when an
   account is flagged `needsReauth`.
-- The latest typed verdict is exposed via `getLastNetworkDiagnosis()` for a
-  future UI banner to read (and translate) without re-probing.
 
 ## Testing
 

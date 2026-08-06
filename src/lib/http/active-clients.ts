@@ -78,7 +78,7 @@ export function listActiveClients(maxAgeSeconds = 60): Array<ActiveClient> {
   return out
 }
 
-/** Test-only: wipe the tracker between cases. */
+/** Test-only: wipe the tracker between cases. @internal */
 export function __resetActiveClientsForTests(): void {
   clients.clear()
 }

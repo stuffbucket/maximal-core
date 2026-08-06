@@ -25,6 +25,7 @@ export const productApiRoutes = new OpenAPIHono()
  * tests/setup-status-openapi.test.ts asserts `doc.paths` === this set, so
  * mounting an endpoint without listing it here (or vice versa) reds the
  * build. This keeps the scope closed-world per ADR-0018.
+ * @internal
  */
 export const PRODUCT_ENDPOINTS = ["/setup-status"] as const
 

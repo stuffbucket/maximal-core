@@ -58,7 +58,7 @@ import { installShutdownHandlers } from "./shutdown"
 type ServeFn = typeof serve
 let serveImpl: ServeFn = serve
 
-/** Test-only: swap the srvx `serve` binder. Pass `null` to restore the real one. */
+/** Test-only: swap the srvx `serve` binder. Pass `null` to restore the real one. @internal */
 export function __setServeForTests(fn: ServeFn | null): void {
   serveImpl = fn ?? serve
 }
@@ -77,7 +77,7 @@ export function __setServeForTests(fn: ServeFn | null): void {
 type BootSecretsFn = typeof bootSecrets
 let bootSecretsImpl: BootSecretsFn = bootSecrets
 
-/** Test-only: swap the file-secrets boot step. Pass `null` to restore the real one. */
+/** Test-only: swap the file-secrets boot step. Pass `null` to restore the real one. @internal */
 export function __setBootSecretsForTests(fn: BootSecretsFn | null): void {
   bootSecretsImpl = fn ?? bootSecrets
 }

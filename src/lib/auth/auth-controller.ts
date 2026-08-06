@@ -103,6 +103,7 @@ export interface AuthControllerTestDeps {
   renewGithubToken?: () => Promise<boolean>
 }
 
+/** @internal test seam */
 export function __setAuthControllerDepsForTests(
   overrides: AuthControllerTestDeps,
 ): void {
@@ -974,7 +975,8 @@ function stopAuthController(): void {
 registerProcessCleanup(stopAuthController)
 
 /** Test-only reset. NOT exported from a barrel — keep import paths
- *  long-tail so production code doesn't reach for it. */
+ *  long-tail so production code doesn't reach for it.
+ *  @internal */
 export function __resetAuthControllerForTests(): void {
   const flow = currentFlow()
   if (flow) {

@@ -84,6 +84,7 @@ let fetchImpl: FetchLike = fetch
 let nowMs: () => number = Date.now
 let versionImpl: string = BUILD_VERSION
 
+/** @internal test seam */
 export function __setUpdateCheckDepsForTests(o: {
   fetch?: FetchLike
   now?: () => number
@@ -94,6 +95,7 @@ export function __setUpdateCheckDepsForTests(o: {
   if (o.currentVersion) versionImpl = o.currentVersion
 }
 
+/** @internal test seam */
 export function __resetUpdateCheckDepsForTests(): void {
   fetchImpl = fetch
   nowMs = Date.now
