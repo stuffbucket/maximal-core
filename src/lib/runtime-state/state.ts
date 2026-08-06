@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto"
 
-import type { AccountType, CopilotHost } from "~/lib/auth/auth-types"
+import type {
+  AccountType,
+  CopilotHost,
+  CopilotTokenHealth,
+} from "~/lib/auth/auth-types"
 import type {
   NetworkDiagnosisKind,
   NetworkScope,
 } from "~/lib/net/network-diagnostics"
 import type { ModelsResponse } from "~/services/copilot/get-models"
 
+import { CREDENTIAL_HEALTH } from "~/lib/auth/auth-types"
 import { emitAuthChanged } from "~/lib/config/settings-events"
 import { SingletonCache } from "~/lib/runtime-state/cache"
 
@@ -107,6 +112,37 @@ export interface State {
     kind: NetworkDiagnosisKind
     scope: NetworkScope | null
   }
+
+  /**
+   * Epoch ms at which the Copilot bearer currently in `copilotToken` stops
+   * being accepted upstream, or undefined when we don't have one (no token
+   * yet, or a `gho_` token used directly as the bearer — those don't expire).
+   *
+   * The mint response has always carried `expires_at`; it was parsed and
+   * discarded, which is why the proxy could not tell a live bearer from a dead
+   * one and kept sending a known-expired credential upstream (#9). Written only
+   * by `setCopilotToken`, so it cannot drift from the token it describes.
+   */
+  copilotTokenExpiresAtMs?: number
+}
+
+/**
+ * Health of the background Copilot-token refresh loop. The loop retries a
+ * non-auth-fatal failure indefinitely, which is the correct behaviour (the
+ * failure is usually a blip and self-heals) but was completely unobservable:
+ * a refresh that had been failing for minutes looked exactly like one that had
+ * never failed. These counters are the observable, read by `/control/diagnostics`
+ * and by {@link copilotTokenHealth}.
+ */
+export interface CopilotRefreshHealth {
+  /** Epoch ms of the last successful mint/refresh, or null if none this run. */
+  lastSuccessAtMs: number | null
+  /** Epoch ms of the last refresh failure, or null if none this run. */
+  lastFailureAtMs: number | null
+  /** Short, already-safe description of that failure (never a raw body). */
+  lastFailureReason: string | null
+  /** Refresh failures since the last success. 0 whenever the loop is healthy. */
+  consecutiveFailures: number
 }
 
 export const state: State = {
@@ -139,7 +175,14 @@ export function setGithubToken(token: string): void {
   state.githubToken = token
 }
 
-export function setCopilotToken(token: string): void {
+export function setCopilotToken(token: string, expiresAtMs?: number): void {
+  // Expiry and the health mirror are updated on EVERY call, before the
+  // same-token short-circuit below: a refresh that returns the identical bearer
+  // string still proves the refresh path works and still carries a new expiry.
+  state.copilotTokenExpiresAtMs = expiresAtMs
+  refreshHealth.lastSuccessAtMs = Date.now()
+  refreshHealth.consecutiveFailures = 0
+
   // Skip the metric refresh when the upstream returned the same token —
   // otherwise the refresh counter inflates with no-op rotations.
   if (state.copilotToken === token) return
@@ -174,8 +217,92 @@ export function clearTokenTrio(
   },
 ): void {
   if (fields.github) state.githubToken = undefined
-  if (fields.copilot) state.copilotToken = undefined
+  if (fields.copilot) {
+    state.copilotToken = undefined
+    state.copilotTokenExpiresAtMs = undefined
+    resetCopilotRefreshHealth()
+  }
   if (fields.userName) state.userName = undefined
+}
+
+// ── Copilot refresh health ──────────────────────────────────────────────────
+// Owned here for the same reason the token trio is: `copilotTokenExpiresAtMs`
+// and the failure counters only mean anything relative to the bearer in
+// `state.copilotToken`, and a second owner could let them describe a token that
+// is no longer live.
+
+const refreshHealth: CopilotRefreshHealth = {
+  lastSuccessAtMs: null,
+  lastFailureAtMs: null,
+  lastFailureReason: null,
+  consecutiveFailures: 0,
+}
+
+/** Read-only snapshot of the refresh-loop health for the diagnostics surface. */
+export function copilotRefreshHealth(): Readonly<CopilotRefreshHealth> {
+  return { ...refreshHealth }
+}
+
+/**
+ * Record a failed Copilot-token refresh. `reason` must already be safe to log
+ * (a formatted network diagnosis or an error message — never a raw body).
+ * Success is recorded by `setCopilotToken`, so the counter cannot be reset
+ * without a token actually having been minted.
+ */
+export function noteCopilotRefreshFailure(
+  reason: string,
+  nowMs: number = Date.now(),
+): void {
+  refreshHealth.lastFailureAtMs = nowMs
+  refreshHealth.lastFailureReason = reason
+  refreshHealth.consecutiveFailures++
+}
+
+/** Reset the refresh-health counters. Called when the Copilot token is cleared
+ *  (sign-out, degrade, account switch) so the counters never outlive the bearer
+ *  they describe. */
+function resetCopilotRefreshHealth(): void {
+  refreshHealth.lastSuccessAtMs = null
+  refreshHealth.lastFailureAtMs = null
+  refreshHealth.lastFailureReason = null
+  refreshHealth.consecutiveFailures = 0
+}
+
+/**
+ * The health of the Copilot bearer we currently hold, in #15's `AccountHealth`
+ * vocabulary (see `CREDENTIAL_HEALTH`).
+ *
+ * `expired` is the verdict that stops requests, and it is deliberately a
+ * CONJUNCTION — the bearer is past the expiry upstream itself gave us AND the
+ * refresh that should have replaced it is failing. Both halves are load-bearing,
+ * and together they are what keeps this from failing closed on a recoverable
+ * blip:
+ *
+ *  - Without the expiry clause, any refresh hiccup would stop the proxy even
+ *    though the current bearer is valid for minutes yet — that is `refreshing`,
+ *    and requests must keep flowing through it.
+ *  - Without the failure clause, a machine waking from sleep would trip this in
+ *    the window before the loop's first post-wake refresh lands — and that
+ *    refresh normally succeeds. A healthy loop refreshes ~60s BEFORE expiry
+ *    (EARLY_REFRESH_BUFFER_MS), so on the happy path `expired` is unreachable.
+ *
+ * It also makes the verdict immune to a skewed local clock in the direction
+ * that matters: a clock far enough ahead to fake an expiry would still need a
+ * genuinely failing refresh to have any effect, and `resolveCopilotExpiryMs`
+ * already rejects an implausible absolute expiry.
+ */
+export function copilotTokenHealth(
+  nowMs: number = Date.now(),
+): CopilotTokenHealth {
+  if (state.copilotToken === undefined) return CREDENTIAL_HEALTH.unknown
+  if (refreshHealth.consecutiveFailures === 0) return CREDENTIAL_HEALTH.healthy
+  const expiresAtMs = state.copilotTokenExpiresAtMs
+  // A bearer with no expiry (a `gho_` token used directly) has no refresh loop
+  // to fail, so there is nothing to time out against.
+  if (expiresAtMs === undefined) return CREDENTIAL_HEALTH.unknown
+  return nowMs >= expiresAtMs ?
+      CREDENTIAL_HEALTH.expired
+    : CREDENTIAL_HEALTH.refreshing
 }
 
 // ── Shared presence accessors ────────────────────────────────────────────────
