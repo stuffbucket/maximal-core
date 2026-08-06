@@ -7,7 +7,10 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 
 import { type AnthropicStreamState } from "~/lib/models/anthropic-types"
-import { translateToAnthropic } from "~/routes/messages/non-stream-translation"
+import {
+  THINKING_TEXT,
+  translateToAnthropic,
+} from "~/routes/messages/non-stream-translation"
 import { translateChunkToAnthropicEvents } from "~/routes/messages/stream-translation"
 
 const anthropicUsageSchema = z.object({
@@ -247,6 +250,256 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation", () => {
         raw_arguments: '{"location": "Boston',
       },
     )
+  })
+})
+
+describe("OpenAI to Anthropic Non-Streaming Usage Accounting", () => {
+  test("cached prompt tokens are subtracted from input_tokens and reported separately", () => {
+    // No fixture anywhere carried `prompt_tokens_details`, so
+    // `prompt_tokens - cached_tokens` was arithmetic over a constant 0 — the
+    // subtraction could be flipped to an addition and the spread branch
+    // deleted without a single failure. Anthropic's contract is that
+    // `input_tokens` EXCLUDES the cache read, so getting the sign wrong
+    // double-counts every cached token in the usage the client bills against.
+    const response: ChatCompletionResponse = {
+      id: "chatcmpl-cache",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "gpt-4o-2024-05-13",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "cached" },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+      ],
+      usage: {
+        prompt_tokens: 1000,
+        completion_tokens: 12,
+        total_tokens: 1012,
+        prompt_tokens_details: { cached_tokens: 400 },
+      },
+    }
+
+    const anthropicResponse = translateToAnthropic(response)
+    expect(anthropicResponse.usage.input_tokens).toBe(600)
+    expect(anthropicResponse.usage.output_tokens).toBe(12)
+    expect(anthropicResponse.usage.cache_read_input_tokens).toBe(400)
+  })
+
+  test("cache_read_input_tokens is omitted when upstream reports no cache detail", () => {
+    // The other half of the conditional spread: present-but-zero must still be
+    // reported, absent must stay absent.
+    const usage = { prompt_tokens: 9, completion_tokens: 1, total_tokens: 10 }
+    const base: ChatCompletionResponse = {
+      id: "chatcmpl-nocache",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "gpt-4o-2024-05-13",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "hi" },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+      ],
+      usage,
+    }
+    expect(translateToAnthropic(base).usage).not.toHaveProperty(
+      "cache_read_input_tokens",
+    )
+    expect(
+      translateToAnthropic({
+        ...base,
+        usage: { ...usage, prompt_tokens_details: { cached_tokens: 0 } },
+      }).usage.cache_read_input_tokens,
+    ).toBe(0)
+  })
+})
+
+describe("OpenAI to Anthropic Non-Streaming Stop-Reason Merge", () => {
+  test("a tool_calls finish_reason on a later choice wins over an earlier stop", () => {
+    // Every other fixture has exactly one choice, so the cross-choice
+    // stop-reason merge on the `for` loop was unobservable: the `||`, both
+    // equality checks, and the whole `if` body survived. Two choices is the
+    // only shape that can tell them apart.
+    const response: ChatCompletionResponse = {
+      id: "chatcmpl-multi",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "gpt-4o-2024-05-13",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "text first" },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+        {
+          index: 1,
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_second",
+                type: "function",
+                function: { name: "get_current_weather", arguments: "{}" },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+          logprobs: null,
+        },
+      ],
+      usage: { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 },
+    }
+    const anthropicResponse = translateToAnthropic(response)
+    expect(anthropicResponse.stop_reason).toBe("tool_use")
+    // …and both choices' blocks are merged, in order.
+    expect(anthropicResponse.content.map((b) => b.type)).toEqual([
+      "text",
+      "tool_use",
+    ])
+  })
+
+  test("a length finish_reason is not overwritten by a later stop", () => {
+    // The `stopReason === "stop"` half of the disjunction: seeded with
+    // "length", a later "stop" must NOT win. Turning the check into `true`
+    // or dropping it changes the answer here.
+    const response: ChatCompletionResponse = {
+      id: "chatcmpl-length-first",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "gpt-4o-2024-05-13",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "cut off" },
+          finish_reason: "length",
+          logprobs: null,
+        },
+        {
+          index: 1,
+          message: { role: "assistant", content: "complete" },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+      ],
+      usage: { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 },
+    }
+    expect(translateToAnthropic(response).stop_reason).toBe("max_tokens")
+  })
+
+  test("a later non-stop finish_reason replaces a seeded stop", () => {
+    // The one shape that separates `||` from `&&` in the merge condition:
+    // stopReason is currently "stop" and the incoming choice is neither "stop"
+    // nor "tool_calls". `||` lets the later "length" win (a truncated choice is
+    // the more important signal); `&&` would keep "stop" and report end_turn
+    // for a response that was actually cut off.
+    const response: ChatCompletionResponse = {
+      id: "chatcmpl-stop-then-length",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "gpt-4o-2024-05-13",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "complete" },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+        {
+          index: 1,
+          message: { role: "assistant", content: "cut off" },
+          finish_reason: "length",
+          logprobs: null,
+        },
+      ],
+      usage: { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 },
+    }
+    expect(translateToAnthropic(response).stop_reason).toBe("max_tokens")
+  })
+})
+
+describe("OpenAI to Anthropic Non-Streaming Thinking Blocks", () => {
+  test("reasoning_text and reasoning_opaque become a thinking block", () => {
+    // getAnthropicThinkBlocks had no non-streaming fixture at all: both
+    // branches, the `|| ""` signature default, and the THINKING_TEXT
+    // placeholder were unobservable here.
+    const withText = translateToAnthropic({
+      id: "chatcmpl-think",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "gpt-4o-2024-05-13",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "answer",
+            reasoning_text: "step one, step two",
+            reasoning_opaque: "sig-abc",
+          },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    })
+    expect(withText.content[0]).toEqual({
+      type: "thinking",
+      thinking: "step one, step two",
+      signature: "sig-abc",
+    })
+
+    // Opaque-only: the placeholder text exists because opencode drops thinking
+    // blocks whose text is empty, so an empty string here is a real regression.
+    const opaqueOnly = translateToAnthropic({
+      id: "chatcmpl-think-opaque",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "gpt-4o-2024-05-13",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "answer",
+            reasoning_opaque: "sig-only",
+          },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    })
+    expect(opaqueOnly.content[0]).toEqual({
+      type: "thinking",
+      thinking: THINKING_TEXT,
+      signature: "sig-only",
+    })
+    expect(THINKING_TEXT.length).toBeGreaterThan(0)
+
+    // Neither present → no thinking block at all.
+    const neither = translateToAnthropic({
+      id: "chatcmpl-no-think",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "gpt-4o-2024-05-13",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "answer" },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    })
+    expect(neither.content.some((b) => b.type === "thinking")).toBe(false)
   })
 })
 

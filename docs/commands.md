@@ -59,7 +59,14 @@ bun run e2e:binary   # the same four harnesses against a compiled binary
                      # instead of compiling a throwaway one
 
 # Mutation testing (manual only — not wired into check:deep)
-bun run mutate       # Stryker; configure module under test in stryker.conf.json
+bun run mutate       # Stryker over the module(s) in stryker.conf.json's `mutate`
+bunx stryker run --mutate 'src/routes/messages/utils.ts' --concurrency 10
+                     # narrow the SOURCE scope per run instead of editing the file.
+                     # Budget ~2-2.5s per mutant; a 400-line module is ~20 min.
+                     # Do NOT narrow the test command — see testing-strategy.md §6.
+bun run test:mutation  # the suite Stryker runs: everything except the six
+                     # port-binding/process-spawning files, which false-kill
+                     # mutants under Stryker's concurrent workers.
 
 # Release tooling
 bun run release:check pr <n>              # scripts/ops/release-gates.ts — one PR's
