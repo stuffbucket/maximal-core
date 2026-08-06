@@ -45,8 +45,18 @@ import packageJson from "../package.json" with { type: "json" }
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url))
 
+/**
+ * The first line, without its line terminator.
+ *
+ * `split(/\r?\n/u)`, not `split("\n")`. There is no `.gitattributes` here, so a
+ * Windows checkout can carry CRLF, and splitting on `\n` alone leaves the `\r`
+ * on the end of every line — which makes the shebang compare unequal to itself
+ * and fails this suite on `ci.yml`'s `windows` job while passing everywhere
+ * else. `scripts/dev/harness/sidecar.ts`'s `lineSplitter` already carries this
+ * warning; this is the same trap, in the same repo, one file over.
+ */
 const readFirstLine = (file: string): string =>
-  fs.readFileSync(`${REPO_ROOT}${file}`, "utf8").split("\n")[0] ?? ""
+  fs.readFileSync(`${REPO_ROOT}${file}`, "utf8").split(/\r?\n/u)[0] ?? ""
 
 /**
  * The `--target=<t>` `bun run build` bundles with. `undefined` when the build
