@@ -17,6 +17,30 @@ on:
   # strict-update policy (branch must be up to date before merge) stands in for
   # it — so this trigger is inert, and kept for the day that changes.
   merge_group:
+  # MANUAL DISPATCH, and it is not a convenience.
+  #
+  # `test` and `windows` are REQUIRED status checks, and the ONLY things that
+  # created them were the `push` and `pull_request` events above. When GitHub
+  # stops turning those events into workflow runs, every PR in the repo is
+  # unmergeable with no lever at all — not a re-run (`gh run rerun` re-runs an
+  # existing run at its ORIGINAL head SHA, so it cannot produce checks for a
+  # SHA that never had a run), not a re-push (same throttled path), nothing.
+  #
+  # That is not hypothetical. On 2026-08-06 Actions ran a multi-hour incident in
+  # which runners recovered but event->run dispatch stayed throttled: eight open
+  # PRs sat with ZERO checks, and `gh workflow run ci.yml` answered
+  # `HTTP 422: Workflow does not have 'workflow_dispatch' trigger`.
+  #
+  # A dispatch is an API call rather than an event, so it does not travel the
+  # path that failed. `release-tag-check.yml` gained the same escape hatch for
+  # the same reason and in the same week.
+  #
+  # It takes no inputs on purpose: the ref IS the input (`--ref <branch>`), and
+  # a dispatched run reports its check runs against that ref's head commit —
+  # which is what a required status check is matched on. So dispatching a PR's
+  # head branch satisfies that PR's contexts exactly as a push-triggered run
+  # would.
+  workflow_dispatch:
 
 jobs:
   test:
