@@ -23,9 +23,12 @@ If maximal is open and your tool still fails, maximal is probably reaching Copil
 
 ## My tool suddenly can't authenticate
 
-The key that maximal generates automatically **changes every time the app restarts**. Any tool that saved the old key will start failing after a restart.
+The auto-generated "Default" key is minted once and persisted, so a restart on
+its own does not change it. What *does* invalidate a saved key is the key
+entry going away or being disabled — signing out and back in on a fresh config,
+deleting the entry in **API clients**, or a config reset.
 
-The fix: create a **stable, named key** in the **API clients** section and use that for anything long-running. Named keys don't change. See [API keys](./usage-and-settings.md) for the steps.
+The fix: create a **stable, named key** in the **API clients** section and use that for anything long-running. A named key is yours to revoke, and nothing else rewrites it. See [API keys](./usage-and-settings.md) for the steps.
 
 ## A tool won't connect at all
 
@@ -62,7 +65,7 @@ Yes. maximal keeps a multi-account registry — add several accounts and quick-s
 It's a security note to be aware of: maximal accepts **all** local requests without a client key until enforcement is turned on (`auth.enforce`). Creating a key in **API clients** is not enough on its own — enforcement is the switch. See [API keys](./usage-and-settings.md).
 
 **Which platforms do you support?**
-macOS on Apple Silicon is the primary target, and the Homebrew formula is Apple-Silicon-only. Windows is coming soon. On other platforms you can run from source or a release binary. Details in [Install maximal](./install.md).
+macOS on Apple Silicon and Windows x64 both ship installers; the Homebrew formula is Apple-Silicon-only. There is no Linux build — run from source there. Details in [Install maximal](./install.md).
 
 **Which models can I use?**
 Whatever your Copilot plan includes. The **Models** section lists them live, grouped by kind, with a refresh button. See [Models](./usage-and-settings.md).

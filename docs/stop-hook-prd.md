@@ -40,7 +40,7 @@ Three stages, parallel, 90s per-stage timeout:
 | -------- | ------------------------ | ------------ | --------------------------- |
 | `test`   | `bun test`               | yes          | full suite                  |
 | `knip`   | `bun run knip`           | yes          | repo-wide unused-export scan |
-| `design` | `bun run design:check`   | no           | informational only          |
+| `design` | a `design:check` script | no           | pre-split React-shell repo only; no such script in `maximal-core`'s `package.json` |
 
 Quoting the hook's own header:
 
@@ -121,7 +121,8 @@ output + assistant explanation.
 
 ### 6. The hook can't see filesystem / git state mutations
 
-Sequence observed in this repo:
+Sequence observed in the pre-split repo, which still carried the React
+shell (`maximal-core` is headless and has none of these files):
 
 1. Backend subagent ran `git stash pop` to "verify pre-existing test
    state."
@@ -142,14 +143,17 @@ What `Stop` + `PostToolUse` *do not* see:
 
 - Branch switches, stash ops, uncommitted reverts, untracked-file
   deletes (observation 6 above).
-- Sidecar / proxy process state — a crashed `:4142` sidecar between
-  turns leaves no signal.
-- Config / secret rotation — `~/.local/share/copilot-api/config.json`
+- Sidecar / proxy process state — a crashed sidecar between turns
+  leaves no signal (the public proxy defaults to `:4141`; the control
+  plane defaults to an ephemeral port reported in the boot banner).
+- Config / secret rotation — `~/.local/share/maximal/config.json`
   could be edited externally with the assistant unaware.
 - External long-runners — a `bun run mutate` started earlier finishes
   in the background; nothing surfaces the result.
 - Port binding, network reachability, OS notification permissions,
-  Tauri dev-server liveness.
+  and — in the shell repo that ships one — Tauri dev-server liveness.
+  `maximal-core` has no Tauri, so that last one is inherited from the
+  pre-split setup rather than observed here.
 
 ### 8. Hook can't distinguish "novel" from "ambient" failure
 

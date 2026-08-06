@@ -9,7 +9,7 @@ Here's the whole idea in one line: you point your tool at maximal, and maximal s
 You need a GitHub Copilot plan and a tool you'd like to use it with.
 
 - A GitHub account with an active **Copilot subscription** (personal or Enterprise).
-- macOS on Apple Silicon for the desktop app, or any platform if you run from source. See [Install maximal](./install.md).
+- macOS on Apple Silicon or Windows x64 for the desktop app, or any platform if you run from source. See [Install maximal](./install.md).
 - One of the supported tools — Claude Code, Claude Desktop (Cowork mode), Codex, opencode, or any Anthropic- or OpenAI-SDK client.
 
 ## The short version
@@ -94,7 +94,7 @@ Then run Claude Code as usual. (In most cases you can skip all of this and just 
 
 ### Keys and security
 
-- maximal can **mint named API keys** for your tools in the API clients section. Do this for anything long-running — the auto-generated key rotates every time maximal restarts.
+- maximal can **mint named API keys** for your tools in the API clients section. The auto-generated "Default" key is created once and then persisted to your config — it does **not** change on restart — but a named key is still the better choice for anything long-running, because it survives a sign-out and you can revoke it on its own.
 - Minting a key does **not** by itself make maximal require one. Key checking is
   gated on the separate enforcement setting (`auth.enforce`); while that is off,
   every local request is accepted whether or not keys exist. Mint a key *and*

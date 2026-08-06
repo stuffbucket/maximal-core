@@ -192,12 +192,14 @@ See also: `docs/codegen-feedback-loops-practices.md` → Dispatch and review loo
 
 ## Testing gotchas
 
-The rule is in [`AGENTS.md`](../AGENTS.md); the mechanism, the four incidents
+The rule is in [`AGENTS.md`](../AGENTS.md); the mechanism, the five incidents
 behind it, and the mutant-disposition procedure are in
 [`dev/testing-strategy.md`](dev/testing-strategy.md) §5.1 (module-mock leakage,
-`mockModuleLeakGuard`, why an awaited restore is still unsafe) and §6 (mutation
-testing — every surviving mutant is killable, dead, or proven-equivalent). The
-decision itself is [ADR-0011](decisions/0011-mock-module-leakage-discipline.md).
+`mockModuleLeakGuard`, why a restore must hand back a spread copy captured
+*before* the install — and why even a correct one is cleanup, not protection)
+and §6 (mutation testing — every surviving mutant is killable, dead, or
+proven-equivalent). The decision itself is
+[ADR-0011](decisions/0011-mock-module-leakage-discipline.md).
 
 
 ## Release & PR conventions

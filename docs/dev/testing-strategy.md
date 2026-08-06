@@ -1,7 +1,7 @@
 # Testing Strategy — maximal
 
 **Status:** Living document, prepared for external review.
-**Last updated:** 2026-07-09.
+**Last updated:** 2026-08-05.
 **Audience:** professional software-testing reviewers, plus contributors who
 need one place that describes how this project verifies itself.
 
@@ -602,15 +602,19 @@ We would specifically like external judgment on these:
    is no `max-lines` ESLint cap in this repo today, so nothing bounds this
    mechanically. Suggests a convention for splitting test files by concern.
 5. **Cross-file shared-state hazard (§5.1, §5.6)** — `mockModuleLeakGuard` bans
-   the fire-and-forget `mock.module` forms, literal data stubs, and a deny-list
-   of known-passive modules. **Residual gap, and it is structural:** the rule
-   cannot decide whether a *given* mock is safe, because that depends on the
-   whole run's module graph rather than the call site — and an `afterAll` restore
-   cannot help, since Bun links every file's imports before any hook runs. The
-   same applies to plain module-level singletons (§5.6), which no lint rule
-   sees at all. So "prefer real/injectable deps for shared state" still rests on
-   review. **The one mechanical detector we have is `bun test --randomize`**, and
-   it is not yet run on a schedule — see §9.
+   the fire-and-forget `mock.module` forms, literal data stubs, a deny-list of
+   known-passive modules, and the live-namespace restore factory. **Residual
+   gap, and it is structural:** the rule cannot decide whether a *given* mock is
+   safe, because that depends on the whole run's module graph rather than the
+   call site. A correct `afterAll` restore *does* run before the next file is
+   evaluated on Bun 1.3.11 — the leak is forward-only (§5.1) — but that is
+   scheduling, not contract, and Bun documents no ordering guarantee, so it is
+   cleanup rather than protection. The same applies to plain module-level
+   singletons (§5.6), which no lint rule sees at all. So "prefer
+   real/injectable deps for shared state" still rests on review. **The one
+   mechanical detector we have is `bun test --randomize`**, now run nightly by
+   `randomized-test-order.yml` over eight seeds — non-blocking, filing an issue
+   rather than failing a build. See §9.
 6. **No load/performance/soak coverage** for the proxy under sustained
    concurrent request load or long-running sidecar sessions.
 
@@ -618,8 +622,11 @@ We would specifically like external judgment on these:
 
 ## 9. CI gates & the local equivalents
 
-CI (`.github/workflows/ci.yml`) runs on every push/PR and is the merge gate.
-Steps, in order:
+CI (`.github/workflows/ci.yml`) runs on every pull request, on pushes to `main`
+and `dev`, and in the merge queue, and is the merge gate. It has **two
+concurrent jobs**.
+
+**Job `test`** (`ubuntu-latest`) — the product gate. Steps, in order:
 
 1. Verify Node `node:sqlite` support (the app uses it).
 2. Pinned Bun setup (`.github/actions/setup-bun`, version read from `.bun-version`).
@@ -630,21 +637,40 @@ Steps, in order:
    `downstream/` against the published exports map. Nothing else proves a
    downstream package can resolve and compile against `./supervisor` and
    `./control-contract`.
-7. **`bun run casts:check`** (`scripts/find-casts.ts --check`) — fails on a new
+7. **`bun run bindings:check`** ("Committed dist is fresh") — rebuilds
+   `dist/lib` and `dist/main.js` into temp dirs outside the repo and compares
+   against git's *index*, so no earlier or later rebuild in this job can launder
+   the result.
+8. **`bun run casts:check`** (`scripts/find-casts.ts --check`) — fails on a new
    unannotated boundary cast.
-8. **`bun test`** (full suite).
-9. **`bun run knip`** (unused files / exports / deps).
-10. **`bun run build`**.
+9. **`bun test`** (full suite).
+10. **`bun run knip`** (unused files / exports / deps).
+11. **`bun run deps:check`** (dependency-cruiser). Only its two `error` rules
+    affect the exit code; `no-circular` is a `warn` with 47 standing matches, so
+    green here means "no layering violation", not "no cycles".
+12. **`bun run build`**.
 
-Security workflows (CodeQL, trufflehog) run alongside, and `release-gates.yml`
-checks a PR's milestone and bump. There is **no** build/sign/publish pipeline —
-no dmg, MSI, checksums, or smoke test on release — and no release automation:
-a release is a GitHub milestone, tagged by hand (see `docs/architecture.md`
-→ *Release & PR conventions* and `docs/release-runbook.md`).
+**Job `windows`** (`windows-latest`) — the `bun-windows-x64` release leg, run
+before a tag exists: `bun install`, then `build:binary`, `verify:artifact`, and
+`e2e:binary` against the compiled artifact. It exists because Windows used to be
+exercised only by `release-artifacts.yml` on a tag push, which is how v0.4.2
+shipped with no binaries — an inline `prepare` one-liner that Bun's Windows shell
+rejects failed `bun install` outright, after the tag was already immutable.
+**`bun test` is deliberately absent from this job**: 22 of the suite's tests
+assert POSIX specifics (mode 0600, symlinks, `~/.local/share`) and do not pass on
+Windows. Do not read a green `windows` job as "the suite passes on Windows".
+
+Security workflows (CodeQL, trufflehog) run alongside, `release-gates.yml`
+checks a PR's milestone and bump, and `randomized-test-order.yml` runs nightly
+(see below). There is **no** build/sign/publish pipeline on a *PR* — no dmg,
+MSI, checksums, or signing — and no release automation: a release is a GitHub
+milestone, tagged by hand, and it is the tag push that fires
+`release-artifacts.yml` (see `docs/architecture.md` → *Release & PR conventions*
+and `docs/release-runbook.md`).
 
 ### Why `--randomize` is not a PR gate
 
-Step 8 runs `bun test` in its declared order, deliberately. `bun test
+Step 9 of `test` runs `bun test` in its declared order, deliberately. `bun test
 --randomize` is the only mechanical detector we have for the cross-file
 shared-state class (§5.1, §5.6), but it is the wrong shape for a merge gate:
 
@@ -666,18 +692,31 @@ non-blocking, filing an issue on failure — plus `--randomize` in the local loo
 when you touch a shared singleton or add a `mock.module`. Run a spread of seeds;
 one passing seed proves nothing.
 
+That job is now **`randomized-test-order.yml`** (nightly at 05:41 UTC, plus
+`workflow_dispatch` with an optional pinned `seed` input to replay a reported
+failure). It runs eight seeds per night — `seq $((run_number * 8))
+$((run_number * 8 + 7))`, so the seeds are a function of the run number and are
+known before the run starts — and on any failure it files or comments on one
+idempotent `flaky-order`-labelled issue rather than going red. It does not
+auto-close on a clean night: this class is intermittent, and one green run is
+not evidence.
+
 **Local pre-merge equivalents:**
 
 - `bun run check:fast` = `lint:fast → typecheck → lint:all`.
-- `bun run check:deep` = `check:fast → casts:check → bun test → knip → build →
-  typecheck:downstream`. This is a superset of the CI step list above, so green
-  here means green there.
+- `bun run check:deep` = `check:fast → casts:check → bun test → knip →
+  deps:check → build → typecheck:downstream → bindings:check`. This is a
+  superset of the `test` job's step list above, so green here means green
+  there. It says nothing about the `windows` job, which builds and exercises a
+  compiled artifact on a Windows runner — nothing local reproduces that.
 - `bun run check:ops` = `typecheck:ops → test:ops`, for `scripts/ops/` (its own
   tsconfig and test run; `tooling-ci.yml` is the CI counterpart).
 - **Pre-commit hook** (simple-git-hooks → lint-staged): `bun run lint --fix` +
   `scripts/secret-scan.sh` on staged files. Note this runs the staged-file
   `lint`, not full-tree `lint:all`; §5.4 still applies — run `lint:all` yourself
-  before pushing.
+  before pushing. The hooks are installed by the `prepare` script
+  ([`scripts/ops/prepare.ts`](../../scripts/ops/prepare.ts)), which verifies the
+  install landed — `simple-git-hooks` swallows its own errors and exits 0.
 
 The single most common CI-only failure is a lint error in a file the local
 pre-commit hook didn't lint (it only sees staged files; §5.4). Running

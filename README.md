@@ -228,11 +228,11 @@ milestone whose title is the tag**: assigning a PR to `vX.Y.Z` pre-selects its
 release, so what ships is reviewable before the tag exists. `bun run
 release:notes vX.Y.Z` turns the milestone into changelog-shaped Markdown, and
 `bun run release:manual vX.Y.Z` cuts it — refusing a dirty tree, an off-pin
-Bun, or a milestone `release:notes` would not emit for, then bumping, writing the
-changelog entry, rebuilding `dist/`, staging both into the one release commit,
-tagging and pushing. Cutting a release is a deliberate
-human step; pushing the tag is what builds and publishes the binaries
-(`release-artifacts.yml`).
+Bun, or a milestone `release:notes` would not emit for, then bumping, rebuilding
+`dist/`, writing the changelog entry, staging all of it into the one release
+commit, tagging, pushing, and publishing to npm unless `--no-publish` is passed.
+Cutting a release is a deliberate human step; pushing the tag is what builds and
+publishes the binaries (`release-artifacts.yml`).
 
 ## Status
 
