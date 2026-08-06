@@ -33,12 +33,11 @@ export type ApiKeyHelperResult =
  * bare `maximal`, because the consumer runs it from a context that does NOT
  * have our PATH: Claude Code invokes the helper via `/bin/sh -c` (or `cmd.exe`
  * on Windows), and a GUI-launched Claude Code inherits launchd's minimal PATH
- * (`/usr/bin:/bin:/usr/sbin:/sbin`) — never `~/.local/bin`. A bare `maximal`
- * there fails with `command not found` (exit 127). The absolute path is
- * double-quoted so a space in it survives both `sh` and `cmd.exe`.
+ * (`/usr/bin:/bin:/usr/sbin:/sbin`) — never `/opt/homebrew/bin`. A bare
+ * `maximal` there fails with `command not found` (exit 127). The absolute path
+ * is double-quoted so a space in it survives both `sh` and `cmd.exe`.
  *
- * `process.execPath` is the right anchor (vs. the macOS-only `~/.local/bin`
- * symlink, which doesn't exist on Windows) — BUT only when we ARE the maximal
+ * `process.execPath` is the right anchor — BUT only when we ARE the maximal
  * binary, i.e. the compiled single-file sidecar (`bun build --compile`). When
  * maximal runs under a RUNTIME (dev, `bun run …`, any bun/node-launched CLI),
  * `process.execPath` is the runtime, not maximal — writing `"…/bun" api <label>`

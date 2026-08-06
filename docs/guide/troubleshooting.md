@@ -65,7 +65,7 @@ Yes. maximal keeps a multi-account registry — add several accounts and quick-s
 It's a security note to be aware of: maximal accepts **all** local requests without a client key until enforcement is turned on (`auth.enforce`). Creating a key in **API clients** is not enough on its own — enforcement is the switch. See [API keys](./usage-and-settings.md).
 
 **Which platforms do you support?**
-macOS on Apple Silicon and Windows x64 both ship installers; the Homebrew formula is Apple-Silicon-only. There is no Linux build — run from source there. Details in [Install maximal](./install.md).
+macOS on Apple Silicon and Windows x64 both ship a standalone binary — there is no installer on either. The Homebrew formula is Apple-Silicon-only. There is no Linux build — run from source there. Details in [Install maximal](./install.md).
 
 **Which models can I use?**
 Whatever your Copilot plan includes. The **Models** section lists them live, grouped by kind, with a refresh button. See [Models](./usage-and-settings.md).
