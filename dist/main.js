@@ -33972,8 +33972,16 @@ class SqliteDbStore {
     db.close?.();
   }
   async open() {
-    const db = await openSqliteDatabase(this.options.getPath());
-    this.options.initialize?.(db);
+    const openImpl = this.options.open ?? openSqliteDatabase;
+    const db = await openImpl(this.options.getPath());
+    try {
+      this.options.initialize?.(db);
+    } catch (error51) {
+      try {
+        db.close?.();
+      } catch {}
+      throw error51;
+    }
     return db;
   }
 }

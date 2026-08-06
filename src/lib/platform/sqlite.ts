@@ -20,6 +20,9 @@ export interface SqliteDatabase {
 interface SqliteDbStoreOptions {
   getPath: () => string
   initialize?: (db: SqliteDatabase) => void
+  /** Opener seam. Defaults to the real {@link openSqliteDatabase}; tests inject
+   *  a fake so the failure paths are drivable on every platform. */
+  open?: (dbPath: string) => Promise<SqliteDatabase>
 }
 
 const isBunRuntime = (): boolean =>
@@ -148,8 +151,29 @@ export class SqliteDbStore {
   }
 
   private async open(): Promise<SqliteDatabase> {
-    const db = await openSqliteDatabase(this.options.getPath())
-    this.options.initialize?.(db)
+    const openImpl = this.options.open ?? openSqliteDatabase
+    const db = await openImpl(this.options.getPath())
+    try {
+      this.options.initialize?.(db)
+    } catch (error) {
+      // `initialize` runs AFTER the handle exists, and a store that SQLite
+      // opens but will not read — a file truncated by a SIGKILL mid-write or a
+      // full disk — throws right here on the first PRAGMA. Rejecting without
+      // closing stranded that handle: `dbPromise` keeps the rejection cached,
+      // so nothing ever reaches the database again to close it, and it is held
+      // for the life of the process.
+      //
+      // On POSIX that is an invisible fd leak. On Windows an open handle also
+      // LOCKS the file, so the user cannot delete or replace the corrupt store
+      // to recover while the proxy is running, and no second process can open
+      // it either. Close before rethrowing; the rejection is unchanged.
+      try {
+        db.close?.()
+      } catch {
+        // Best effort — never mask the initialize failure with a close failure.
+      }
+      throw error
+    }
     return db
   }
 }
