@@ -166,25 +166,69 @@ that then reads stale state — passing locally but failing in CI (or vice versa
 This bit the project **four times** (culminating in a long #229 debugging loop),
 then a fifth (#27).
 
-**Why an `afterAll` restore cannot fix this.** Bun evaluates **every** test
-file's module body during startup, before the first test runs. A six-file probe
-on Bun 1.3.11 produced this order:
+**How the leak actually propagates (re-measured on Bun 1.3.11, the pin).**
+`bun test` **interleaves** evaluation and execution: it evaluates one test file's
+module body, runs that file's tests and hooks, then evaluates the next. A
+six-file probe prints the same shape plain and under `--randomize`:
 
 ```
-PROBE-EVAL d / e / f / c / b / a     <- all six module bodies
-PROBE-TEST a done                    <- only then does the first test run
-PROBE-AFTERALL a done                <- teardown is last
+EVAL e -> TEST e -> AFTERALL e -> EVAL f -> TEST f -> AFTERALL f -> EVAL a ...
 ```
 
-So a `mock.module` installed at module scope is visible to every sibling that
-statically imports that module, and an `afterAll` restore is **structurally
-incapable** of preventing it: by the time teardown runs, every sibling has
-already linked whatever was installed. Which file wins is decided by loader
-scheduling during the eval phase, which is why the class flips between machines.
-Earlier revisions of this section said an awaited restore "does not reliably
-land" — that understated it. It is not a weak mitigation; it is not a mitigation.
-Keep the restore as cleanup for anything that reads the module *later* (a
-dynamic import, a lazy require), but never count it as protection.
+Two things follow. The leak is **forward-only** — a file evaluated earlier has
+already finished and cannot be affected. And an `afterAll` restore **does** run
+before the next file is evaluated.
+
+This **corrects** an earlier reading of the same probe, recorded here as "Bun
+evaluates every test file's module body during startup, before the first test
+runs, so an `afterAll` restore is structurally incapable of protecting a
+sibling". That is not what 1.3.11 does and it does not reproduce. It has now been
+got wrong twice, in opposite directions, so: re-measure before you rewrite this
+paragraph.
+
+**But "so the restore works" is also wrong. What breaks a restore is its
+*value*.** `mock.module` mutates the live module record **in place**, so the
+namespace object captured before the install is retroactively updated to hold
+the stub. Restoring from it re-installs what the restore meant to undo:
+
+```ts
+const real = await import("./m")
+await mock.module("./m", () => ({ ...real, TABLE: [] }))  // install: fine
+await mock.module("./m", () => real)                      // restore: NO-OP
+await mock.module("./m", () => ({ ...real }))             // restore: NO-OP
+                                                          // `real` is already
+                                                          // stubbed by now
+
+const snapshot = { ...(await import("./m")) }   // copy taken BEFORE the install
+await mock.module("./m", () => snapshot)        // restore: WORKS
+```
+
+Measured both directions on the same seed with a two-file writer/reader probe:
+namespace restore → the reader's module body sees `TABLE.length === 0`; snapshot
+restore → it sees the real table. And in-repo, before the fix in this section's
+PR: `tests/poll-access-token.test.ts` stubs `sleep` to a no-op and restored from
+the namespace, so a later sibling got a `sleep` that returned instantly on **5 of
+12** seeds; with the snapshot form, **0 of 12**.
+
+It is *not* that `mock.module` refuses a Module Namespace exotic object —
+installing one works fine (probed directly with an unrelated module's pristine
+namespace). It is that the namespace is **live**. `tests/uninstall.test.ts` had
+this right all along; nine other files did not, and the missing spread in
+`tests/start-run-server.test.ts` was the whole of #27.
+
+The rule that follows: **capture a spread copy before the first install and
+restore from that** — `const real = { ...(await import("…")) }`. The
+`maximal/no-live-namespace-mock-factory` lint rule (`eslint.config.js`) enforces
+it; a selector cannot, because the broken and correct restores are syntactically
+identical (`() => real`) and differ only in what `real` is bound to, so the rule
+resolves the binding.
+
+**A correct restore is still not protection.** Bun documents no ordering
+guarantee for the interleave; the phase structure is the kind of thing a minor
+release changes silently, and the previous reading of it was of the same runner.
+Treat a well-formed restore as version-dependent hygiene that happens to hold
+today, never as the reason a shared-module mock is safe. Which file wins is still
+decided by loader scheduling, which is why this class flips between machines.
 
 **Reproduce it deterministically.** `bun test --randomize --seed N` shuffles both
 file order and within-file test order, and prints the seed it used in the run
@@ -210,8 +254,13 @@ variants in §5.6.
   yields a plausible wrong answer: `anthropic-key-precedence` saw an empty
   secrets table and concluded, reasonably and wrongly, that no
   `secrets/anthropic` entry existed. Expose a DI seam for the value instead.
+- **If you must mock, capture the real module as a spread copy first.**
+  `const real = { ...(await import("…")) }`, then install `() => ({ ...real, fn })`
+  and restore `() => real`. Never hold the namespace itself: `mock.module`
+  mutates it in place, so a restore that reads it hands back the stub. Rule 4 of
+  the lint guard enforces this.
 - **Lint rule (enforced, and honest about its limits).** `mockModuleLeakGuard`
-  (`eslint.config.js`, scoped to `tests/**`) enforces three things:
+  (`eslint.config.js`, scoped to `tests/**`) enforces four things:
   1. the fire-and-forget forms — `void mock.module(...)` and a bare
      `mock.module(...)` expression statement. **Its justification is now
      narrower than it was:** an unawaited install is not guaranteed to have
@@ -225,12 +274,21 @@ variants in §5.6.
      it, and a rule that cries wolf gets suppressed and then enforces nothing.
   3. a deny-list of modules a sibling is known to read passively — today `srvx`
      and `~/lib/auth/secrets`. Membership is earned by an incident.
+  4. `maximal/no-live-namespace-mock-factory` — a `mock.module` factory that
+     reads a live namespace binding (`import * as ns`, `const ns = await
+     import(…)`). This is the broken-restore shape, and it is the one part of
+     the hazard that *is* statically decidable. It needs scope analysis rather
+     than a selector: `() => real` is both the broken form and the correct one,
+     depending only on whether `real` is a namespace or a copy, and the
+     `() => ({ ...ns })` variant is broken for the same reason a selector on
+     bare identifiers would miss.
 
   **What it cannot enforce, by construction:** whether any *given* `mock.module`
-  is safe. That depends on whether another file in the run imports the mocked
-  module and when it reads the binding — a property of the whole run's module
-  graph, not of the call site. No selector decides it. Treat a green lint as
-  "the known footguns are absent", never as "this mock was checked".
+  is safe. That depends on whether another file evaluated later in the run
+  imports the mocked module and when it reads the binding — a property of the
+  whole run's module graph, not of the call site. No rule decides it. Treat a
+  green lint as "the known footguns are absent", never as "this mock was
+  checked".
 
 This discipline is the decision of
 [ADR-0011](../decisions/0011-mock-module-leakage-discipline.md). Two parts of
@@ -238,9 +296,10 @@ that ADR remain authoritative: **prefer DI / injectable options over
 `mock.module`** for any shared module, and the **wrapper rule** (forward
 `...rest`, preserve return shape) when a stub is unavoidable. What actually
 *shipped* for enforcement is narrower than the ADR's original proposal — there
-is no `tests/helpers/` allowlist. Note the ADR's "awaited install + awaited
-`afterAll` restore" is **superseded** by the eval-order finding above: the
-restore is cleanup, not a guarantee.
+is no `tests/helpers/` allowlist. The ADR's "awaited install + awaited `afterAll`
+restore" is sound on Bun 1.3.11 **provided the restore hands back a pre-install
+snapshot** — but it is sound by scheduling, not by contract, so it stays a
+hygiene rule rather than a licence to mock a shared module.
 
 ### 5.2 Spies leak too
 `spyOn` has the same cross-file hazard as `mock.module`: a spy left unrestored

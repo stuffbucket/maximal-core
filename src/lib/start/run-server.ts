@@ -68,7 +68,12 @@ export function __setServeForTests(fn: ServeFn | null): void {
 // in-process runServer test has to neutralize it — but the obvious way,
 // `mock.module("~/lib/auth/secrets", …)`, also replaces `SECRET_DEFS`, the
 // canonical secret table that `~/debug` and sibling test files read. That stub
-// forward-leaked and emptied `SECRET_DEFS` for any file linked after it.
+// forward-leaked and emptied `SECRET_DEFS` for any file evaluated after it
+// (#27). The `afterAll` restore did run in time — `bun test` interleaves
+// evaluation and execution — but it handed back the live module namespace,
+// which `mock.module` had already mutated to hold the stub, so it re-installed
+// what it meant to undo. A seam has no such failure mode: there is no leak
+// window and no restore to get wrong. See docs/dev/testing-strategy.md §5.1.
 type BootSecretsFn = typeof bootSecrets
 let bootSecretsImpl: BootSecretsFn = bootSecrets
 

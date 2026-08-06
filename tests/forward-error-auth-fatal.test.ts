@@ -23,7 +23,12 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
 // Capture the real module BEFORE mocking so afterAll can restore it
 // (mock.module is process-wide; without the restore, a later test
 // file in the same `bun test` process gets our stub).
-const realFsPromisesModule = await import("node:fs/promises")
+//
+// The capture is a spread COPY, not the namespace: `mock.module` mutates the
+// live module record in place, so the namespace object would carry the stub by
+// the time afterAll reads it and the restore would re-install it. See
+// docs/dev/testing-strategy.md §5.1.
+const realFsPromisesModule = { ...(await import("node:fs/promises")) }
 const unlinkCalls: Array<string> = []
 await mock.module("node:fs/promises", () => ({
   ...realFsPromisesModule,

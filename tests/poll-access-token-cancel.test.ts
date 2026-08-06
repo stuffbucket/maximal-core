@@ -7,8 +7,13 @@ import { afterAll, afterEach, describe, expect, mock, test } from "bun:test"
  * so the loop's control flow is exercised deterministically; the cancel is
  * driven from the fetch stub (synchronously), not a wall-clock timer, so the
  * test can't depend on macrotask scheduling.
+ *
+ * The capture is a spread COPY, not the namespace: `mock.module` mutates the
+ * live module record in place, so the namespace object would carry the stub by
+ * the time afterAll reads it and the restore would re-install it. See
+ * docs/dev/testing-strategy.md §5.1.
  */
-const realUtils = await import("~/lib/platform/utils")
+const realUtils = { ...(await import("~/lib/platform/utils")) }
 await mock.module("~/lib/platform/utils", () => ({
   ...realUtils,
   sleep: () => Promise.resolve(),
