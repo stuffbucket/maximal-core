@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 
 import {
   checkTagVersion,
@@ -18,6 +21,7 @@ import {
   isAdjacent,
   isBot,
   main,
+  type MainOptions,
   maxVersion,
   OVERRIDE_LABEL,
   parseArgs,
@@ -39,6 +43,12 @@ import type { GhResult, GhRunner, ParsedTitle } from "./release-notes"
 
 const REPO = "stuffbucket/maximal-core"
 const CURRENT: Version = [0, 2, 1]
+
+/** Capture what `main` would have printed, so a fixture run stays off stdout. */
+function silent(): { lines: Array<string>; log: (line: string) => void } {
+  const lines: Array<string> = []
+  return { lines, log: (line) => lines.push(line) }
+}
 
 const title = (t: string, breaking = false): ParsedTitle => ({
   type: t,
@@ -674,24 +684,71 @@ describe("parseArgs", () => {
 })
 
 describe("main — exit-code contract", () => {
+  // Every `main` call in this file passes `annotate: false` and captures `log`.
+  // `main` reads the repo's real package.json, so a fixture tag like `v0.0.1`
+  // produces a genuine finding — and on Actions that would print a real
+  // `::error` and append a real summary section to a job that is passing. See
+  // MainOptions.annotate.
+  const quiet = (): MainOptions => ({ annotate: false, log: () => undefined })
+
   test("bad usage is 2 (the gate could not run), never 1", () => {
-    expect(main([])).toBe(2)
-    expect(main(["pr"])).toBe(2)
-    expect(main(["pr", "not-a-number"])).toBe(2)
-    expect(main(["nonsense", "x"])).toBe(2)
+    expect(main([], quiet())).toBe(2)
+    expect(main(["pr"], quiet())).toBe(2)
+    expect(main(["pr", "not-a-number"], quiet())).toBe(2)
+    expect(main(["nonsense", "x"], quiet())).toBe(2)
   })
 
   test("a real violation is 1 — distinct from the cannot-run 2", () => {
     // `version` needs no gh at all: it reads the repo's own package.json, so
     // this exercises the whole path end to end offline.
-    expect(main(["version", "v0.0.1"])).toBe(1)
+    expect(main(["version", "v0.0.1"], quiet())).toBe(1)
     expect(
-      main(["version", `v${readPackageVersion(PACKAGE_JSON_PATH)}`]),
+      main(["version", `v${readPackageVersion(PACKAGE_JSON_PATH)}`], quiet()),
     ).toBe(0)
   })
 
   test("--mode warn turns a violation into a clean exit", () => {
-    expect(main(["version", "v0.0.1", "--mode", "warn"])).toBe(0)
+    expect(main(["version", "v0.0.1", "--mode", "warn"], quiet())).toBe(0)
+  })
+})
+
+// Both directions matter. Proving only that a test stays quiet would let the
+// production annotation rot away unnoticed — nobody looks at the Checks tab
+// until a gate actually fails, and by then the annotation is the missing thing.
+describe("main — the Actions surfaces are gated on `annotate`", () => {
+  const FIXTURE_TAG = "v0.0.1"
+
+  function run(annotate: boolean): { lines: Array<string>; summary: string } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "release-gates-summary-"))
+    const summaryPath = path.join(dir, "summary.md")
+    const { lines, log } = silent()
+    try {
+      main(["version", FIXTURE_TAG], { annotate, summaryPath, log })
+      const summary = fs.existsSync(summaryPath)
+        ? fs.readFileSync(summaryPath, "utf8")
+        : ""
+      return { lines, summary }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  test("annotate: true writes the ::error and the job summary — the real CI path", () => {
+    const { lines, summary } = run(true)
+    expect(
+      lines.some((l) =>
+        l.startsWith("::error title=release-gates (version-tag-mismatch)::"),
+      ),
+    ).toBe(true)
+    expect(summary).toContain("### Blocking")
+  })
+
+  test("annotate: false writes neither — a test cannot paint a passing job", () => {
+    const { lines, summary } = run(false)
+    // The human report is still produced; only the Actions surfaces are withheld.
+    expect(lines.some((l) => l.includes("version-tag-mismatch"))).toBe(true)
+    expect(lines.some((l) => l.startsWith("::"))).toBe(false)
+    expect(summary).toBe("")
   })
 })
 

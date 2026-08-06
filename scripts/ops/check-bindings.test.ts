@@ -521,6 +521,34 @@ describe("exit codes", () => {
     ).toBe(1)
   })
 
+  // Both directions. `annotate: false` on every other test proves a fixture run
+  // cannot paint a passing job; without this pair the production annotation
+  // could stop firing and nobody would notice until a gate failed quietly.
+  test("annotate: true emits the ::error — the real CI path still annotates", () => {
+    const lines: Array<string> = []
+    main({
+      artifacts: [fakeArtifact(fakeBuild({ "client.js": "new" }))],
+      git: splitGit({ "client.js": "0".repeat(40) }),
+      annotate: true,
+      log: (line) => lines.push(line),
+    })
+    expect(lines.some((l) => l.startsWith("::error title=check-bindings::"))).toBe(
+      true,
+    )
+  })
+
+  test("annotate: false emits the report but no ::error", () => {
+    const lines: Array<string> = []
+    main({
+      artifacts: [fakeArtifact(fakeBuild({ "client.js": "new" }))],
+      git: splitGit({ "client.js": "0".repeat(40) }),
+      annotate: false,
+      log: (line) => lines.push(line),
+    })
+    expect(lines.some((l) => l.includes("client.js"))).toBe(true)
+    expect(lines.some((l) => l.startsWith("::"))).toBe(false)
+  })
+
   // A stale bundle must fail even when the bindings are pristine — that is the
   // whole hole this gate grew to cover.
   test("a stale bundle alone is exit 1", () => {
