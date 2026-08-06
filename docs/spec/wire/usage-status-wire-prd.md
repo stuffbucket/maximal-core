@@ -24,7 +24,8 @@ the public one — see `docs/architecture.md` → *Two listeners*.)
 
 ## `/status` — identity + liveness
 
-Cheap, in-memory, no upstream call (`src/lib/status.ts:48-93`). This is
+Cheap, in-memory, no upstream call (`src/lib/runtime-state/status.ts`,
+`buildStatus`). This is
 the unambiguous "is the thing on this port actually Maximal, and is it
 ready?" probe the Claude Code shim keys off `service: "maximal"`.
 
@@ -47,7 +48,7 @@ reshaping the contract.
 
 ## `/setup-status` — first-run readiness
 
-`src/lib/setup-status.ts:36-90`. Unauthenticated by design (must work
+`src/lib/config/setup-status.ts`. Unauthenticated by design (must work
 before any key exists). See `docs/first-run-setup-prd.md` for the
 consuming UI.
 
