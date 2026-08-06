@@ -3,15 +3,20 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
+import type { GitRunner } from "./check-bindings"
 import {
   checkTagVersion,
   classifyBump,
   collectMilestoneGate,
+  collectOpenPrGate,
   collectPrGate,
+  collectTagOrderGate,
   exemption,
   exitCodeFor,
   evaluateMilestone,
+  evaluateOpenPrs,
   evaluatePr,
+  evaluateTagOrder,
   type Finding,
   formatVersion,
   type GatePullRequest,
@@ -26,6 +31,7 @@ import {
   OVERRIDE_LABEL,
   parseArgs,
   parseReleaseTag,
+  parseRemoteTags,
   PACKAGE_JSON_PATH,
   readPackageVersion,
   renderAnnotations,
@@ -500,6 +506,230 @@ describe("gate 3 — the tag must match package.json", () => {
   })
 })
 
+describe("gate 4 — the tag must be ahead of every tag that exists", () => {
+  const order = (
+    tag: string,
+    local: Array<string>,
+    remote: Array<string>,
+    pushed?: boolean,
+  ): GateReport => evaluateTagOrder({ tag, local, remote, pushed })
+
+  test("a tag above everything that exists passes", () => {
+    expect(order("v0.4.4", ["v0.4.2", "v0.4.3"], ["v0.4.2", "v0.4.3"]).findings).toEqual([])
+  })
+
+  // THE FAILURE THIS GATE EXISTS FOR. Two releases prepared concurrently; the
+  // higher one landed first. Cutting the lower one now publishes a lower-semver
+  // tag with strictly more content, and a published tag must never be moved.
+  test("a tag below the highest existing one is refused", () => {
+    const r = order("v0.4.4", ["v0.4.3"], ["v0.4.3", "v0.5.0"])
+    expect(bySeverity(r, "error")).toEqual(["tag-not-highest"])
+    expect(r.findings[0].message).toContain("v0.5.0")
+  })
+
+  // The whole point of reading the remote: a checkout learns about a tag only
+  // when somebody fetches, so the local list is the stale one by construction.
+  test("a tag that exists ONLY on the remote still blocks", () => {
+    expect(bySeverity(order("v0.4.4", [], ["v0.5.0"]), "error")).toEqual([
+      "tag-not-highest",
+    ])
+  })
+
+  // And the converse: an unpushed local tag is still a collision on push.
+  test("a tag that exists ONLY locally still blocks", () => {
+    const r = order("v0.4.4", ["v0.5.0"], [])
+    expect(bySeverity(r, "error")).toEqual(["tag-not-highest"])
+    expect(r.findings[0].message).toContain("locally (not yet pushed)")
+  })
+
+  test("re-cutting a tag that already exists is refused, and says where it lives", () => {
+    const r = order("v0.4.3", ["v0.4.3"], ["v0.4.3"])
+    expect(bySeverity(r, "error")).toEqual(["tag-already-exists"])
+    expect(r.findings[0].message).toContain("locally and on `origin`")
+  })
+
+  // Equal is not ahead — but it is reported as the collision it is, once.
+  test("an existing tag is reported as existing, not as `not ahead`", () => {
+    expect(kinds(order("v0.4.3", [], ["v0.4.2", "v0.4.3"]))).toEqual([
+      "tag-already-exists",
+    ])
+  })
+
+  // `--pushed` is the tripwire placement: the tag is expected to exist, and the
+  // only question left is whether it should have been the one that was cut.
+  test("--pushed drops the existence finding but keeps the ordering one", () => {
+    expect(order("v0.4.3", [], ["v0.4.3"], true).findings).toEqual([])
+    expect(kinds(order("v0.4.3", [], ["v0.4.3", "v0.5.0"], true))).toEqual([
+      "tag-not-highest",
+    ])
+  })
+
+  // Prereleases are not release tags to any of this tooling, and by semver
+  // v0.5.0-rc.1 is BELOW v0.5.0 — it is not evidence that 0.5.0 shipped. So it
+  // informs, and never blocks.
+  test("a prerelease above the tag warns and does not block", () => {
+    const r = order("v0.4.4", [], ["v0.4.3", "v0.5.0-rc.1"])
+    expect(bySeverity(r, "error")).toEqual([])
+    expect(bySeverity(r, "warn")).toEqual(["prerelease-above-tag"])
+    expect(exitCodeFor(r, "enforce")).toBe(0)
+  })
+
+  test("a prerelease below the tag is silent", () => {
+    expect(order("v0.4.4", [], ["v0.4.0-rc.1"]).findings).toEqual([])
+  })
+
+  // Junk in the tag namespace (a `sdk-v…` mirror tag, a branch-shaped tag) is
+  // not a release and must not be able to block one.
+  test("non-version tags are ignored", () => {
+    expect(order("v0.4.4", [], ["sdk-v9.9.9", "nightly", "v0.4.3"]).findings).toEqual([])
+  })
+
+  test("a first release with no tags at all passes", () => {
+    expect(order("v0.1.0", [], []).findings).toEqual([])
+  })
+
+  test("a target that is not a release tag is refused before anything else", () => {
+    expect(kinds(order("v0.4.4-rc.1", [], ["v9.9.9"]))).toEqual(["tag-not-a-release"])
+  })
+
+  test("annotated tags are not counted twice", () => {
+    expect(
+      parseRemoteTags(
+        [
+          "7366b98a\trefs/tags/v0.4.3",
+          "614684f6\trefs/tags/v0.4.3^{}",
+          "5da2b369\trefs/tags/v0.4.2",
+          "abc\trefs/heads/main",
+        ].join("\n"),
+      ),
+    ).toEqual(["v0.4.3", "v0.4.2"])
+  })
+})
+
+describe("collectTagOrderGate — the git pipeline", () => {
+  /** A `git` answering `tag --list` and `ls-remote` from fixtures. */
+  const fakeGit = (
+    local: ReadonlyArray<string>,
+    remote: ReadonlyArray<string>,
+    statuses: Record<string, number> = {},
+    calls: Array<Array<string>> = [],
+  ): GitRunner => {
+    return (args) => {
+      calls.push([...args])
+      const verb = args[0] ?? ""
+      const status = statuses[verb] ?? 0
+      if (status !== 0) return { status, stdout: "", stderr: "boom" }
+      if (verb === "tag") return { status: 0, stdout: local.join("\n"), stderr: "" }
+      return {
+        status: 0,
+        stdout: remote.map((t) => `deadbeef\trefs/tags/${t}`).join("\n"),
+        stderr: "",
+      }
+    }
+  }
+
+  test("reads both lists and unions them", () => {
+    const calls: Array<Array<string>> = []
+    const git = fakeGit(["v0.4.3"], ["v0.5.0"], {}, calls)
+    expect(kinds(collectTagOrderGate("v0.4.4", { git }))).toEqual(["tag-not-highest"])
+    expect(calls).toEqual([
+      ["tag", "--list"],
+      ["ls-remote", "--tags", "origin"],
+    ])
+  })
+
+  // `ls-remote` writes nothing. A guard that fetched would mutate the ref store
+  // of the repository it is about to refuse from — the tree must be exactly as
+  // the guard found it on every refusal path.
+  test("the remote is read, never fetched", () => {
+    const calls: Array<Array<string>> = []
+    collectTagOrderGate("v0.4.4", { git: fakeGit([], [], {}, calls) })
+    expect(calls.some((c) => c[0] === "fetch")).toBe(false)
+  })
+
+  test("--remote names a different remote", () => {
+    const calls: Array<Array<string>> = []
+    collectTagOrderGate("v0.4.4", { git: fakeGit([], [], {}, calls), remote: "upstream" })
+    expect(calls[1]).toEqual(["ls-remote", "--tags", "upstream"])
+  })
+
+  // An unreachable remote must never read as "no tags exist" — that is the
+  // reading that lets the reverse-order tag through.
+  test("a remote that cannot be read throws rather than passing", () => {
+    const git = fakeGit([], [], { "ls-remote": 128 })
+    expect(() => collectTagOrderGate("v0.4.4", { git })).toThrow(/ls-remote/u)
+  })
+
+  test("a local read that fails throws too", () => {
+    const git = fakeGit([], [], { tag: 128 })
+    expect(() => collectTagOrderGate("v0.4.4", { git })).toThrow(/tag --list/u)
+  })
+})
+
+describe("gate 5 — what is still open when the tag is cut", () => {
+  const open = (over: Partial<GatePullRequest>): GatePullRequest =>
+    pr({ milestone: null, ...over })
+
+  test("an open PR in the milestone being cut blocks", () => {
+    const findings = evaluateOpenPrs("v0.4.4", [
+      open({ number: 9, milestone: { title: "v0.4.4" } }),
+    ])
+    expect(findings.map((f) => f.kind)).toEqual(["open-pr-in-release"])
+    expect(findings[0].severity).toBe("error")
+  })
+
+  // It deferred itself. Whether it touches the same code is a judgement no gate
+  // can make, and one that guessed would cry wolf on every release.
+  test("an open PR in a LATER milestone is silent", () => {
+    expect(evaluateOpenPrs("v0.4.4", [open({ milestone: { title: "v0.5.0" } })])).toEqual([])
+  })
+
+  // Gate 4's failure, seen early enough to still be free: cutting v0.4.4 now
+  // means v0.4.3 can never be cut afterwards without a reverse-order tag.
+  test("an open PR in an EARLIER milestone warns", () => {
+    const findings = evaluateOpenPrs("v0.4.4", [open({ milestone: { title: "v0.4.3" } })])
+    expect(findings.map((f) => f.kind)).toEqual(["open-pr-earlier-release"])
+    expect(findings[0].severity).toBe("warn")
+  })
+
+  // The honest answer to the uncheckable half: an unassigned PR is not
+  // automatically part of this release, so it is named, not refused.
+  test("an unmilestoned open PR warns and lists the number", () => {
+    const findings = evaluateOpenPrs("v0.4.4", [open({ number: 12 })])
+    expect(findings.map((f) => f.kind)).toEqual(["open-pr-unmilestoned"])
+    expect(findings[0].severity).toBe("warn")
+    expect(findings[0].number).toBe(12)
+  })
+
+  test("a milestone that is not a release tag is the same warning", () => {
+    const findings = evaluateOpenPrs("v0.4.4", [open({ milestone: { title: "Backlog" } })])
+    expect(findings.map((f) => f.kind)).toEqual(["open-pr-unmilestoned"])
+  })
+
+  test("an exempt PR is skipped entirely", () => {
+    expect(
+      evaluateOpenPrs("v0.4.4", [
+        open({ milestone: { title: "v0.4.4" }, labels: [{ name: OVERRIDE_LABEL }] }),
+      ]),
+    ).toEqual([])
+  })
+
+  test("a target that is not a release tag checks nothing", () => {
+    expect(evaluateOpenPrs("Backlog", [open({ number: 1 })])).toEqual([])
+  })
+
+  test("collectOpenPrGate asks for open PRs across the repo, not one milestone", () => {
+    const calls: Array<Array<string>> = []
+    const gh = fakeGh([["pr list", [open({ number: 3 })]]], calls)
+    expect(kinds(collectOpenPrGate("v0.4.4", { gh, repo: REPO }))).toEqual([
+      "open-pr-unmilestoned",
+    ])
+    const argv = calls[0].join(" ")
+    expect(argv).toContain("--state open")
+    expect(argv).not.toContain("--search")
+  })
+})
+
 describe("collectPrGate — the gh pipeline", () => {
   const routes = (
     prPayload: unknown,
@@ -613,6 +843,8 @@ describe("collectMilestoneGate — the gh pipeline", () => {
         ["api repos/stuffbucket/maximal-core", { default_branch: "main" }],
         ["tags?per_page", [{ name: "v0.2.1" }]],
         ["contents/package.json", { content: b64({ version: "0.2.1" }) }],
+        // Gate 5's read, matched before the milestone search below.
+        ["--state open", []],
         ["pr list", [{ number: 7, title: "feat(x)!: break it", body: "", labels: [] }]],
       ],
       calls,
@@ -623,6 +855,29 @@ describe("collectMilestoneGate — the gh pipeline", () => {
     expect(calls.some((c) => c.join(" ").includes("package.json?ref=main"))).toBe(
       true,
     )
+  })
+
+  // Gate 5 rides along with the preflight the runbook already prescribes, so a
+  // releaser who runs one command sees both. It is a separate `gh` read: the PRs
+  // that matter here are the ones a milestone-scoped search cannot return.
+  test("also reports what is still open against this tag", () => {
+    const gh = fakeGh([
+      ["api repos/stuffbucket/maximal-core", { default_branch: "main" }],
+      ["tags?per_page", [{ name: "v0.2.1" }]],
+      ["contents/package.json", { content: b64({ version: "0.2.1" }) }],
+      [
+        "--state open",
+        [
+          { number: 9, title: "fix: late", milestone: { title: "v0.2.2" }, labels: [] },
+          { number: 10, title: "fix: stray", milestone: null, labels: [] },
+        ],
+      ],
+      ["pr list", [{ number: 7, title: "fix(x): a thing", body: "", labels: [] }]],
+    ])
+    expect(kinds(collectMilestoneGate("v0.2.2", { gh, repo: REPO }))).toEqual([
+      "open-pr-in-release",
+      "open-pr-unmilestoned",
+    ])
   })
 
   test("skips the PR listing for a milestone that is not a release tag", () => {
@@ -669,7 +924,27 @@ describe("parseArgs", () => {
       target: "42",
       repo: REPO,
       mode: "warn",
+      pushed: false,
     })
+  })
+
+  test("gate 4's flags: a value flag and a boolean one", () => {
+    const args = parseArgs(["order", "v0.3.0", "--remote", "upstream", "--pushed"])
+    expect(args).toEqual({
+      subcommand: "order",
+      target: "v0.3.0",
+      remote: "upstream",
+      pushed: true,
+      mode: "enforce",
+    })
+  })
+
+  // `--pushed` turns the "this tag already exists" refusal OFF, so it must never
+  // be reachable by accident — a bare `-p`, or a stray positional, must not do it.
+  test("`--pushed` is off unless it is spelled out", () => {
+    expect(parseArgs(["order", "v0.3.0"]).pushed).toBe(false)
+    expect(parseArgs(["order", "v0.3.0", "-p"]).pushed).toBe(false)
+    expect(parseArgs(["order", "v0.3.0", "pushed"]).pushed).toBe(false)
   })
 
   test("defaults to enforce, and an unrecognised mode does NOT disable the gate", () => {

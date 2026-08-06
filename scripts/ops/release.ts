@@ -188,9 +188,18 @@
  *   bun scripts/ops/release.ts --rebuild           # just rebuild + stage dist/
  *
  * Exit codes: 0 ok · 1 refused (no tag, dirty tree, the running Bun is not the
- * pin, or the milestone the notes come from has problems) · 2 a step failed.
- * Nothing irreversible happens on 1: every refusal is ahead of `bumpp`, which is
- * where the commit, the tag and the push are.
+ * pin, a tag that already exists or is not ahead of every tag that does, a PR
+ * still open in the milestone being cut, or a milestone the notes cannot be
+ * generated from) · 2 a step failed, including a gate that could not READ what
+ * it compares against. Nothing irreversible happens on 1 or 2: every refusal is
+ * ahead of `bumpp`, which is where the commit, the tag and the push are.
+ *
+ * TWO OF THOSE REFUSALS ARE `release-gates.ts`, CALLED FROM HERE. Gate 4 (the
+ * tag is ahead of every tag that exists, local AND remote) and gate 5 (nothing
+ * that claims to ship in this release is still open) are both checks about the
+ * instant the tag is cut, so a preflight a human runs and a workflow that fires
+ * on tag push are respectively skippable and too late. `release()` is the last
+ * place either can still be free. See `evaluateTagOrder` and `evaluateOpenPrs`.
  *
  * `git` and every child process go through the two injectable runners this repo
  * already uses (`check-bindings.ts`'s `GitRunner`, `prepack.ts`'s
@@ -204,6 +213,13 @@ import path from "node:path"
 
 import { ARTIFACTS, type GitRunner, realGit } from "./check-bindings"
 import { type CommandRunner, prepack, type PrepackOptions, realRunner } from "./prepack"
+import {
+  collectOpenPrGate,
+  collectTagOrderGate,
+  exitCodeFor as gateExitCodeFor,
+  type GateReport,
+  renderFindings,
+} from "./release-gates"
 import {
   collectReleaseNotes,
   exitCodeFor,
@@ -474,6 +490,38 @@ export function untrackedNote(porcelain: string): string | undefined {
   )
 }
 
+// --- the gates that must precede `bumpp` ---
+
+/**
+ * Run one `release-gates.ts` gate here, where a refusal is still free, and map
+ * its report onto this script's exit codes: 0 ok · 1 refused · 2 could not run.
+ *
+ * `release-gates.ts` says a caller MUST treat 2 as non-blocking, because a gate
+ * that fails closed on its own bugs takes the repo down with it. That argument
+ * is about CI, where the cost of a false red is a wedged repository. Here the
+ * trade is inverted and so is the answer: a refusal costs a re-run, a false PASS
+ * costs a tag that must never be moved. So a gate that cannot run stops the
+ * release — and it can only ever stop it BEFORE `bumpp`, which is the only
+ * reason it is legitimate to fail closed at all.
+ */
+export function runGate(
+  collect: () => GateReport,
+  log: (line: string) => void,
+  cannotRun: string,
+): number {
+  let report: GateReport
+  try {
+    report = collect()
+  } catch (err) {
+    log(`release: ${cannotRun} — ${err instanceof Error ? err.message : String(err)}`)
+    return 2
+  }
+  log(renderFindings(report))
+  if (gateExitCodeFor(report, "enforce") === 0) return 0
+  log("\nrelease: REFUSING — nothing has been committed, tagged or pushed.")
+  return 1
+}
+
 // --- the execute hook ---
 
 /**
@@ -591,6 +639,8 @@ export interface ReleaseOptions extends PinOptions, ChangelogIo {
   /** Extra argv forwarded to `bumpp`. */
   bumppArgs?: ReadonlyArray<string>
   publish?: boolean
+  /** The remote gate 4 reads the existing tags from. Defaults to `origin`. */
+  remote?: string
   /** How the rendered block reaches the hook. Defaults to `process.env`. */
   handOverBlock?: (block: string | undefined) => void
 }
@@ -602,8 +652,20 @@ export interface ReleaseOptions extends PinOptions, ChangelogIo {
  *
  * The tree comes first because it is the failure nothing else in the repo
  * catches; the pin is re-asserted at `prepack` time on the publish path anyway;
- * the changelog is generated last of the three because it is the only step that
- * touches the network, and there is no point paying for it behind a refusal.
+ * then the two gates that read the world, cheapest first — gate 4 is two `git`
+ * calls, gate 5 and the changelog are `gh` pipelines — and the changelog last of
+ * all, because there is no point paying for it behind a refusal.
+ *
+ * GATE 4 IS HERE RATHER THAN IN A PREFLIGHT OR A WORKFLOW because this is the
+ * last line before the tag exists. `release:check order` runs the same code for
+ * the by-hand path and `--pushed` runs it as a tripwire, but both of those are
+ * either skippable or too late, and a tag that has been pushed can only be
+ * deleted, never corrected.
+ *
+ * GATE 5 IS HERE RATHER THAN LEFT TO `release:notes` because the changelog step
+ * below is SKIPPED WHOLESALE — `gh` reads included — when `CHANGELOG.md` already
+ * documents the version. An open PR in the milestone blocks a first attempt and
+ * silently stops blocking the re-run, which is exactly when it matters.
  */
 export function release(options: ReleaseOptions = {}): number {
   const log = options.log ?? ((line: string) => { console.error(line) })
@@ -611,9 +673,10 @@ export function release(options: ReleaseOptions = {}): number {
   const run = options.run ?? realRunner
   const bun = options.bun ?? process.execPath
   const script = options.script ?? import.meta.path
+  const tag = options.tag
 
-  if (options.tag === undefined || !TAG_RE.test(options.tag)) {
-    log(usage(options.tag))
+  if (tag === undefined || !TAG_RE.test(tag)) {
+    log(usage(tag))
     return 1
   }
 
@@ -633,7 +696,21 @@ export function release(options: ReleaseOptions = {}): number {
   const pinned = prepack({ ...pinOptions(options), checkOnly: true, run, log })
   if (pinned !== 0) return pinned
 
-  const plan = planChangelog({ tag: options.tag, gh: options.gh, read: options.read, now: options.now })
+  const ordered = runGate(
+    () => collectTagOrderGate(tag, { git, remote: options.remote }),
+    log,
+    "could not read the tags this release must be ahead of",
+  )
+  if (ordered !== 0) return ordered
+
+  const open = runGate(
+    () => collectOpenPrGate(tag, { gh: options.gh }),
+    log,
+    "could not read the open pull requests",
+  )
+  if (open !== 0) return open
+
+  const plan = planChangelog({ tag, gh: options.gh, read: options.read, now: options.now })
   if (plan.objection !== undefined) {
     log(plan.objection)
     return 1
@@ -646,7 +723,7 @@ export function release(options: ReleaseOptions = {}): number {
   })
 
   handOver(plan.block)
-  const bumppArgs = ["--release", stripV(options.tag), ...options.bumppArgs ?? []]
+  const bumppArgs = ["--release", stripV(tag), ...options.bumppArgs ?? []]
   const bumped = run(bun, bumppArgv(executeCommand(bun, script), bumppArgs))
   handOver(undefined)
   if (bumped.status !== 0) {
