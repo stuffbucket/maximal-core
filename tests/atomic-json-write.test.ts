@@ -33,13 +33,21 @@ import {
 } from "~/apps/claude-desktop/config"
 import { atomicWriteJson } from "~/lib/platform/atomic-json"
 
+import { expectOwnerOnlyFile } from "./helpers/file-modes"
+import { redirectLocalAppData } from "./helpers/win-appdata"
+
 let dir: string
+let restoreLocalAppData: () => void
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "maximal-atomic-json-"))
+  // The Claude Desktop cases below resolve %LOCALAPPDATA% on win32 rather than
+  // the `dir` they are handed; without this they would write to the real one.
+  restoreLocalAppData = redirectLocalAppData(dir)
 })
 
 afterEach(() => {
+  restoreLocalAppData()
   try {
     fs.rmSync(dir, { recursive: true, force: true })
   } catch {
@@ -54,7 +62,7 @@ describe("atomicWriteJson (shared helper)", () => {
     const raw = fs.readFileSync(file, "utf8")
     expect(raw).toBe(`${JSON.stringify({ a: 1, b: ["x"] }, null, 2)}\n`)
     expect(raw.endsWith("\n")).toBe(true)
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600)
+    expectOwnerOnlyFile(file)
     expect(fs.existsSync(`${file}.tmp`)).toBe(false)
   })
 
@@ -72,7 +80,7 @@ describe("atomicWriteJson (shared helper)", () => {
     atomicWriteJson(file, { a: 1 })
     // eslint-disable-next-line unicorn/prefer-json-parse-buffer
     expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({ a: 1 })
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600)
+    expectOwnerOnlyFile(file)
     expect(fs.existsSync(`${file}.tmp`)).toBe(false)
   })
 
@@ -99,7 +107,7 @@ describe("writeClaudeCodeSettings — atomic write (#231)", () => {
     writeClaudeCodeSettings(file, { foo: "bar" })
     // eslint-disable-next-line unicorn/prefer-json-parse-buffer
     expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({ foo: "bar" })
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600)
+    expectOwnerOnlyFile(file)
     expect(fs.existsSync(`${file}.tmp`)).toBe(false)
   })
 
@@ -130,7 +138,7 @@ describe("Claude Desktop config writer — atomic write (#231)", () => {
     expect(result.wrote).toBe(true)
     const topPath = path.join(getClaude3pDir(dir), "claude_desktop_config.json")
     expect(fs.existsSync(topPath)).toBe(true)
-    expect(fs.statSync(topPath).mode & 0o777).toBe(0o600)
+    expectOwnerOnlyFile(topPath)
   })
 
   it("self-heals over a stale _meta.json.tmp (crash recovery)", () => {

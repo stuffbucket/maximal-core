@@ -29,6 +29,8 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+const IS_WINDOWS = process.platform === "win32"
+
 function makeClaude(
   dir: string,
   opts: { version?: string; marker?: boolean } = {},
@@ -40,6 +42,29 @@ function makeClaude(
   lines.push(`echo "${opts.version ?? "1.2.3"} (Claude Code)"`)
   fs.writeFileSync(file, lines.join("\n") + "\n")
   fs.chmodSync(file, 0o755)
+  return file
+}
+
+/**
+ * A fake `claude` the host can actually EXECUTE, for the cases that let
+ * `readClaudeVersion` shell out instead of injecting `readVersion`.
+ *
+ * `makeClaude` above writes an extensionless `#!/bin/sh` script. Windows has
+ * no shebang: an extensionless file is not executable there no matter what
+ * `chmod` claims, so every exec-backed case degraded to `version: null`. The
+ * portable fixture is the shape a real Windows install has — npm's global
+ * `claude.cmd`, which is exactly what `claudeBasenames("win32")` exists to
+ * find — so on win32 this writes a batch launcher and lets the win32 basename
+ * set discover it. That makes these cases real Windows coverage of
+ * `readClaudeVersion` rather than a POSIX rehearsal.
+ */
+function makeExecutableClaude(dir: string, version = "1.2.3"): string {
+  if (!IS_WINDOWS) return makeClaude(dir, { version })
+  fs.mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, "claude.cmd")
+  // `echo` takes the rest of the line literally, so the "(Claude Code)" suffix
+  // needs no quoting — and must NOT be quoted, or cmd echoes the quotes too.
+  fs.writeFileSync(file, `@echo off\r\necho ${version} (Claude Code)\r\n`)
   return file
 }
 
@@ -88,7 +113,7 @@ describe("detectClaudeInstalls", () => {
 
   test("parses --version output", () => {
     const dir = path.join(root, "bin")
-    const file = makeClaude(dir, { version: "9.8.7" })
+    const file = makeExecutableClaude(dir, "9.8.7")
     const resolved = fs.realpathSync(file)
 
     const installs = detectClaudeInstalls({
@@ -154,6 +179,12 @@ describe("detectClaudeInstalls", () => {
     expect(installs.some((i) => i.resolvedPath === resolved)).toBe(false)
   })
 
+  // The 500 ms ceiling below measures detection ONLY, and stays 500 ms on
+  // every platform — that is the invariant. The CASE-level budget has to cover
+  // the setup as well, and laying down 64 MB on the Windows runner's disk has
+  // been seen to eat most of Bun's 5 s default on its own, timing the case out
+  // before the thing under test ever ran. 30 s raises the setup allowance
+  // without loosening the assertion.
   test("does not read large candidate binaries in full (perf regression guard)", () => {
     // The real `claude` is a 200 MB+ binary. Detection must only read a
     // small prefix to check for the shim marker — reading the whole file
@@ -183,7 +214,7 @@ describe("detectClaudeInstalls", () => {
     // 500 ms is a generous ceiling that still fails a whole-file read of a
     // 200 MB+ binary (the actual bug was multi-second).
     expect(elapsed).toBeLessThan(500)
-  })
+  }, 30_000)
 
   test("returns only the active claude (first on PATH), ignoring others", () => {
     // A claude on PATH is the active one; copies in other known install
@@ -206,6 +237,12 @@ describe("detectClaudeInstalls", () => {
   test("falls back to known install dirs when nothing is active on PATH", () => {
     // No claude on PATH → probe known locations + npm-global so an
     // installed-but-not-active claude can still be surfaced.
+    //
+    // `platform` is pinned because the fixture below is the POSIX npm layout
+    // (`<prefix>/bin`). Windows npm puts the launcher in the prefix itself, so
+    // on an un-pinned win32 host the npm probe would look somewhere this test
+    // never wrote. That divergence is not incidental to this case — it has its
+    // own dedicated case in the "Windows (platform injected)" block.
     const home = path.join(root, "home")
     const localBin = makeClaude(path.join(home, ".local", "bin"))
     const claudeLocal = makeClaude(path.join(home, ".claude", "local"))
@@ -216,6 +253,7 @@ describe("detectClaudeInstalls", () => {
       homeDir: home,
       pathDirs: [], // nothing active
       npmPrefix,
+      platform: "linux",
     })
 
     const byPath = new Map(
@@ -313,6 +351,9 @@ describe("detectClaudeInstalls — source classification", () => {
     // Here the file sits at the CANONICAL npm probe path AND is NOT under
     // any homebrew prefix, so the only way it reads "npm-global" without
     // the npmBin prefix also matching is the origin shortcut.
+    //
+    // `platform` pinned: the canonical probe path is `<prefix>/bin` only on
+    // POSIX (see the sibling case above).
     const home = path.join(root, "home")
     const npmPrefix = path.join(root, "npmroot")
     const file = makeClaude(path.join(npmPrefix, "bin"))
@@ -321,6 +362,7 @@ describe("detectClaudeInstalls — source classification", () => {
       homeDir: home,
       pathDirs: [],
       npmPrefix,
+      platform: "linux",
     })
     expect(installs.find((i) => i.resolvedPath === resolved)?.source).toBe(
       "npm-global",
@@ -386,7 +428,7 @@ describe("detectClaudeInstalls — source classification", () => {
     // (no readVersion injection) so the regex in readClaudeVersion is
     // exercised end-to-end.
     const dir = path.join(root, "bin")
-    const file = makeClaude(dir, { version: "10.20.30" })
+    const file = makeExecutableClaude(dir, "10.20.30")
     const resolved = fs.realpathSync(file)
     const installs = detectClaudeInstalls({
       homeDir: path.join(root, "home"),
@@ -510,23 +552,23 @@ describe("detectClaudeInstalls — Windows (platform injected)", () => {
 describe("readClaudeVersion", () => {
   test("extracts a semver token from noisy output", () => {
     const dir = path.join(root, "bin")
-    const file = makeClaude(dir, { version: "1.0.44" })
+    const file = makeExecutableClaude(dir, "1.0.44")
     expect(readClaudeVersion(file)).toBe("1.0.44")
   })
 
   test("extracts a multi-digit semver (each component can be >1 digit)", () => {
     // Dropping a `+` from /\d+\.\d+\.\d+/ would yield "0.20.30" here.
     const dir = path.join(root, "multidigit")
-    const file = makeClaude(dir, { version: "10.20.30" })
+    const file = makeExecutableClaude(dir, "10.20.30")
     expect(readClaudeVersion(file)).toBe("10.20.30")
   })
 
   test("extracts the semver from leading tool-name + trailing build text", () => {
-    // makeClaude wraps the value as `<value> (Claude Code)`, so passing a
+    // The fixture wraps the value as `<value> (Claude Code)`, so passing a
     // leading tool name yields `claude 7.8.9 (Claude Code)`. The semver
     // must be plucked from the middle, not the surrounding prose.
     const dir = path.join(root, "named")
-    const file = makeClaude(dir, { version: "claude 7.8.9" })
+    const file = makeExecutableClaude(dir, "claude 7.8.9")
     expect(readClaudeVersion(file)).toBe("7.8.9")
   })
 

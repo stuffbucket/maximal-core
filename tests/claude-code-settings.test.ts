@@ -18,6 +18,8 @@ import {
   writeClaudeCodeSettings,
 } from "~/apps/claude-code/config"
 
+import { expectOwnerOnlyFile } from "./helpers/file-modes"
+
 let dir: string
 let settingsPath: string
 
@@ -215,10 +217,9 @@ describe("writeClaudeCodeSettings", () => {
     expect(fs.existsSync(`${settingsPath}.tmp`)).toBe(false)
   })
 
-  it("writes with mode 0600", () => {
+  it("writes an owner-only file (mode 0600 on POSIX)", () => {
     writeClaudeCodeSettings(settingsPath, { foo: 1 })
-    const mode = fs.statSync(settingsPath).mode & 0o777
-    expect(mode).toBe(0o600)
+    expectOwnerOnlyFile(settingsPath)
   })
 })
 
