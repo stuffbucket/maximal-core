@@ -19,13 +19,27 @@ function runRetentionSweep(): void {
   const days = getTokenUsageRetentionDays()
   if (days <= 0) return
   const cutoff = Date.now() - days * RETENTION_DAY_MS
-  void pruneTokenUsageEvents(cutoff).then((removed) => {
-    if (removed > 0) {
-      consola.debug(
-        `Pruned ${removed} token-usage event(s) older than ${days}d`,
-      )
-    }
-  })
+  // Two-arm `then`, not a bare `void`: this is the FIRST thing to open the
+  // SQLite store on a cold boot, and it runs from `finalizeBoot` — after both
+  // listeners are bound and after the ready banner/ready-line have gone out. A
+  // store that SQLite refuses (SQLITE_NOTADB from a file truncated by a SIGKILL
+  // mid-write or a full disk; SQLITE_CANTOPEN from a root-owned or read-only
+  // one) rejects here, and an unhandled rejection terminates the process — so
+  // the proxy announced it was ready and then died with a raw SQLite stack.
+  // Usage bookkeeping is a side feature: it degrades to "no sweep this cycle"
+  // and leaves the proxy serving.
+  void pruneTokenUsageEvents(cutoff).then(
+    (removed) => {
+      if (removed > 0) {
+        consola.debug(
+          `Pruned ${removed} token-usage event(s) older than ${days}d`,
+        )
+      }
+    },
+    (error: unknown) => {
+      consola.warn("Token-usage retention sweep failed:", error)
+    },
+  )
 }
 
 /**

@@ -20,16 +20,22 @@ import {
   translateToAnthropic,
   translateToOpenAI,
 } from "../non-stream-translation"
+import { emitStreamError } from "../stream-error"
 import { runAgentLoop } from "./agent"
 import { selectExecutor } from "./executor"
 import { attachClientShims, type WebToolPolicy } from "./rewriter"
-import { runStreamingAgent } from "./stream"
+import { runStreamingAgent, type UpstreamCall } from "./stream"
 
 export interface WebToolsFlowArgs {
   c: Context
   payload: AnthropicMessagesPayload
   options: FlowBaseOptions
   policy: WebToolPolicy
+  /** Upstream-call seam, forwarded to {@link runStreamingAgent}. Production
+   *  callers omit it and get the real `createChatCompletions`; the flow test
+   *  injects a stub so the mid-stream failure path is drivable without
+   *  `mock.module` on a shared module. */
+  upstreamCall?: UpstreamCall
 }
 
 export async function handleWithWebToolsAgent(args: WebToolsFlowArgs) {
@@ -72,13 +78,30 @@ export async function handleWithWebToolsAgent(args: WebToolsFlowArgs) {
   // Streaming path — true streaming during agent execution. Each
   // Copilot inner call streams; client sees text + server_tool_use +
   // result blocks as they happen, not buffered to the end.
+  //
+  // The `try` is load-bearing, and this flow needs it more than its three
+  // siblings in `api-flows.ts` do. Those call upstream BEFORE `streamSSE`, so a
+  // non-2xx becomes a real HTTP status via the route's `forwardError`. Here the
+  // agent loop runs one upstream call PER TURN, all of them inside the stream
+  // callback, after the client has already been committed to a 200
+  // `text/event-stream`. `streamSSE` takes no `onError` here, so an escaping
+  // throw is only `console.error`d and the response closes silently — the
+  // client waits for a `message_stop` that never comes. Report in-band instead.
   return streamSSE(c, async (stream) => {
-    await runStreamingAgent({
-      initialPayload: payload,
-      policy,
-      stream,
-      options,
-      executor,
-    })
+    try {
+      await runStreamingAgent({
+        initialPayload: payload,
+        policy,
+        stream,
+        options,
+        executor,
+        upstreamCall: args.upstreamCall,
+      })
+    } catch (error) {
+      await emitStreamError(stream, options.logger, {
+        error,
+        flow: "chat_completions",
+      })
+    }
   })
 }
