@@ -507,6 +507,42 @@ describe("docs reference parity", () => {
   })
 
   // -------------------------------------------------------------------------
+  // 6. The ADR namespace
+  // -------------------------------------------------------------------------
+
+  /**
+   * The check above can only resolve a citation of the form
+   * `docs/decisions/NNNN-slug.md`. A file in `docs/decisions/` that is not
+   * named that way is therefore invisible to it — uncitable by the convention
+   * and unenforced by the mechanism. This closes the namespace so that gap
+   * cannot reappear.
+   *
+   * Cheap and precision-safe by construction: it reads a directory listing and
+   * tests filenames against the same shape the citation regex already assumes.
+   * The only way to fail is to add a file to `docs/decisions/` that is not a
+   * numbered ADR, which is exactly the event worth a red result.
+   *
+   * No exemptions, deliberately. The one unnumbered file this would have caught
+   * (`site-runtime-version-manifest.md`) was a misfiled spec, not a decision
+   * record, and was moved to `docs/spec/` rather than allow-listed here. An
+   * allow-list on a check whose whole job is naming would only be a slower way
+   * of not enforcing it.
+   */
+  it("every file in docs/decisions is a numbered ADR", () => {
+    const unnumbered = allDocs()
+      .filter((p) => inTree(p, "docs/decisions"))
+      .map((p) => p.slice("docs/decisions/".length))
+      .filter((n) => !/^\d{4}-[a-z0-9-]+\.md$/.test(n))
+
+    expect(
+      unnumbered.length === 0 ?
+        ""
+      : `Not named as ADRs, so no ADR can cite them and the cross-reference check above cannot see them: ${unnumbered.join(", ")}.\n`
+          + "  Rename to docs/decisions/NNNN-slug.md, or move the file to docs/spec/ if it is a spec rather than a decision.\n",
+    ).toBe("")
+  })
+
+  // -------------------------------------------------------------------------
   // Keep the exclusion list honest
   // -------------------------------------------------------------------------
 
