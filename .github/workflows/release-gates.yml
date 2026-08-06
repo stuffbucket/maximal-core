@@ -54,9 +54,19 @@
 # PR: the `release-gate-override` label on one PR, and the
 # `RELEASE_GATES_MODE` repo variable set to `warn` to defuse the gate
 # repo-wide. The default is `enforce` rather than a warn-only rollout because a
-# warn-only gate has no forcing function to ever be turned on — and because
-# this workflow is NOT a required status check until someone adds it to branch
-# protection, so it is advisory by construction on day one anyway.
+# warn-only gate has no forcing function to ever be turned on.
+#
+# THE `gate` JOB BELOW IS A REQUIRED STATUS CHECK on `main` (the
+# `main-require-pr` ruleset — docs/admin/branch-rulesets.md). It was advisory
+# when this workflow was written; it is not any more, which makes the two escape
+# hatches above the only non-destructive way past it. Two consequences:
+#   - RENAMING THE JOB WEDGES EVERY PR. A required check names a job id; a
+#     required check that never reports blocks forever with nothing red to point
+#     at. scripts/ops/check-rulesets.test.ts holds the parity guard.
+#   - There is no `merge_group:` trigger here. None is needed while GitHub's
+#     Merge Queue stays unavailable on this user-owned repo (ci.yml keeps one
+#     for the day it is not), but enabling a queue without adding one here would
+#     hang it on this check.
 name: release-gates
 
 on:

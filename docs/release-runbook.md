@@ -174,6 +174,19 @@ irreversible**: `bumpp` commits, tags and pushes before `bun publish` is ever
 reached, and a registry publish cannot be taken back at all. Exit `1` means it
 refused and nothing happened; exit `2` means a step failed.
 
+> **This step pushes to `main` directly, and `main` requires a PR.** The push in
+> step 4 only lands because `main-require-pr` carries an always-mode bypass
+> actor for the admin role. It is the single dependency between this runbook and
+> the repository's branch rulesets — see
+> [`docs/admin/branch-rulesets.md`](admin/branch-rulesets.md). Remove the bypass
+> and this step fails at the push, with the version already bumped and the tag
+> already created locally; restoring the bypass or moving the whole flow to a PR
+> is then the only way forward. Verify it before you cut:
+>
+> ```sh
+> bun run rules:check
+> ```
+
 **The tag is an argument now**, and it is required. It names the milestone the
 changelog entry is generated from, and it is what `bumpp` bumps `package.json`
 to (`--release X.Y.Z`), so [gate 3](#the-gates) — the tag matches the manifest —
@@ -503,9 +516,37 @@ a warning for those; gate 2 still applies in full. A `chore: release X.Y.Z`
 commit is exempt from both — it ships the bump itself and belongs to no
 milestone.
 
-`release-gates.yml` is not a required status check unless someone adds it to
-branch protection. Until then it is advisory: it reports and fails its own job,
-but does not block the merge button.
+`release-gates.yml`'s `gate` job **is a required status check** — it blocks the
+merge button. It was advisory until the `main-require-pr` ruleset was applied;
+the escape hatches above are now the only way past it, and hatch 3 (delete the
+workflow) additionally wedges every PR, because a required check that never
+reports blocks forever with nothing red to point at.
+
+---
+
+## What `main` enforces
+
+Full detail, including why each piece is there, in
+[`docs/admin/branch-rulesets.md`](admin/branch-rulesets.md). The short version,
+because it changes how you land a PR:
+
+- **Every change reaches `main` through a PR**, squash-merged. Direct pushes are
+  rejected.
+- **`test`, `windows` and `gate` must be green.** `test` and `windows` are
+  `ci.yml`'s jobs; `gate` is `release-gates.yml`'s. All three are required
+  status checks, so a red one is a blocked merge, not a warning.
+- **The branch must be up to date with `main`** before it can merge
+  (`gh pr update-branch`). There is no Merge Queue on a user-owned repo, and no
+  bot to rebase for you here — that is the substitute, and it is what stops two
+  independently green PRs from landing a broken `main`.
+- **`main` cannot be deleted or force-pushed**, by anyone, with no exemption.
+
+> **The admin bypass on `main-require-pr` is load-bearing for this runbook.**
+> [Step 4](#4-bump-tag-push) pushes the release commit *directly* to `main`, so
+> with the `pull_request` rule active and no bypass actor that push is rejected
+> — after the bump and the local tag, on the irreversible side of the step.
+> Whoever removes the bypass must move the release flow to a PR **in the same
+> change**. `bun run rules:check` asserts the bypass is still there.
 
 ---
 
@@ -575,10 +616,16 @@ Listed so nobody re-derives it from a stale doc:
   this tooling, and a milestone named that fails gate 1.
 - No automatic *creation* of the next milestone, and no check that a merged PR's
   milestone is still open.
+- **No Merge Queue and no bot to rebase for you.** `main` requires a branch to be
+  up to date before it merges, which is the substitute for the queue this
+  user-owned repo cannot have — but `app-repoman`, which auto-rebases in the
+  repos it manages, does not manage this one. Run `gh pr update-branch` yourself.
 
 
 ## See also
 
+- [`docs/admin/branch-rulesets.md`](admin/branch-rulesets.md) — what `main`
+  enforces, and why the release flow depends on the admin bypass
 - [`docs/architecture.md`](architecture.md) → _Release & PR conventions_
 - [`scripts/ops/release.ts`](../scripts/ops/release.ts) — step 4 end to end, and
   the argument for the clean-tree definition and the `--all` / `--execute` pair

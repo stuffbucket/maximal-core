@@ -73,6 +73,15 @@ bun run release:preflight     # assert the pinned Bun without cutting anything
 
 # Ops tooling under scripts/ops/ (own tsconfig + test run)
 bun run check:ops    # typecheck:ops + test:ops
+bun run rules:check  # the live branch rulesets on `main` vs the floor recorded
+                     # in scripts/ops/check-rulesets.ts. Needs the network, so it
+                     # is NOT in check:deep; the daily watch-branch-rules.yml
+                     # runs it and files an issue. Exit 1 drift, 2 unreadable.
+                     # `bypass_actors` is only visible to a token that can read
+                     # repo administration — unauthenticated or from Actions it
+                     # reports that assertion as unverified, never as drift.
+                     # docs/admin/branch-rulesets.md
+bun run watch:drift  # the daily external-surface pin watch (docs/admin/external-drift-watch.md)
 ```
 
 `bun run typecheck` (root `tsc`) covers `src/`, `tests/`, `scripts/`,

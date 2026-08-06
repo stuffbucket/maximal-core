@@ -2309,6 +2309,7 @@ var init_package = __esm(() => {
       "release:manual": "bun scripts/ops/release.ts",
       "release:notes": "bun scripts/ops/release-notes.ts",
       "release:preflight": "bun scripts/ops/prepack.ts --check",
+      "rules:check": "bun scripts/ops/check-rulesets.ts",
       sbom: "bun scripts/sbom.ts",
       "scan:secrets": "trufflehog filesystem . --no-verification --fail --results=verified,unknown,unverified --no-update --exclude-paths .trufflehog-exclude",
       start: "NODE_ENV=production bun run ./src/main.ts",

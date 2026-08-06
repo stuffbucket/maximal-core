@@ -231,3 +231,12 @@ proven-equivalent). The decision itself is
   unrecognized token, and since the notes are generated from PR titles it
   is the title — not the body's individual commits, which a squash
   discards — that has to be right.
+- **`main` is protected by two rulesets, and they are what make every other
+  gate blocking.** A PR is mandatory, squash is the only merge method,
+  `test` / `windows` / `gate` are required status checks, the branch must be
+  up to date before it merges (the substitute for a Merge Queue this
+  user-owned repo cannot have), and `main` cannot be deleted or force-pushed.
+  The single exemption is the admin bypass `release:manual` needs to push the
+  release commit — remove it and every release is blocked. Verified by
+  `bun run rules:check`; described in
+  [`docs/admin/branch-rulesets.md`](admin/branch-rulesets.md).
