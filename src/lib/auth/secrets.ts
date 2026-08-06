@@ -91,6 +91,16 @@ export function readSecret(opts: {
   try {
     // O_NOFOLLOW refuses to traverse symlinks so a planted symlink under
     // any dir can't redirect the read.
+    //
+    // win32: `fs.constants.O_NOFOLLOW` is undefined there (Bun matches Node —
+    // the constant is only installed where the platform `#define`s it), so this
+    // degrades to `O_RDONLY | undefined` === `O_RDONLY`, a plain open. Neither
+    // runtime can express no-follow through `fs.open` flags on Windows at all,
+    // and the only alternative — an `lstat` pre-check — would reinstate exactly
+    // the TOCTOU race this fd-based read exists to avoid. So, as with
+    // {@link modeIsOwnerOnly}, the property is delegated to the `%APPDATA%`
+    // directory ACL: an attacker who can plant a symlink there can already
+    // overwrite the secret file outright.
     fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
   } catch {
     return { value: undefined, source: "unset" }
