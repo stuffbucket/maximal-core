@@ -17863,8 +17863,6 @@ function createAuthMiddleware(options = {}) {
   const isEnforcing = options.isEnforcing ?? (() => getConfig().auth?.enforce === true);
   const allowUnauthenticatedPaths = options.allowUnauthenticatedPaths ?? ["/"];
   const allowUnauthenticatedPrefixes = options.allowUnauthenticatedPrefixes ?? [];
-  const requireAuthPrefixes = options.requireAuthPrefixes ?? [];
-  const alwaysEnforcePrefixes = options.alwaysEnforcePrefixes ?? [];
   const allowOptionsBypass = options.allowOptionsBypass ?? true;
   const loopbackOnlyPaths = options.loopbackOnlyPaths ?? [];
   const getRequestIp = options.getRequestIp ?? defaultGetRequestIp;
@@ -17874,7 +17872,7 @@ function createAuthMiddleware(options = {}) {
     if (allowUnauthenticatedPaths.includes(c3.req.path))
       return true;
     const path2 = c3.req.path;
-    if (allowUnauthenticatedPrefixes.some((p) => pathMatchesPrefix(path2, p)) && !requireAuthPrefixes.some((p) => pathMatchesPrefix(path2, p))) {
+    if (allowUnauthenticatedPrefixes.some((p) => pathMatchesPrefix(path2, p))) {
       return true;
     }
     if (loopbackOnlyPaths.includes(c3.req.path) && isLoopbackAddress(getRequestIp(c3))) {
@@ -17882,11 +17880,11 @@ function createAuthMiddleware(options = {}) {
     }
     return false;
   };
-  const decideAuth = (requestApiKey, mandatory) => {
+  const decideAuth = (requestApiKey) => {
     if (isShellKey(requestApiKey)) {
       return { allow: true, id: null, label: "Maximal Settings" };
     }
-    if (!mandatory && !isEnforcing()) {
+    if (!isEnforcing()) {
       const entry2 = requestApiKey ? findApiKeyEntry(requestApiKey) : null;
       return { allow: true, id: entry2?.id ?? null, label: entry2?.label ?? null };
     }
@@ -17899,8 +17897,7 @@ function createAuthMiddleware(options = {}) {
   return async (c3, next) => {
     if (shouldBypass(c3))
       return next();
-    const mandatory = alwaysEnforcePrefixes.some((p) => pathMatchesPrefix(c3.req.path, p));
-    const decision = decideAuth(extractRequestApiKey(c3), mandatory);
+    const decision = decideAuth(extractRequestApiKey(c3));
     if (!decision.allow)
       return createUnauthorizedResponse(c3);
     recordClient({
@@ -17917,7 +17914,7 @@ var LOOPBACK_IPS, requireGithubAuth = async (c3, next) => {
   }
   return c3.json({
     error: "not_authenticated",
-    hint: "Open Settings \u2192 Account to sign in, or run `maximal auth`."
+    hint: "Run `maximal auth` to sign in, or start the flow over the /control API."
   }, 401);
 };
 var init_request_auth = __esm(() => {
@@ -35333,7 +35330,7 @@ ${state.models?.data.map((model) => `- ${model.id}`).join(`
       });
     }
   }
-  consola.warn("No GitHub token; proxy is up in unauthenticated mode \u2014 sign in via /settings or run `maximal auth`.");
+  consola.warn("No GitHub token; proxy is up in unauthenticated mode \u2014 run `maximal auth` to sign in.");
 }
 function bootSecrets() {
   ensureSecretsDir();
