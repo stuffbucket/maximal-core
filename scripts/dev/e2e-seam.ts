@@ -20,10 +20,24 @@
  */
 import { ControlClient, ControlRpcError } from "~/lib/live/client"
 
-import { createReporter, startSidecar } from "./harness/sidecar"
+import { createReporter, probeIdentity, startSidecar, tcpAccepts } from "./harness/sidecar"
 
 const report = createReporter("e2e:seam — control plane over a real sidecar")
 const sidecar = await startSidecar()
+// Connect before anything else is awaited: the subject is what is true at the
+// instant the ready-line arrives, and any work in between would give a late
+// listener time to catch up.
+const listeners = [
+  ["proxy", sidecar.proxyPort],
+  ["control", sidecar.port],
+] as const
+const accepting = await Promise.all(
+  listeners.map(async ([label, port]) => ({
+    label,
+    port,
+    ...(await tcpAccepts(port)),
+  })),
+)
 
 try {
   report.check(
@@ -31,6 +45,20 @@ try {
     sidecar.port > 0 && sidecar.pid > 0,
     `port=${sidecar.port} (0 requested → ephemeral) pid=${sidecar.pid}`,
   )
+
+  // The ready-line is a published contract: the shell and stuffbucket/maximal
+  // connect the instant they read one. So assert the sockets are accepting
+  // *now* — a line emitted between the bind and the listen would make every
+  // consumer race it, and through `fetch` that is indistinguishable from a busy
+  // process. A bare connect tells the two apart.
+  report.check(
+    "accepting",
+    accepting.every((a) => a.accepted),
+    accepting
+      .map((a) => `${a.label} :${a.port} ${a.observed} in ${a.elapsedMs}ms`)
+      .join(", "),
+  )
+
   report.check(
     "boot lines",
     sidecar.bootLines.length > 0,
@@ -42,19 +70,25 @@ try {
   // port third-party tools call. Asserting the two ports differ is not enough —
   // check that each app really refuses the other's routes, because a mounting
   // mistake would leave both reachable on both and nobody would notice.
+  const distinct =
+    sidecar.port !== sidecar.proxyPort
+    && sidecar.port > 0
+    && sidecar.proxyPort > 0
   report.check(
     "two listeners",
-    sidecar.port !== sidecar.proxyPort
-      && sidecar.port > 0
-      && sidecar.proxyPort > 0,
-    `control=${sidecar.port} proxy=${sidecar.proxyPort} (distinct)`,
+    distinct,
+    distinct ?
+      `control=${sidecar.port} proxy=${sidecar.proxyPort} (distinct)`
+    : `control=${sidecar.port} proxy=${sidecar.proxyPort} — not two usable, separate listeners`,
   )
 
   const v1OnControl = await fetch(`${sidecar.baseUrl}/v1/models`)
   report.check(
     "no /v1 on control",
     v1OnControl.status === 404,
-    `${v1OnControl.status} — the data plane is not mounted on the private port`,
+    v1OnControl.status === 404 ?
+      "404 — the data plane is not mounted on the private port"
+    : `/v1/models answered ${v1OnControl.status} on the control port — the data plane is mounted there`,
   )
 
   const rpcOnProxy = await fetch(`${sidecar.proxyUrl}/control/rpc`, {
@@ -65,14 +99,18 @@ try {
   report.check(
     "no control on proxy",
     rpcOnProxy.status === 404,
-    `${rpcOnProxy.status} — the control plane is not on the well-known port`,
+    rpcOnProxy.status === 404 ?
+      "404 — the control plane is not on the well-known port"
+    : `/control/rpc answered ${rpcOnProxy.status} on the public port — the control plane is exposed there`,
   )
 
-  const identity = await fetch(`${sidecar.proxyUrl}/`)
+  const identity = await probeIdentity(sidecar.proxyPort)
   report.check(
     "identity probe",
-    (await identity.text()).trim() === "Server running",
-    "the public port answers the probe `resolvePort` uses to spot another maximal",
+    identity.body === "Server running",
+    identity.body === "Server running" ?
+      "the public port answers the probe `resolvePort` uses to spot another maximal"
+    : `the public port answered ${identity.observed} — \`resolvePort\` would not recognise this as a maximal`,
   )
 
   const client = new ControlClient({ baseUrl: sidecar.baseUrl })
@@ -86,7 +124,7 @@ try {
     "discover",
     discovered.identity.name === "maximal-core"
       && discovered.capabilities.methods.length > 0,
-    `v${discovered.protocolVersion} ${discovered.capabilities.methods.length} methods`,
+    `${JSON.stringify(discovered.identity.name)} v${discovered.protocolVersion} ${discovered.capabilities.methods.length} methods`,
   )
 
   // Discovery must not under-report: a host builds its callable surface from
@@ -99,15 +137,18 @@ try {
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method }),
       })
       // Any answer but "method not found" means it is really wired up.
-      if (method === "subscriptions/listen") return true
+      if (method === "subscriptions/listen") return { method, ok: true }
       const body = (await res.json()) as { error?: { code?: number } }
-      return body.error?.code !== -32601
+      return { method, ok: body.error?.code !== -32601 }
     }),
   )
+  const missing = dispatches.filter((d) => !d.ok).map((d) => d.method)
   report.check(
     "advertised",
-    dispatches.every(Boolean),
-    `${dispatches.filter(Boolean).length}/${dispatches.length} advertised methods actually dispatch`,
+    missing.length === 0,
+    missing.length === 0 ?
+      `${dispatches.length}/${dispatches.length} advertised methods actually dispatch`
+    : `${missing.length}/${dispatches.length} advertised but not dispatchable (-32601): ${missing.join(", ")}`,
   )
 
   const health = await client.call<{ ok: boolean }>("health")
@@ -135,16 +176,21 @@ try {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", method: "health" }),
   })
+  const notifiedBody = await notified.text()
   report.check(
     "notification",
-    notified.status === 202 && (await notified.text()) === "",
-    `${notified.status} with an empty body`,
+    notified.status === 202 && notifiedBody === "",
+    notified.status === 202 && notifiedBody === "" ?
+      "202 with an empty body"
+    : `${notified.status} with ${notifiedBody === "" ? "an empty body" : JSON.stringify(notifiedBody)} — a host firing a notification would wait on a reply`,
   )
 
   report.check(
     "alive",
     sidecar.child.exitCode === null,
-    "sidecar survived the exchange (no EPIPE)",
+    sidecar.child.exitCode === null ?
+      "sidecar survived the exchange (no EPIPE)"
+    : `sidecar exited code=${sidecar.child.exitCode} during the exchange`,
   )
 } finally {
   sidecar.child.kill("SIGTERM")

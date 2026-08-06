@@ -176,10 +176,13 @@ const report = createReporter(
 // gets to send SIGTERM, so the sidecar has to notice on its own.
 {
   const decoy = await startDecoyParent()
+  const decoyAlive = isAlive(decoy.pid)
   report.check(
     "decoy",
-    isAlive(decoy.pid),
-    `pid=${decoy.pid} idle, and visible to the kill(pid, 0) probe the watchdog uses`,
+    decoyAlive,
+    decoyAlive ?
+      `pid=${decoy.pid} idle, and visible to the kill(pid, 0) probe the watchdog uses`
+    : `pid=${decoy.pid} is already invisible to kill(pid, 0) — the watchdog would fire before the parent ever died`,
   )
 
   const sidecar = await startSidecar({ parentPid: decoy.pid })

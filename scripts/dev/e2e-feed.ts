@@ -73,10 +73,15 @@ try {
   const envelopes = opened.frames.map((frame) =>
     frameEnvelopeSchema.safeParse(JSON.parse(frame.block.slice(frame.block.indexOf("data:") + 5).trim())),
   )
+  const invalid = envelopes.flatMap((parsed, index) =>
+    parsed.success ? [] : [`#${index} ${parsed.error.issues[0]?.message ?? "invalid"}`],
+  )
   report.check(
     "notification",
-    envelopes.every((parsed) => parsed.success),
-    `${envelopes.filter((p) => p.success).length}/${envelopes.length} valid JSON-RPC notifications`,
+    invalid.length === 0,
+    invalid.length === 0 ?
+      `${envelopes.length}/${envelopes.length} valid JSON-RPC notifications`
+    : `${invalid.length}/${envelopes.length} frames are not valid JSON-RPC notifications: ${invalid.join("; ")}`,
   )
 
   const withId = opened.frames.filter((frame) =>
@@ -132,13 +137,17 @@ try {
   report.check(
     "reconnect",
     reconnected.frames[0]?.method === "control/snapshot",
-    "a fresh subscription re-snapshots (close unsubscribed cleanly)",
+    reconnected.frames[0]?.method === "control/snapshot" ?
+      "a fresh subscription re-snapshots (close unsubscribed cleanly)"
+    : `a fresh subscription opened with ${reconnected.frames[0]?.method ?? "no frame at all"} — the previous close did not unsubscribe cleanly`,
   )
 
   report.check(
     "alive",
     sidecar.child.exitCode === null,
-    "sidecar survived three subscriptions",
+    sidecar.child.exitCode === null ?
+      "sidecar survived three subscriptions"
+    : `sidecar exited code=${sidecar.child.exitCode} across three subscriptions`,
   )
 } finally {
   sidecar.child.kill("SIGTERM")
