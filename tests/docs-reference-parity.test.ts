@@ -521,38 +521,24 @@ describe("docs reference parity", () => {
    * tests filenames against the same shape the citation regex already assumes.
    * The only way to fail is to add a file to `docs/decisions/` that is not a
    * numbered ADR, which is exactly the event worth a red result.
+   *
+   * No exemptions, deliberately. The one unnumbered file this would have caught
+   * (`site-runtime-version-manifest.md`) was a misfiled spec, not a decision
+   * record, and was moved to `docs/spec/` rather than allow-listed here. An
+   * allow-list on a check whose whole job is naming would only be a slower way
+   * of not enforcing it.
    */
-  const NON_ADR_DECISION_FILES = new Set([
-    // Unnumbered, predates the convention being enforced. Whether it belongs
-    // in docs/decisions/ at all is an open maintainer question: its producer
-    // side (the Astro site, deploy-pages.yml) left with the core split, but it
-    // is the design record for the manifest schema `parseManifestVersion` in
-    // src/lib/update/update-check.ts still parses. Resolve it by numbering the
-    // file, moving it to docs/spec/, or dropping it — then delete this entry.
-    "site-runtime-version-manifest.md",
-  ])
-
   it("every file in docs/decisions is a numbered ADR", () => {
-    const names = allDocs()
+    const unnumbered = allDocs()
       .filter((p) => inTree(p, "docs/decisions"))
       .map((p) => p.slice("docs/decisions/".length))
-
-    const unnumbered = names.filter(
-      (n) =>
-        !/^\d{4}-[a-z0-9-]+\.md$/.test(n) && !NON_ADR_DECISION_FILES.has(n),
-    )
-    const stale = [...NON_ADR_DECISION_FILES].filter((n) => !names.includes(n))
+      .filter((n) => !/^\d{4}-[a-z0-9-]+\.md$/.test(n))
 
     expect(
       unnumbered.length === 0 ?
         ""
       : `Not named as ADRs, so no ADR can cite them and the cross-reference check above cannot see them: ${unnumbered.join(", ")}.\n`
           + "  Rename to docs/decisions/NNNN-slug.md, or move the file to docs/spec/ if it is a spec rather than a decision.\n",
-    ).toBe("")
-    expect(
-      stale.length === 0 ?
-        ""
-      : `Allow-listed as non-ADR files in docs/decisions but no longer present: ${stale.join(", ")}. Remove the entry from NON_ADR_DECISION_FILES.`,
     ).toBe("")
   })
 
