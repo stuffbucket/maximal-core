@@ -142,15 +142,17 @@ clicks in UTM's UI. There's no public API to script those clicks in
 
 ## Known limitations
 
-- **No Windows runner on the PR gate.** `ci.yml` is `ubuntu-latest` only,
-  so nothing Windows-specific is checked before merge. There *is* a
-  native Windows leg, but it runs on a **tag push**, not a PR:
-  `release-artifacts.yml` builds `bun-windows-x64` on `windows-latest`
-  and drives `bun run verify:artifact` and the full `bun run e2e:binary`
-  suite against it. That is exactly the gap this VM covers — a Windows
-  defect surfaces at release time otherwise, which is how v0.4.2 shipped
-  asset-less. (There is still no installer workflow here; MSI packaging
-  lives in the parent repo.)
+- **CI's Windows leg does not run the test suite.** `ci.yml` now has a
+  `windows` job (`windows-latest`) that runs `bun install`,
+  `build:binary`, `verify:artifact` and `e2e:binary` against the
+  compiled `bun-windows-x64` artifact on every PR — so install-time and
+  artifact-level Windows breakage is caught before a tag. But `bun test`
+  is deliberately excluded: 22 of the suite's tests assert POSIX
+  specifics (mode 0600, symlinks, `~/.local/share`) and fail on Windows.
+  So a green PR still says nothing about product behaviour under test on
+  Windows, and there is no installer workflow here either — MSI
+  packaging lives in the parent repo. That residue is what this VM is
+  for.
 - **ARM64 emulation of x64 binaries is fast but not native.** The Windows
   Bun output is x64 (`TARGETS` in `scripts/dev/build-binary.ts`); it runs on Windows 11
   ARM via Microsoft's x64 emulation layer, which is fine for installer

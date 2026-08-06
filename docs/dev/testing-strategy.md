@@ -623,7 +623,10 @@ We would specifically like external judgment on these:
 ## 9. CI gates & the local equivalents
 
 CI (`.github/workflows/ci.yml`) runs on every pull request, on pushes to `main`
-and `dev`, and in the merge queue, and is the merge gate. Steps, in order:
+and `dev`, and in the merge queue, and is the merge gate. It has **two
+concurrent jobs**.
+
+**Job `test`** (`ubuntu-latest`) — the product gate. Steps, in order:
 
 1. Verify Node `node:sqlite` support (the app uses it).
 2. Pinned Bun setup (`.github/actions/setup-bun`, version read from `.bun-version`).
@@ -647,17 +650,27 @@ and `dev`, and in the merge queue, and is the merge gate. Steps, in order:
     green here means "no layering violation", not "no cycles".
 12. **`bun run build`**.
 
+**Job `windows`** (`windows-latest`) — the `bun-windows-x64` release leg, run
+before a tag exists: `bun install`, then `build:binary`, `verify:artifact`, and
+`e2e:binary` against the compiled artifact. It exists because Windows used to be
+exercised only by `release-artifacts.yml` on a tag push, which is how v0.4.2
+shipped with no binaries — an inline `prepare` one-liner that Bun's Windows shell
+rejects failed `bun install` outright, after the tag was already immutable.
+**`bun test` is deliberately absent from this job**: 22 of the suite's tests
+assert POSIX specifics (mode 0600, symlinks, `~/.local/share`) and do not pass on
+Windows. Do not read a green `windows` job as "the suite passes on Windows".
+
 Security workflows (CodeQL, trufflehog) run alongside, `release-gates.yml`
 checks a PR's milestone and bump, and `randomized-test-order.yml` runs nightly
 (see below). There is **no** build/sign/publish pipeline on a *PR* — no dmg,
-MSI, checksums, or smoke test — and no release automation: a release is a GitHub
+MSI, checksums, or signing — and no release automation: a release is a GitHub
 milestone, tagged by hand, and it is the tag push that fires
 `release-artifacts.yml` (see `docs/architecture.md` → *Release & PR conventions*
 and `docs/release-runbook.md`).
 
 ### Why `--randomize` is not a PR gate
 
-Step 9 runs `bun test` in its declared order, deliberately. `bun test
+Step 9 of `test` runs `bun test` in its declared order, deliberately. `bun test
 --randomize` is the only mechanical detector we have for the cross-file
 shared-state class (§5.1, §5.6), but it is the wrong shape for a merge gate:
 
@@ -693,7 +706,9 @@ not evidence.
 - `bun run check:fast` = `lint:fast → typecheck → lint:all`.
 - `bun run check:deep` = `check:fast → casts:check → bun test → knip →
   deps:check → build → typecheck:downstream → bindings:check`. This is a
-  superset of the CI step list above, so green here means green there.
+  superset of the `test` job's step list above, so green here means green
+  there. It says nothing about the `windows` job, which builds and exercises a
+  compiled artifact on a Windows runner — nothing local reproduces that.
 - `bun run check:ops` = `typecheck:ops → test:ops`, for `scripts/ops/` (its own
   tsconfig and test run; `tooling-ci.yml` is the CI counterpart).
 - **Pre-commit hook** (simple-git-hooks → lint-staged): `bun run lint --fix` +
