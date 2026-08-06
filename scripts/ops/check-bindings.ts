@@ -590,6 +590,8 @@ export interface CheckOptions {
    * real `::error` onto the run's Checks tab and invents a failure.
    */
   annotate?: boolean
+  /** Where the report and the annotation go. Defaults to stdout. */
+  log?: (line: string) => void
 }
 
 /**
@@ -638,6 +640,11 @@ export function collectDrift(options: CheckOptions = {}): CheckResult {
 export function main(options: CheckOptions = {}): number {
   const artifacts = options.artifacts ?? ARTIFACTS
   const annotate = options.annotate ?? process.env.GITHUB_ACTIONS !== undefined
+  const log =
+    options.log
+    ?? ((line: string) => {
+      console.log(line)
+    })
   let result: CheckResult
   try {
     result = collectDrift(options)
@@ -647,10 +654,10 @@ export function main(options: CheckOptions = {}): number {
     )
     return 2
   }
-  console.log(renderReport(result, artifacts))
+  log(renderReport(result, artifacts))
   if (annotate) {
     const annotation = renderAnnotation(result, artifacts)
-    if (annotation !== undefined) console.log(annotation)
+    if (annotation !== undefined) log(annotation)
   }
   return exitCodeFor(result)
 }
