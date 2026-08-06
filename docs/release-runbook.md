@@ -97,6 +97,33 @@ warning the PR gate emits: it re-checks *every* PR in the milestone against the
 version about to be cut, so a milestone that was retargeted after one of its PRs
 merged cannot ship under-bumped.
 
+### Dry-run the artifacts before you tag
+
+```sh
+gh workflow run release-artifacts.yml -f ref=main    # or a SHA / branch
+gh run watch "$(gh run list --workflow release-artifacts.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+`publish` defaults to **false**, so this builds and verifies both legs and
+touches no release. It is the only thing that exercises the **macOS** leg, the
+second target's compile, and the publish job's rename / `SHA256SUMS` /
+`ARTIFACTS.md` assembly before the tag exists — roughly ten minutes, once per
+release, at the one moment you are willing to wait for it.
+
+> **Why this step exists.** [Step 5](#5-publish-the-artifacts) runs on a tag
+> push, and a tag is immutable in practice — so a leg that dies there dies after
+> the version is already spent. That is not hypothetical: `v0.4.2` shipped with
+> **no binaries** because #38 put an inline shell one-liner in `package.json`'s
+> `prepare` that Bun's built-in shell rejects on Windows, so `bun install`
+> failed outright on the `bun-windows-x64` leg and `publish` never ran. Fixed in
+> #46; the tag could not be given assets afterwards.
+>
+> The recurring half of that gap is now closed automatically: `ci.yml` has a
+> `windows` job that runs the Windows leg — `bun install`, `build:binary`,
+> `verify:artifact`, `e2e:binary` — on **every PR**, concurrently with the
+> ubuntu job, for about 16 seconds of added wall clock. This dispatch covers
+> what a single-platform PR job structurally cannot.
+
 ## 3. Check the notes
 
 ```sh
@@ -347,6 +374,13 @@ the tag.
 entirely: nothing is uploaded, no partial set is attached, and the run is red.
 Both legs always run to completion, so one report tells you whether it was one
 platform or both.
+
+**By the time this runs, neither leg should be able to surprise you.** The
+Windows leg has already run on every PR in the milestone (`ci.yml`'s `windows`
+job), and both legs ran against the release candidate at
+[step 2](#dry-run-the-artifacts-before-you-tag). If you skipped that dispatch,
+this is the first time the macOS leg has seen this code — and it is running
+against a tag that cannot be un-cut.
 
 ### Running the same checks locally
 

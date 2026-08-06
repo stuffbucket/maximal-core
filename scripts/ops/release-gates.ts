@@ -794,22 +794,48 @@ export function parseArgs(argv: ReadonlyArray<string>): Args {
 
 const USAGE = `usage: bun run release:check <pr <number> | milestone <vX.Y.Z> | version <vX.Y.Z>> [--repo owner/name] [--mode enforce|warn]`
 
-function report(report_: GateReport, mode: Mode): number {
-  console.log(renderFindings(report_))
-  if (process.env.GITHUB_ACTIONS) {
-    for (const line of renderAnnotations(report_)) console.log(line)
-  }
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${renderSummary(report_)}\n`)
+export interface MainOptions {
+  /**
+   * Emit the GitHub Actions surfaces — the Checks-tab `::error`/`::warning`
+   * annotations and the `$GITHUB_STEP_SUMMARY` section. Defaults to whether we
+   * are ON Actions, which is the same seam `check-bindings.ts` grew in #31.
+   *
+   * Tests must pass `false`. `main` reads the repo's real `package.json`, so a
+   * test driving a fixture tag otherwise paints an invented `::error` and an
+   * invented summary block onto a run that is passing — which teaches everyone
+   * to ignore the surface a real gate failure arrives on.
+   */
+  annotate?: boolean
+  /** Where the report goes. Defaults to stdout. */
+  log?: (line: string) => void
+  /** Where the job summary is appended. Defaults to `$GITHUB_STEP_SUMMARY`. */
+  summaryPath?: string
+}
+
+function report(report_: GateReport, mode: Mode, options: MainOptions): number {
+  const log =
+    options.log
+    ?? ((line: string) => {
+      console.log(line)
+    })
+  const annotate = options.annotate ?? process.env.GITHUB_ACTIONS !== undefined
+  log(renderFindings(report_))
+  if (annotate) {
+    for (const line of renderAnnotations(report_)) log(line)
+    const summaryPath = options.summaryPath ?? process.env.GITHUB_STEP_SUMMARY
+    if (summaryPath) fs.appendFileSync(summaryPath, `${renderSummary(report_)}\n`)
   }
   const code = exitCodeFor(report_, mode)
   if (code === 0 && mode === "warn" && report_.findings.length > 0) {
-    console.log("\n(--mode warn: nothing blocked.)")
+    log("\n(--mode warn: nothing blocked.)")
   }
   return code
 }
 
-export function main(argv: ReadonlyArray<string>): number {
+export function main(
+  argv: ReadonlyArray<string>,
+  options: MainOptions = {},
+): number {
   const { subcommand, target, repo, mode } = parseArgs(argv)
   if (!subcommand || !target) {
     console.error(USAGE)
@@ -824,14 +850,15 @@ export function main(argv: ReadonlyArray<string>): number {
           console.error(`release-gates: \`${target}\` is not a PR number.\n${USAGE}`)
           return 2
         }
-        return report(collectPrGate(number, { repo }), mode)
+        return report(collectPrGate(number, { repo }), mode, options)
       }
       case "milestone":
-        return report(collectMilestoneGate(target, { repo }), mode)
+        return report(collectMilestoneGate(target, { repo }), mode, options)
       case "version":
         return report(
           checkTagVersion(target, readPackageVersion(PACKAGE_JSON_PATH)),
           mode,
+          options,
         )
       default:
         console.error(`release-gates: unknown subcommand \`${subcommand}\`.\n${USAGE}`)

@@ -56,6 +56,20 @@
 # otherwise. Both binaries ship unsigned, say so in their filenames, and the
 # limitation is spelled out in the ARTIFACTS.md asset and in the runbook.
 #
+# ## This is no longer the first time Windows runs
+#
+# It used to be, and that cost v0.4.2 its binaries: this workflow is tag-
+# triggered, so the `bun-windows-x64` leg was first exercised after the tag was
+# already immutable. `ci.yml` now carries a `windows` job that runs this leg's
+# `bun install` -> `build:binary` -> `verify:artifact` -> `e2e:binary` sequence
+# on every PR (~16s of added CI wall clock; the numbers are in that job's
+# comment). CHANGING THE STEP LIST BELOW MEANS CHANGING IT THERE TOO — the two
+# are coupled through package.json script names, not through shared YAML.
+#
+# What still runs first here, and is therefore what the pre-tag dry run in
+# docs/release-runbook.md §2 exists for: the macOS leg, and the publish job's
+# rename / SHA256SUMS / ARTIFACTS.md assembly.
+#
 # ## Permissions
 #
 # Repo default is least privilege. The top-level grant is `contents: read`; only
