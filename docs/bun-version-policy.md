@@ -3,7 +3,7 @@
 Pinned in `.bun-version` — read by `bun install`, by Bun's own version manager,
 and at runtime by every CI workflow that needs Bun: `ci.yml`, `tooling-ci.yml`,
 `watch-external-drift.yml`, `watch-branch-rules.yml`, `randomized-test-order.yml`,
-`release-gates.yml`, `release-tag-check.yml`, `release-artifacts.yml`, and
+`release-gates.yml`, `release-tag-check.yml`, and
 `publish-package.yml` each
 `cat .bun-version` into `setup-bun`. No workflow holds a copy of the version
 literal, so dev/CI drift is not representable — which is the point: drift is
@@ -26,6 +26,13 @@ artifact that the version decides:
    and `bun run check:ops`.
 5. If green, commit `.bun-version` and `dist/main.js` together.
 6. Watch the next CI run.
+
+Steps 3-4 are the ones that go wrong, because they depend on your PATH rather
+than on anything the repo can assert. `bun run container:run -- bun run check:deep`
+runs them inside an image whose Bun **is** `.bun-version` and cannot be anything
+else; its tag carries the pin, so bumping the file builds a new image rather
+than reusing the old one. See
+[`docs/dev/container-toolchain.md`](dev/container-toolchain.md).
 
 ## The pin decides `dist/main.js`
 

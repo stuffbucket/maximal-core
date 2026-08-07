@@ -54,9 +54,10 @@ bun run scan:secrets # manual full-repo trufflehog scan. Requires trufflehog on
 
 # End-to-end (spawns the real binary + a real port; outside `bun test`)
 bun run e2e          # e2e:seam + e2e:feed + e2e:lifecycle + e2e:replace
-bun run e2e:binary   # the same four harnesses against a compiled binary
-                     # --binary=<path> runs them against an existing artifact
-                     # instead of compiling a throwaway one
+MAXIMAL_E2E_BINARY=<path> bun run e2e
+                     # the same four harnesses against a compiled binary. Core
+                     # builds none — stuffbucket/maximal compiles this repo's
+                     # src/main.ts — so point it at that artifact.
 
 # Mutation testing (manual only — not wired into check:deep)
 bun run mutate       # Stryker over the module(s) in stryker.conf.json's `mutate`
@@ -110,6 +111,15 @@ bun run rules:check  # the live branch rulesets on `main` vs the floor recorded
                      # reports that assertion as unverified, never as drift.
                      # docs/admin/branch-rulesets.md
 bun run watch:drift  # the daily external-surface pin watch (docs/admin/external-drift-watch.md)
+
+# The pinned toolchain container (docs/dev/container-toolchain.md)
+bun run container:build  # build maximal-core-ci:bun-<.bun-version>. The tag IS
+                         # the pin, so a stale image is not addressable.
+bun run container:run -- <cmd>  # run <cmd> against this tree inside it. Builds
+                         # on first use. Its own node_modules volume (never the
+                         # host's — platform-specific binaries) and your uid,
+                         # not root. `-- bun run check:deep` is the usual one.
+bun run container:shell  # interactive bash in the same environment
 ```
 
 `bun run typecheck` (root `tsc`) covers `src/`, `tests/`, `scripts/`,

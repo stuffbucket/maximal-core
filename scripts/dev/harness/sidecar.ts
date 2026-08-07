@@ -87,11 +87,20 @@ export interface StartOptions {
  *
  * Defaults to running from source. Set `MAXIMAL_E2E_BINARY` to a compiled
  * binary's path and every harness runs against *that* instead — same checks,
- * different artifact. That matters because the shipped artifact is the compiled
- * one, and `--compile` is its own execution environment: bundled asset
- * resolution, `--define` substitution, and embedded-runtime behaviour all differ
- * from a source run. A regression that only appears once compiled would
- * otherwise reach a signed DMG unnoticed.
+ * different artifact. That matters because `--compile` is its own execution
+ * environment: bundled asset resolution, `--define` substitution, and
+ * embedded-runtime behaviour all differ from a source run, so a regression that
+ * only appears once compiled is invisible to every other check here.
+ *
+ * NOTHING IN THIS REPO SETS IT ANY MORE, and that is not a reason to delete it.
+ * Core stopped compiling binaries when delivery moved to the GitHub Package
+ * Registry, but the compile did not stop happening: `stuffbucket/maximal`'s
+ * `scripts/build-sidecar.ts` runs `bun build --compile` over **this repo's**
+ * `src/main.ts`, reached through the git dependency, and that binary is what
+ * ships to users. This variable is the only way to point core's own e2e
+ * harnesses at it:
+ *
+ *     MAXIMAL_E2E_BINARY=/path/to/maximal-aarch64-apple-darwin bun run e2e
  */
 function launchCommand(options: StartOptions): {
   cmd: string

@@ -54,9 +54,8 @@
 # branch has no tag, and the publish step refuses to do a real publish from one.
 #
 # A registry publish cannot be taken back — a version is burned even if it is
-# unpublished. `dry_run` therefore defaults to TRUE, mirroring how
-# `release-artifacts.yml` defaults `publish` to false: a dispatch rehearses,
-# and only a tag push publishes without being asked to.
+# unpublished. `dry_run` therefore defaults to TRUE: a dispatch rehearses, and
+# only a tag push publishes without being asked to.
 name: publish-package
 
 on:
@@ -100,7 +99,7 @@ jobs:
 
       - name: Install dependencies
         # `prepack` runs `bun build` and `bun x tsup`; neither resolves without
-        # node_modules. Plain `bun install`, matching release-artifacts.yml.
+        # node_modules. Plain `bun install`, matching ci.yml.
         run: bun install
 
       - name: Tag matches package.json

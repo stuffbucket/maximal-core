@@ -112,13 +112,16 @@ describe("reading a job's steps", () => {
 })
 
 describe("matching an invocation", () => {
+  // `build:lib` must not satisfy `build`. The examples are real script names
+  // on purpose: a fixture naming a script this repo does not have reads as a
+  // covered case and proves nothing about the ones it does.
   test("a longer script name does not satisfy a shorter one", () => {
-    expect(runsStep(["bun run build:binary -- --target=bun-windows-x64"], step("build"))).toBe(false)
+    expect(runsStep(["bun run build:lib"], step("build"))).toBe(false)
     expect(runsStep(["bun run build"], step("build"))).toBe(true)
   })
 
   test("arguments are not compared — the assertion is that the check runs", () => {
-    expect(runsStep(["bun run verify:artifact -- --binary=x"], step("verify:artifact"))).toBe(true)
+    expect(runsStep(["bun run deps:check --list"], step("deps:check"))).toBe(true)
   })
 
   test("a raw command matches the full-suite invocation, not a single-file one", () => {

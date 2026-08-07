@@ -15,8 +15,8 @@ and a human merges it.
 What exists instead is deliberate and manual, in five steps. Nothing cuts a
 release for you; five [gates](#the-gates) check that the one you cut by hand is
 well-formed, and two workflows fire once the tag exists ([step
-5](#5-publish-the-artifacts)) — one builds and attaches the binaries, the other
-publishes the npm package.
+5](#5-publish-the-package)) — one publishes the npm package, the other re-runs
+the tag gates against the tag that was actually pushed.
 
 ---
 
@@ -109,32 +109,20 @@ Both of these are previews. `release:prepare` runs the same two checks itself,
 before it bumps — see [step 4](#4-bump-land-the-pr-tag). Running them here costs
 seconds and tells you now rather than at the tag.
 
-### Dry-run the artifacts before you tag
+### Windows coverage happens on every PR
 
-```sh
-gh workflow run release-artifacts.yml -f ref=main    # or a SHA / branch
-gh run watch "$(gh run list --workflow release-artifacts.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
-```
+There is no artifact dry-run to do: core builds no binaries. The Windows
+exposure that used to require one now runs on **every PR** — `ci.yml`'s
+`windows` job does `bun install` (which runs the `prepare` lifecycle script
+under Bun's built-in Windows shell) and the full unit suite, concurrently with
+the ubuntu job.
 
-`publish` defaults to **false**, so this builds and verifies both legs and
-touches no release. It is the only thing that exercises the **macOS** leg, the
-second target's compile, and the publish job's rename / `SHA256SUMS` /
-`ARTIFACTS.md` assembly before the tag exists — roughly ten minutes, once per
-release, at the one moment you are willing to wait for it.
-
-> **Why this step exists.** [Step 5](#5-publish-the-artifacts) runs on a tag
-> push, and a tag is immutable in practice — so a leg that dies there dies after
-> the version is already spent. That is not hypothetical: `v0.4.2` shipped with
-> **no binaries** because #38 put an inline shell one-liner in `package.json`'s
-> `prepare` that Bun's built-in shell rejects on Windows, so `bun install`
-> failed outright on the `bun-windows-x64` leg and `publish` never ran. Fixed in
-> #46; the tag could not be given assets afterwards.
->
-> The recurring half of that gap is now closed automatically: `ci.yml` has a
-> `windows` job that runs the Windows leg — `bun install`, `build:binary`,
-> `verify:artifact`, `e2e:binary` — on **every PR**, concurrently with the
-> ubuntu job, for about 16 seconds of added wall clock. This dispatch covers
-> what a single-platform PR job structurally cannot.
+> **Why that job exists.** `v0.4.2` shipped with **no binaries** because #38 put
+> an inline shell one-liner in `package.json`'s `prepare` that Bun's shell
+> rejects on Windows, so `bun install` failed outright on the Windows leg — and
+> nothing saw it until after the tag, because Windows ran only on a tag push.
+> Fixed in #46; the tag could not be given assets afterwards. The binary
+> pipeline is gone, that failure mode is not: `prepare` still has to parse.
 
 ## 3. Check the notes
 
@@ -306,6 +294,23 @@ before the tag exists.
 
 The pushed tag fires [`release-tag-check.yml`](../.github/workflows/release-tag-check.yml)
 and [`publish-package.yml`](../.github/workflows/publish-package.yml).
+
+**If neither fires, they can both be run by hand.** Push events stop dispatching
+during an Actions outage — on 2026-08-06 the v0.4.4 tag push produced zero runs —
+and "the tripwire did not report" is indistinguishable from "the tripwire passed"
+unless you go and look. Both workflows accept a `workflow_dispatch`:
+
+```sh
+gh run list --workflow release-tag-check.yml --limit 3   # did it fire at all?
+gh workflow run release-tag-check.yml -f tag=vX.Y.Z
+gh workflow run publish-package.yml --ref vX.Y.Z -f dry_run=false
+```
+
+`release-tag-check.yml` checks out whatever tag it resolves, so the
+`package.json` its gates read is the one that tag publishes regardless of which
+ref the dispatch came from. It refuses a resolved value that is not a `v*` tag
+rather than comparing the string `main` against `package.json` and reporting a
+version mismatch that is really an operator error.
 
 > **The rebuild is 4a's `bumpp` step's `--execute` hook, and it is why the commit
 > is made with `--all`.** `bun build` inlines `package.json` — `BUILD_VERSION` in
@@ -491,85 +496,38 @@ git push origin vX.Y.Z
 > and can still be deleted.
 
 
-## 5. Publish the artifacts
+## 5. Publish the package
 
 Pushing the tag fires two workflows.
-[`release-artifacts.yml`](../.github/workflows/release-artifacts.yml)
-builds `bun-darwin-arm64` on a macOS arm64 runner and `bun-windows-x64` on a
-Windows x64 runner — **natively, because every check it runs executes the
-binary** — verifies each one with `verify:artifact` *and* the full `e2e:binary`
-suite, and attaches both plus `SHA256SUMS` and `ARTIFACTS.md` to the release for
-the tag. [`publish-package.yml`](../.github/workflows/publish-package.yml)
-publishes the npm package, described [below](#the-package-publish).
+[`publish-package.yml`](../.github/workflows/publish-package.yml) publishes the
+npm package, described below.
+[`release-tag-check.yml`](../.github/workflows/release-tag-check.yml) re-runs
+gates 3 and 4 against the tag that was actually pushed.
 
-> **Wait for it to go green before you run `gh release create`.** The workflow
-> creates the release itself, **as a draft**, if none exists — so the order that
-> makes a failed build harmless is: push the tag, watch the run, then fill in
-> the notes and publish the draft.
->
-> ```sh
-> gh run watch "$(gh run list --workflow release-artifacts.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
-> gh release edit vX.Y.Z --title "vX.Y.Z — <summary>" --draft=false \
->   --notes "$(bun run release:notes vX.Y.Z --release-body)"
-> ```
->
-> If you create the release first (the old order), the workflow uploads into it
-> and everything still works — **but a failed build then leaves a release that
-> is already public and has no assets, and nothing in CI can un-publish it.**
-> That is the state `v0.2.1`, `v0.3.0` and `v0.3.1` are in. It is recoverable
-> only by fixing the build and re-running the workflow by hand
-> (`gh workflow run release-artifacts.yml -f ref=vX.Y.Z -f publish=true`).
-
-**Failure behaviour.** A build or verify leg that fails skips the publish job
-entirely: nothing is uploaded, no partial set is attached, and the run is red.
-Both legs always run to completion, so one report tells you whether it was one
-platform or both.
-
-**By the time this runs, neither leg should be able to surprise you.** The
-Windows leg has already run on every PR in the milestone (`ci.yml`'s `windows`
-job), and both legs ran against the release candidate at
-[step 2](#dry-run-the-artifacts-before-you-tag). If you skipped that dispatch,
-this is the first time the macOS leg has seen this code — and it is running
-against a tag that cannot be un-cut.
-
-### Running the same checks locally
+**There are no binaries to attach.** Core delivered `bun-darwin-arm64` and
+`bun-windows-x64` artifacts until v0.4.4; that pipeline is gone, and the
+registry package is the delivery path. Nothing here creates a GitHub Release —
+create one by hand if you want release notes on the tag:
 
 ```sh
-bun run build:binary                                   # dist-bin/maximal, host target
-bun run verify:artifact -- --binary=dist-bin/maximal   # --version, boot, x-maximal-version, SIGTERM
-bun run e2e:binary -- --binary=dist-bin/maximal        # seam + feed + lifecycle + replace vs that exact file
+gh release create vX.Y.Z --title "vX.Y.Z — <summary>" \
+  --notes "$(bun run release:notes vX.Y.Z --release-body)"
 ```
 
-> **`bun run dev:stale-check` is not this check and never was.** It probes a
-> proxy already *running* on your machine and compares the `+<sha>` an `app:dev`
-> build embeds in `x-maximal-version` against `origin/main`. A release binary
-> embeds no `+<sha>`, so it reports `UNKNOWN` and exits 1 on every release
-> artifact, by construction. It answers "is my dev sidecar stale";
-> `verify:artifact` answers "is this file the release it claims to be". It was
-> called `verify:build` until v0.3.3 and earlier revisions of this step listed
-> it here. That was wrong; the rename is the fix.
+> **The compiled binary did not disappear, it moved.**
+> [`build-sidecar.ts`](https://github.com/stuffbucket/maximal/blob/main/scripts/build-sidecar.ts)
+> in `stuffbucket/maximal` runs `bun build --compile` over **this repo's**
+> `src/main.ts`, reached through the git dependency, and that is the binary
+> that reaches users. It never consumed core's artifacts. So
+> nothing downstream broke when this pipeline was removed — but it does mean the
+> `src` in the published tarball is load-bearing, which is why `files` ships it.
 
-### The binaries are unsigned, and that is not a formality
+To exercise a compiled binary against core's own e2e harnesses, point them at
+one:
 
-There is no Apple Developer ID, no notarization credential and no Windows
-code-signing certificate in this repo, so CI cannot sign anything. `--compile`
-also appends the bundled JS onto the Bun runtime *after* the linker signed it,
-so the ad-hoc signature the Mach-O carries is invalid on arrival — verified, not
-assumed:
-
+```sh
+MAXIMAL_E2E_BINARY=/path/to/maximal-<triple> bun run e2e
 ```
-$ codesign --verify --verbose dist-bin/maximal
-dist-bin/maximal: invalid signature (code or signature have been modified)
-```
-
-So: assets are named `…-unsigned`, a browser download of the macOS binary is
-Gatekeeper-quarantined and **will not launch** without
-`xattr -d com.apple.quarantine`, and the Windows binary trips SmartScreen. The
-`ARTIFACTS.md` asset published alongside them says all of this to the person
-downloading, including the `codesign --force` + `com.apple.security.cs.allow-jit`
-entitlement a host needs to re-sign the binary into a notarized bundle. Do not
-soften that text — someone will otherwise download it expecting a double-click
-app.
 
 ### The package publish
 
@@ -600,9 +558,8 @@ tag ref.
 > fails by construction, and the workflow says so in a comment so nobody
 > "simplifies" it back.
 
-**Rehearse it without publishing.** `dry_run` defaults to **true**, the same way
-`release-artifacts.yml` defaults `publish` to false, so a dispatch is a
-rehearsal unless you say otherwise:
+**Rehearse it without publishing.** `dry_run` defaults to **true**, so a
+dispatch is a rehearsal unless you say otherwise:
 
 ```sh
 gh workflow run publish-package.yml           # dry run: resolves, packs, uploads nothing
@@ -627,8 +584,8 @@ the whole thing is unit-tested offline (`bun run check:ops`).
 |---|---|---|
 | 1 | The PR carries a milestone whose title is a release tag (`vX.Y.Z`) | `release-gates.yml`, every PR |
 | 2 | The PR's required bump ≤ the milestone's bump, measured from the current release | `release-gates.yml`, every PR; `release:check milestone` at preflight |
-| 3 | The tag matches `package.json` | `release:prepare vX.Y.Z` sets one from the other; **`release:tag vX.Y.Z` re-reads it off the merged commit**; `release:check version` preflight; `release-tag-check.yml` on tag push |
-| 4 | The tag does not exist and is above every release tag that does, locally **and** on `origin` | **`release:prepare vX.Y.Z`, before the bump, and `release:tag vX.Y.Z`, before the tag**; `release:check order` preflight and by-hand path; `release-tag-check.yml` on tag push (`--pushed`) |
+| 3 | The tag matches `package.json` | `release:prepare vX.Y.Z` sets one from the other; **`release:tag vX.Y.Z` re-reads it off the merged commit**; `release:check version` preflight; `release-tag-check.yml` on tag push, or dispatched by hand |
+| 4 | The tag does not exist and is above every release tag that does, locally **and** on `origin` | **`release:prepare vX.Y.Z`, before the bump, and `release:tag vX.Y.Z`, before the tag**; `release:check order` preflight and by-hand path; `release-tag-check.yml` on tag push (`--pushed`), or dispatched by hand |
 | 5 | Nothing still open claims to ship in this release | **`release:prepare vX.Y.Z`, before the bump**; `release:check milestone` at preflight |
 
 ```sh
@@ -839,8 +796,8 @@ Listed so nobody re-derives it from a stale doc:
   does nothing. [`scripts/ops/prepack.ts`](../scripts/ops/prepack.ts) still
   guards the pin, both inside that workflow and for a by-hand `bun pm pack`.
 - **Releases v0.2.0 … v0.4.3 shipped without a package at all** — a git tag plus
-  the binaries from [step 5](#5-publish-the-artifacts), because every one of them
-  ran `--no-publish`. That is why `dist/` is committed (see
+  the compiled binaries core built at the time, because every one of them ran
+  `--no-publish`. That is why `dist/` is committed (see
   [`scripts/ops/check-bindings.ts`](../scripts/ops/check-bindings.ts)) and why
   the git-dependency install path must keep working: consumers pinned to those
   tags resolve a SHA, not a version. Treat the first publish as a first publish
@@ -862,17 +819,18 @@ Listed so nobody re-derives it from a stale doc:
   carries that intent now. (Commit `867dfc4` used one and a human honoured it
   by hand.)
 - No CI signing, notarization, stapling, DMG packaging, Homebrew tap, Windows
-  MSI, or Pages deploy. `build:binary` produces a **signable** artifact and
-  `release-artifacts.yml` publishes it with a `SHA256SUMS`; neither signs it,
-  and there is no Apple or Authenticode credential in this repo to sign it with.
-  See [step 5](#the-binaries-are-unsigned-and-that-is-not-a-formality).
-- No proof that the Windows binary shuts down *gracefully*. Both legs of
-  `release-artifacts.yml` now run `verify:artifact` and the full `e2e:binary`
-  suite — the lifecycle harness stopped spawning POSIX `sleep` as its decoy
-  parent and uses the Bun that is already running it. What is left is a platform
-  limit, not a harness gap: Windows has no SIGTERM, `child.kill("SIGTERM")` is
-  `TerminateProcess`, and nothing in Node or Bun can deliver a graceful stop to
-  a child there. So the Windows shutdown checks prove the process is terminable;
+  MSI, or Pages deploy — and no compiled artifact to apply any of them to. Core
+  built `bun-darwin-arm64` and `bun-windows-x64` until v0.4.4; delivery is the
+  registry package now. The binary that reaches users is compiled in
+  `stuffbucket/maximal` from this repo's `src/main.ts`, and signing it is that
+  repo's problem, with credentials that do not exist here either.
+- No proof that the engine shuts down *gracefully* on Windows. `ci.yml`'s
+  `windows` job runs the unit suite there but not `e2e` — the lifecycle harness
+  stopped spawning POSIX `sleep` as its decoy parent and would port, but nothing
+  runs it on Windows today (#89). Underneath that is a platform limit no harness
+  closes: Windows has no SIGTERM, `child.kill("SIGTERM")` is `TerminateProcess`,
+  and nothing in Node or Bun can deliver a graceful stop to a child there. So a
+  Windows shutdown check could only prove the process is terminable;
   the drain path (Claude Code revert, pidfile removal, session sentinel) is only
   exercised on macOS. The parent-death watchdog is exercised on both — and so,
   since `e2e:replace` landed, is the *eviction* stop: `/_internal/shutdown` ends

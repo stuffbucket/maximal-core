@@ -32,24 +32,87 @@
 # Permissions: `contents: read` only — it checks out the tag, compares two
 # strings, and reads the remote tag list with `git ls-remote`, which writes
 # nothing. It needs no token beyond the checkout.
+#
+# ## Why it can also be dispatched by hand
+#
+# A tripwire that only fires on the event is a tripwire that does not exist
+# when the event system is down. On 2026-08-06 GitHub Actions went to
+# `major_outage` and push events stopped dispatching entirely: the v0.4.4 tag
+# push produced ZERO runs, and this workflow — which had only the push trigger —
+# simply never ran. `publish-package.yml` was recoverable because it has
+# `workflow_dispatch`, and dispatching it against `refs/tags/v0.4.4` satisfied
+# its own non-tag refusal legitimately. This one had no such path, so its two
+# gates were run by hand instead, which is the discipline these gates exist to
+# replace.
+#
+# That is backwards for a tripwire specifically: its whole value is catching a
+# bad tag while it is still unconsumed, and an outage is exactly what stretches
+# that window out.
+#
+# So the tag under test is RESOLVED rather than assumed: an explicit `tag` input
+# when given, otherwise `github.ref_name` — which makes
+# `gh workflow run release-tag-check.yml --ref v0.4.4` work the same way it does
+# for publish-package.yml. The resolved value is then what gets checked out, so
+# the `package.json` these gates read is the one that tag publishes and cannot
+# be some other ref's. A resolved value that is not a `v*` tag is refused
+# outright: `release-gates.ts version main` would compare the string "main"
+# against package.json and report a version MISMATCH — a real-looking finding
+# for an operator error.
 name: release-tag-check
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to check, e.g. `v0.4.4`. Leave empty when dispatching with `--ref <tag>`.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
+
+concurrency:
+  # Per tag, not per workflow: two different tags pushed close together are
+  # independent checks and neither should cancel the other. `cancel-in-progress`
+  # stays false for the same reason a publish does not cancel — a half-run gate
+  # reports nothing, and reporting nothing is what this exists to prevent.
+  group: release-tag-check-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # Checks out the tag itself, so ./package.json IS the file the tag
-      # publishes — which is the whole comparison.
+      # Ahead of the checkout, because it decides what gets checked out.
+      - name: Resolve the tag under test
+        id: resolve
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag }}"
+          if [ -z "$tag" ]; then tag="${{ github.ref_name }}"; fi
+          case "$tag" in
+            v*)
+              echo "tag=$tag" >> "$GITHUB_OUTPUT"
+              echo "checking $tag (from ${{ github.event_name }})"
+              ;;
+            *)
+              echo "::error title=release-tag-check::Refusing to run against \`$tag\`, which is not a release tag. Dispatch with \`--ref <tag>\`, or pass the \`tag\` input. Running here would compare the string \`$tag\` against package.json and report a version mismatch that is really an operator error."
+              exit 1
+              ;;
+          esac
+
+      # Checks out the RESOLVED tag, so ./package.json IS the file that tag
+      # publishes — which is the whole comparison. Explicit rather than implicit
+      # so a dispatch fired from `main` with a `tag` input still judges the tag
+      # and not `main`'s manifest.
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.resolve.outputs.tag }}
 
       - name: Read Bun version
         id: bun
@@ -63,6 +126,8 @@ jobs:
 
       # No `bun install` and no `gh`: this subcommand reads one local file.
       - name: Tag matches package.json
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -uo pipefail
           # GitHub's default shell is `bash -e`; without this it would abort on
@@ -70,11 +135,11 @@ jobs:
           # below would never distinguish a mismatch (1) from a gate that could
           # not run (2).
           set +e
-          bun run scripts/ops/release-gates.ts version "${{ github.ref_name }}"
+          bun run scripts/ops/release-gates.ts version "$TAG"
           code=$?
           case "$code" in
             0) exit 0 ;;
-            1) echo "::error title=release-tag-check::Tag ${{ github.ref_name }} does not match package.json. Delete and re-cut the tag NOW, while it is still unconsumed — do not move a tag anyone may already have resolved."; exit 1 ;;
+            1) echo "::error title=release-tag-check::Tag $TAG does not match package.json. Delete and re-cut the tag NOW, while it is still unconsumed — do not move a tag anyone may already have resolved."; exit 1 ;;
             *) echo "::warning title=release-tag-check::The check could not run (exit $code); not failing the tag on the gate's own bug."; exit 0 ;;
           esac
 
@@ -94,14 +159,16 @@ jobs:
       # you re-cut at.
       - name: Tag is above every tag that exists
         if: ${{ !cancelled() }}
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -uo pipefail
           # Same reason as above: `bash -e` would abort before `code=$?`.
           set +e
-          bun run scripts/ops/release-gates.ts order "${{ github.ref_name }}" --pushed
+          bun run scripts/ops/release-gates.ts order "$TAG" --pushed
           code=$?
           case "$code" in
             0) exit 0 ;;
-            1) echo "::error title=release-tag-check::Tag ${{ github.ref_name }} is not above every release tag that already exists. Delete it NOW, while it is still unconsumed — a lower tag carrying strictly more content cannot be repaired once anyone has resolved it, and a published tag must never be moved. Re-cut above the highest existing tag."; exit 1 ;;
+            1) echo "::error title=release-tag-check::Tag $TAG is not above every release tag that already exists. Delete it NOW, while it is still unconsumed — a lower tag carrying strictly more content cannot be repaired once anyone has resolved it, and a published tag must never be moved. Re-cut above the highest existing tag."; exit 1 ;;
             *) echo "::warning title=release-tag-check::The check could not run (exit $code); not failing the tag on the gate's own bug."; exit 0 ;;
           esac

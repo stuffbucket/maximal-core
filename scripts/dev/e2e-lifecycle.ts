@@ -19,10 +19,11 @@
  * ## Portability
  *
  * This harness used to be the one POSIX-only piece of the suite, because the
- * decoy was `sleep 120`. That single word is why the Windows leg of
- * `release-artifacts.yml` shipped v0.3.2 with `verify:artifact` and nothing
- * else. The decoy is now Bun itself (see `startDecoyParent`), so the whole
- * suite runs on both platforms.
+ * decoy was `sleep 120`. That single word is why the Windows leg of the
+ * since-removed binary pipeline shipped v0.3.2 with an artifact check and
+ * nothing else. The decoy is now Bun itself (see `startDecoyParent`), so the
+ * whole suite runs on both platforms — which is what lets `ci.yml`'s `windows`
+ * job run it.
  *
  * One thing still does not port, and is not pretended away below: **Windows has
  * no SIGTERM.** `child.kill("SIGTERM")` there is `TerminateProcess`, so the

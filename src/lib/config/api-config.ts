@@ -156,15 +156,28 @@ export const getOpencodeVersion = () => {
 // the drift watcher's `--fix` path bumps this one constant and every derived
 // string follows — a raw literal would half-update. See
 // scripts/ops/watch-external-drift.ts (opencode pin → OPENCODE_SEMVER).
-const OPENCODE_SEMVER = "1.17.20"
+const OPENCODE_SEMVER = "1.18.14"
 const OPENCODE_VERSION = `opencode/${OPENCODE_SEMVER}`
-const OPENCODE_LLM_USER_AGENT = `opencode/${OPENCODE_SEMVER} ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.13, opencode/${OPENCODE_SEMVER}`
+const OPENCODE_LLM_USER_AGENT = `opencode/${OPENCODE_SEMVER} ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14, opencode/${OPENCODE_SEMVER}`
 
 const COPILOT_VERSION = "0.46.0"
 const EDITOR_PLUGIN_VERSION = `copilot-chat/${COPILOT_VERSION}`
 const USER_AGENT = `GitHubCopilotChat/${COPILOT_VERSION}`
-const CLAUDE_AGENT_USER_AGENT =
-  "vscode_claude_code/2.1.209 (external, sdk-ts, agent-sdk/0.2.112)"
+// Single source of truth for the impersonated Claude Code agent version. It
+// appears twice in the UA below — bare, and as the coupled agent-sdk version —
+// so the drift watcher's `--fix` path bumps this one constant and the copy
+// follows. A raw literal half-updates: that is exactly how 2.1.208 shipped
+// against a frozen agent-sdk/0.2.112. Same shape as OPENCODE_SEMVER above.
+const CLAUDE_AGENT_SEMVER = "2.1.223"
+// The agent-sdk release that ships claude-code X.Y.N carries the SAME patch N
+// and declares `claudeCodeVersion: "X.Y.N"` in its package.json (verified for
+// 0.2.81/2.1.81, 0.2.98/2.1.98, 0.2.112/2.1.112, 0.3.223/2.1.223). The MINOR
+// is not derivable — upstream moved 0.2.x -> 0.3.x at claude-code 2.1.142
+// while the agent stayed on 2.1 — so it is pinned here and mirrored in
+// scripts/ops/external-drift-baseline.json (claudeAgentSdkMinor) for review.
+const CLAUDE_AGENT_SDK_MINOR = "0.3"
+const CLAUDE_AGENT_SDK_SEMVER = `${CLAUDE_AGENT_SDK_MINOR}.${CLAUDE_AGENT_SEMVER.split(".")[2]}`
+const CLAUDE_AGENT_USER_AGENT = `vscode_claude_code/${CLAUDE_AGENT_SEMVER} (external, sdk-ts, agent-sdk/${CLAUDE_AGENT_SDK_SEMVER})`
 
 const API_VERSION = "2025-10-01"
 

@@ -31,9 +31,9 @@
   // `scripts/**` is included because nothing else typechecked it. `tsc` covered
   // only what `src/`/`tests/` happened to import (measure-baseline.ts and
   // verify-build.ts, via their tests); `typecheck:ops` covers `scripts/ops/`
-  // only, and behind a path filter (tooling-ci.yml). That left the release
-  // tooling — build-binary.ts, verify-artifact.ts, the e2e harness, and
-  // find-casts.ts, which backs the `casts:check` CI gate — checked by nothing.
+  // only, and behind a path filter (tooling-ci.yml). That left the dev and
+  // release tooling — the e2e harness, and find-casts.ts, which backs the
+  // `casts:check` CI gate — checked by nothing.
   // Adding it here surfaced a real defect: the sidecar harness declared its
   // child as `ChildProcessWithoutNullStreams` while spawning with
   // `stdio[0]: "ignore"`, so `child.stdin` was typed `Writable` and was `null`.

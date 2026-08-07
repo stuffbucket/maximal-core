@@ -883,30 +883,29 @@ concurrent jobs**.
     all on its first run.
 15. **`bun run build`**.
 16. **`bun run e2e`** — the seam / feed / lifecycle / replace harnesses, against
-    `src/` rather than a compiled artifact. Until this step they ran only in the
-    `windows` job via `e2e:binary`, so the from-source path (what `bun run dev`
-    and `bun start` use) ran in no workflow, and neither did Linux.
+    `src/`. Until this step they ran only in the `windows` job against a
+    compiled artifact, so the from-source path (what `bun run dev` and
+    `bun start` use) ran in no workflow, and neither did Linux. That artifact
+    leg is gone; this is the only place they run.
 
-**Job `windows`** (`windows-latest`) — the `bun-windows-x64` release leg, run
-before a tag exists: a runner-arch assertion, `bun install`, then
-`build:binary`, `verify:artifact`, and `e2e:binary` against the compiled
-artifact, and finally `bun test`. It exists because Windows used to be
-exercised only by `release-artifacts.yml` on a tag push, which is how v0.4.2
-shipped with no binaries — an inline `prepare` one-liner that Bun's Windows shell
-rejects failed `bun install` outright, after the tag was already immutable.
-**`bun test` runs last in this job**, deliberately after the release leg so a
-unit failure cannot short-circuit ahead of a build/verify/e2e failure. It was
-absent until the 22 POSIX assumptions in `tests/**` that failed there were
-fixed; 1 case stays `skipIf`-ed on `win32` (in `tests/secrets.test.ts`), with
-the reason at its skip site.
+**Job `windows`** (`windows-latest`) — `bun install` and `bun test`. It carried
+the `bun-windows-x64` release leg until core stopped building binaries; what
+survives is the part that was doing the work. `bun install` is the check: it
+runs the `prepare` lifecycle script under Bun's built-in Windows shell, which is
+how v0.4.2 shipped with no binaries — an inline `prepare` one-liner that shell
+rejects failed `bun install` outright, after the tag was already immutable, and
+Windows ran only on a tag push. `bun test` was absent until the 22 POSIX
+assumptions in `tests/**` that failed there were fixed; 1 case stays
+`skipIf`-ed on `win32` (in `tests/secrets.test.ts`), with the reason at its skip
+site. `e2e` does **not** run here (#89).
 
 Security workflows (CodeQL, trufflehog) run alongside, `release-gates.yml`
 checks a PR's milestone and bump, and `randomized-test-order.yml` runs nightly
 (see below). There is **no** build/sign/publish pipeline on a *PR* — no dmg,
 MSI, checksums, or signing — and no release automation: a release is a GitHub
 milestone, tagged by hand, and it is the tag push that fires
-`release-artifacts.yml` (see `docs/architecture.md` → *Release & PR conventions*
-and `docs/release-runbook.md`).
+`publish-package.yml` and `release-tag-check.yml` (see `docs/architecture.md` →
+*Release & PR conventions* and `docs/release-runbook.md`).
 
 ### Why `--randomize` is not a PR gate
 

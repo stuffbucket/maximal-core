@@ -2,21 +2,20 @@
  * Compile-time build metadata.
  *
  * Values are injected by `bun build --compile --define ...` for release
- * binaries. **Two compilers do that, and only one of them is in this repo:**
+ * binaries. **Core no longer compiles one** — delivery is the GitHub Package
+ * Registry — but the compile did not stop happening, so these are NOT dead:
  *
- *   - `buildBinary()` in `scripts/dev/build-binary.ts` — core's own
- *     `bun-darwin-arm64` / `bun-windows-x64` artifacts.
- *   - `scripts/build-sidecar.ts` in `stuffbucket/maximal` — which compiles
- *     **this repo's `src/main.ts`**, reached through the git dependency at
+ *   - `scripts/build-sidecar.ts` in `stuffbucket/maximal` compiles **this
+ *     repo's `src/main.ts`**, reached through the git dependency at
  *     `shell/node_modules/@stuffbucket/maximal-core/src/main.ts`, and injects
  *     all four defines itself.
  *
- * That second producer is the one that ships to users, and it is easy to miss
- * because nothing in this repo references it. Do not treat these globals as
- * dead if core's own binary pipeline goes away: the downstream compile still
- * sets them, so `BUILD_CHANNEL` still decides which channel a shipped build
- * polls (`src/lib/update/update-check.ts`) and `BUILD_GIT_SHA` still lands in
- * `x-maximal-version`.
+ * That is now the only producer, it is the one that ships to users, and nothing
+ * in this repo references it — which is exactly why this paragraph is here. Do
+ * not treat these globals as dead because core's own binary pipeline is gone:
+ * the downstream compile still sets them, so `BUILD_CHANNEL` still decides
+ * which channel a shipped build polls (`src/lib/update/update-check.ts`) and
+ * `BUILD_GIT_SHA` still lands in `x-maximal-version`.
  *
  * All four are injected together: `__MAXIMAL_VERSION__` (from package.json),
  * `__MAXIMAL_GIT_SHA__` (short SHA), `__MAXIMAL_GIT_BRANCH__`, and

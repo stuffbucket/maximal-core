@@ -4,12 +4,15 @@
  * built from the commit I think it is?
  *
  * **This does not verify a build artifact, and it cannot gate a release.** It
- * was called `verify:build` until v0.3.3, sat next to `verify:artifact`, and got
- * reached for on release binaries because of it. It takes no file path: it
- * probes a live proxy, so with nothing running it exits 2 and with a release
- * binary running it exits 1 — a release build embeds no `+<sha>`, so the verdict
- * is `UNKNOWN` by construction. `bun run verify:artifact -- --binary=<path>` is
- * the check for a shipped file. Nothing here is on any release path.
+ * was called `verify:build` until v0.3.3, sat next to a `verify:artifact` that
+ * checked shipped binaries, and got reached for on release binaries because of
+ * it. It takes no file path: it probes a live proxy, so with nothing running it
+ * exits 2 and with a release binary running it exits 1 — a release build embeds
+ * no `+<sha>`, so the verdict is `UNKNOWN` by construction. Nothing here is on
+ * any release path. (`verify:artifact` itself is gone: core stopped compiling
+ * binaries when delivery moved to the GitHub Package Registry. The compile that
+ * still ships to users happens in `stuffbucket/maximal`, over this repo's
+ * `src/main.ts`.)
  *
  * What it IS for: the dev loop. There is no automatic link between "merged to
  * main" and "in the binary my host is running", and a stale `app:dev` build
@@ -360,9 +363,12 @@ function printUnreachable(baseUrl: string): void {
   )
   console.error("")
   console.error(
-    "  Looking to verify a release binary? That is a different tool:",
+    "  Looking to verify a compiled binary? This is not that tool — core no",
   )
-  console.error("    bun run verify:artifact -- --binary=<path>")
+  console.error(
+    "  longer builds one. Run the e2e harnesses against it instead:",
+  )
+  console.error("    MAXIMAL_E2E_BINARY=<path> bun run e2e")
   console.error("")
 }
 
@@ -382,9 +388,9 @@ function printReport(report: VerifyReport): void {
       "  A release build embeds no +<sha>, so this can only ever say UNKNOWN",
     )
     console.log(
-      "  about one. To check a shipped artifact instead, run:",
+      "  about one. To exercise a compiled binary instead, run:",
     )
-    console.log("    bun run verify:artifact -- --binary=<path>")
+    console.log("    MAXIMAL_E2E_BINARY=<path> bun run e2e")
   }
   console.log("")
   const cfg = report.config
