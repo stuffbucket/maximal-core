@@ -692,6 +692,34 @@ export function bumppArgv(execute: string, extra: ReadonlyArray<string> = []): A
   return ["x", "bumpp", "--all", "--no-tag", "--no-push", "--execute", execute, ...extra]
 }
 
+/**
+ * `bumpp`'s confirmation prompt, answered when nobody can answer it.
+ *
+ * `bumpp` ends with an interactive `? Bump? › (Y/n)`. With no TTY it never
+ * resolves, and the failure is not a hang — it is SILENT AND MISLEADING. On
+ * v0.4.5 the prompt aborted, nothing was committed, the release branch was
+ * pushed EMPTY, and the run died three steps later at `gh pr create`:
+ *
+ *     GraphQL: No commits between main and release/v0.4.5 (createPullRequest)
+ *
+ * which names neither `bumpp` nor a prompt. Recovering meant deleting the
+ * branch on both sides and re-running with `--yes` — knowledge the caller had
+ * no way to have.
+ *
+ * So the consent is supplied here rather than demanded from the caller. Only
+ * when there is no TTY: an interactive release keeps the prompt, which is worth
+ * having on the one command that rewrites `package.json`. An explicit `--yes`
+ * or `-y` is left alone rather than duplicated.
+ */
+export function withNonInteractiveConsent(
+  args: ReadonlyArray<string>,
+  isInteractive: () => boolean,
+): Array<string> {
+  if (isInteractive()) return [...args]
+  if (args.some((a) => a === "--yes" || a === "-y")) return [...args]
+  return [...args, "--yes"]
+}
+
 // --- steps ---
 
 /**
@@ -785,6 +813,11 @@ export interface PrepareOptions extends PinOptions, ChangelogIo {
   script?: string
   /** Extra argv forwarded to `bumpp`. */
   bumppArgs?: ReadonlyArray<string>
+  /**
+   * Whether a human is there to answer `bumpp`'s confirmation prompt. Injectable
+   * so the tests can drive both sides without owning a terminal.
+   */
+  isInteractive?: () => boolean
   /** Where the branch is pushed, and where gate 4 reads the existing tags. */
   remote?: string
   /** How the rendered block reaches the hook. Defaults to `process.env`. */
@@ -910,7 +943,10 @@ export function prepare(options: PrepareOptions = {}): number {
   })
 
   handOver(plan.block)
-  const bumppArgs = ["--release", stripV(tag), ...options.bumppArgs ?? []]
+  const bumppArgs = withNonInteractiveConsent(
+    ["--release", stripV(tag), ...options.bumppArgs ?? []],
+    options.isInteractive ?? (() => process.stdin.isTTY === true),
+  )
   const bumped = run(bun, bumppArgv(executeCommand(bun, script), bumppArgs))
   handOver(undefined)
   if (bumped.status !== 0) {

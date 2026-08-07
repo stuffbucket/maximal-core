@@ -9,6 +9,7 @@ import type { GhResult, GhRunner, PullRequest } from "./release-notes"
 import {
   applyChangelog,
   bumppArgv,
+  withNonInteractiveConsent,
   CHANGELOG_ENV,
   CHANGELOG_FILE,
   changelogHasVersion,
@@ -394,6 +395,38 @@ describe("executeCommand", () => {
 
   test("the hook names a binary, never a bare `bun`", () => {
     expect(executeCommand("/pin/bun", "/x/release.ts")).not.toMatch(/(^|\s)bun\s/)
+  })
+})
+
+describe("withNonInteractiveConsent", () => {
+  const args = ["--release", "0.4.5"]
+
+  // THE v0.4.5 FAILURE. `bumpp` ends with `? Bump? › (Y/n)`. With no TTY it
+  // never resolves: nothing was committed, the release branch was pushed EMPTY,
+  // and the run died three steps later at `gh pr create` with "No commits
+  // between main and release/v0.4.5" — a message naming neither bumpp nor a
+  // prompt. That is why the consent is supplied here instead of demanded from
+  // whoever runs the command.
+  test("a non-TTY run consents, so bumpp cannot block on a prompt nobody sees", () => {
+    expect(withNonInteractiveConsent(args, () => false)).toEqual([...args, "--yes"])
+  })
+
+  // An interactive release keeps the prompt. It is the one command that
+  // rewrites package.json, and a human at a terminal should get to say no.
+  test("an interactive run keeps the prompt", () => {
+    expect(withNonInteractiveConsent(args, () => true)).toEqual(args)
+  })
+
+  // Both spellings, and no duplicate: bumpp is handed argv, not a shell string.
+  test("an explicit consent flag is left alone rather than duplicated", () => {
+    expect(withNonInteractiveConsent([...args, "--yes"], () => false)).toEqual([...args, "--yes"])
+    expect(withNonInteractiveConsent([...args, "-y"], () => false)).toEqual([...args, "-y"])
+  })
+
+  test("the input is not mutated", () => {
+    const original = [...args]
+    withNonInteractiveConsent(original, () => false)
+    expect(original).toEqual(args)
   })
 })
 
@@ -810,7 +843,7 @@ describe("prepare", () => {
     expect(calls).toEqual([
       {
         command: "/pin/bun",
-        args: bumppArgv(executeCommand("/pin/bun", "/x/release.ts"), ["--release", "0.4.2"]),
+        args: bumppArgv(executeCommand("/pin/bun", "/x/release.ts"), ["--release", "0.4.2", "--yes"]),
         block: expect.stringContaining("## [0.4.2]") as unknown as string,
       },
     ])
@@ -888,9 +921,14 @@ describe("prepare", () => {
   // The version reaches bumpp from the tag, so gate 3 — "the tag matches
   // package.json" — is true by construction rather than by a preflight anyone
   // can skip. That is the failure `v0.1.1` shipped.
+  //
+  // "never left to prompt" is now literal as well as figurative: this harness
+  // owns no TTY, so `withNonInteractiveConsent` appends `--yes` and bumpp
+  // cannot stop on `? Bump? › (Y/n)`. Before that, it did — and v0.4.5 pushed
+  // an empty release branch as a result.
   test("bumpp is told the exact version, never left to prompt", () => {
     const { calls } = ok(CLEAN)
-    expect(calls[0]?.args.slice(-2)).toEqual(["--release", "0.4.2"])
+    expect(calls[0]?.args.slice(-3)).toEqual(["--release", "0.4.2", "--yes"])
   })
 
   // The block is live for exactly the bumpp call — the hook runs inside it —
