@@ -216,7 +216,22 @@ export class ControlClient {
     // Validated + copied once, here, rather than checked at each send: the
     // record is fixed for the client's life, so one check covers every request.
     this.headers = toRequestHeaders(options.headers)
-    this.fetchImpl = options.fetch ?? fetch
+    // BOUND, not bare. The field is invoked as `this.fetchImpl(...)`, so an
+    // unbound `fetch` receives the ControlClient instance as its receiver.
+    // Node and Bun tolerate that; a browser or Electron renderer does not —
+    // `window.fetch` demands `window` and throws `TypeError: Illegal
+    // invocation` otherwise. Every renderer-side consumer therefore failed on
+    // its FIRST call, and the default path (no `options.fetch`) is the broken
+    // one, so it was the common case rather than an edge (maximal-core#104).
+    //
+    // The unit suites cannot see it: the receiver rule is browser-only, so
+    // Node and Bun both pass a bare `fetch` happily. `client.test.ts` asserts
+    // the receiver instead — a check that fails without a browser.
+    //
+    // An injected fetch is left exactly as given: the caller already owns its
+    // binding, and re-binding someone else's function would change what an
+    // arrow capturing `this` resolves to.
+    this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.reconnectMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_MS
     this.maxReconnectMs =
       options.maxReconnectDelayMs ?? DEFAULT_MAX_RECONNECT_MS

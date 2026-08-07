@@ -220,3 +220,79 @@ describe("ControlClient credential headers", () => {
     expect(sent[0]).not.toHaveProperty("x-api-key")
   })
 })
+
+/**
+ * The receiver the default fetch is invoked with.
+ *
+ * `ControlClient` stores the injectable fetch on a field and calls it as
+ * `this.fetchImpl(...)`. An UNBOUND `fetch` therefore receives the client
+ * instance. Node and Bun do not care; a browser or Electron renderer does —
+ * `window.fetch` demands `window` and throws `TypeError: Illegal invocation`
+ * for anything else. So every renderer-side consumer failed on its first call,
+ * on the DEFAULT path (`options.fetch` omitted), which made it the common case
+ * rather than an edge (maximal-core#104, found against v0.5.0).
+ *
+ * WHY THIS TEST EXISTS IN THIS SHAPE. The receiver rule is browser-only, so no
+ * suite running under Bun can observe the failure directly — the whole reason
+ * it shipped. Instead of a realm, this asserts the property the browser rule
+ * depends on: the stored implementation must NOT be invoked with the client as
+ * its receiver. That fails on a bare `fetch` and passes on a bound one, with no
+ * browser involved.
+ */
+
+/**
+ * Swap `globalThis.fetch` and hand back its restore.
+ *
+ * Capture and restore live in one synchronous closure on purpose. Writing
+ * `globalThis.fetch = original` in a `finally` after an `await` is a genuine
+ * hazard, not a lint quibble — `require-atomic-updates` flags it because the
+ * global may have been reassigned by anything that ran during the await, and
+ * the restore would then clobber it. Bun runs test files concurrently.
+ */
+function swapGlobalFetch(stub: typeof fetch): () => void {
+  const original = globalThis.fetch
+  globalThis.fetch = stub
+  return () => {
+    globalThis.fetch = original
+  }
+}
+
+describe("ControlClient — the default fetch's receiver", () => {
+  test("is not the client instance, so a browser realm cannot reject it", async () => {
+    const seen: Array<unknown> = []
+    const restore = swapGlobalFetch(function (this: unknown) {
+      seen.push(this)
+      return Promise.resolve(new Response("{}", { status: 200 }))
+    } as unknown as typeof fetch)
+    try {
+      const client = new ControlClient({ baseUrl: "http://127.0.0.1:1" })
+      await client.call("server/discover", {}).catch(() => undefined)
+      expect(seen.length).toBeGreaterThan(0)
+      for (const receiver of seen) {
+        expect(receiver).not.toBe(client)
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  // The caller already owns an injected fetch's binding, and re-binding
+  // someone else's function would change what an arrow capturing `this`
+  // resolves to. So it is passed through untouched.
+  test("an injected fetch is passed through, not re-bound", async () => {
+    const carrier = {
+      calls: 0,
+      fetchImpl(this: { calls: number }) {
+        this.calls += 1
+        return Promise.resolve(new Response("{}", { status: 200 }))
+      },
+    }
+    const bound = carrier.fetchImpl.bind(carrier) as unknown as typeof fetch
+    const client = new ControlClient({
+      baseUrl: "http://127.0.0.1:1",
+      fetch: bound,
+    })
+    await client.call("server/discover", {}).catch(() => undefined)
+    expect(carrier.calls).toBeGreaterThan(0)
+  })
+})
