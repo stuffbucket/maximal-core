@@ -3,10 +3,10 @@
 Pinned in `.bun-version` — read by `bun install`, by Bun's own version manager,
 and at runtime by every CI workflow that needs Bun: `tooling-ci.yml`,
 `watch-external-drift.yml`, `watch-branch-rules.yml`, `randomized-test-order.yml`,
-`release-gates.yml`, `release-tag-check.yml`, `release-artifacts.yml`,
-`publish-package.yml` and `ci.yml`'s `windows` job each
-`cat .bun-version` into `setup-bun`; the toolchain-image workflow bakes it into the
-toolchain image, and `ci.yml`'s `test` job runs in that image and `cat`s the
+`release-gates.yml`, `release-tag-check.yml`, `publish-package.yml` and
+`ci.yml`'s `windows` job each `cat .bun-version` into `setup-bun`;
+[`publish-ci-image.yml`](../.github/workflows/publish-ci-image.yml) bakes it into
+the toolchain image, and `ci.yml`'s `test` job runs in that image and `cat`s the
 file to assert the two agree. No workflow holds a copy of the version
 literal, so dev/CI drift is not representable — which is the point: drift is
 what got us a 22-test failure on a Bun `latest` regression once.

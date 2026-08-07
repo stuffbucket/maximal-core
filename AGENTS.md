@@ -13,16 +13,18 @@ tier drives the engine over the loopback `/control` JSON-RPC 2.0 surface.
   `bun test`, knip, `deps:check`, `dupes:check`, the build,
   `typecheck:downstream`, and `bindings:check`. It is a superset of CI's `test`
   job, so green here means green there. It does **not** cover `ci.yml`'s
-  `windows` job, which compiles the `bun-windows-x64` artifact and runs
-  `verify:artifact` + `e2e:binary` against it on a Windows runner. If you
-  touched `scripts/ops/`, also run `bun run check:ops`.
+  `windows` job, which runs `bun install` (the `prepare` lifecycle script under
+  Bun's Windows shell) and `bun test` on a Windows runner. If you touched
+  `scripts/ops/`, also run `bun run check:ops`.
 - Single test file: `bun test tests/foo.test.ts`. Tests live in `tests/` as
   `*.test.ts` on Bun's built-in runner.
 - **`bun run e2e` if you changed the control plane, the ready-line, or
   shutdown.** Spawns the engine from source and drives the real socket —
   outside `bun test` because it costs seconds and a port. Every bug it has
-  caught was invisible to the unit suite. `bun run e2e:binary` re-runs the same
-  seams against a compiled binary, which is what actually ships.
+  caught was invisible to the unit suite. `MAXIMAL_E2E_BINARY=<path> bun run e2e`
+  re-runs the same seams against a compiled binary — core builds none, but
+  `stuffbucket/maximal` compiles this repo's `src/main.ts` and that is what
+  ships.
 - Never report success on a command you did not run. If a check fails, say so
   and show the output.
 
