@@ -56,7 +56,7 @@ var ControlClient = class {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.controlPath = options.controlPath ?? "/control";
     this.headers = toRequestHeaders(options.headers);
-    this.fetchImpl = options.fetch ?? fetch;
+    this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.reconnectMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_MS;
     this.maxReconnectMs = options.maxReconnectDelayMs ?? DEFAULT_MAX_RECONNECT_MS;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
