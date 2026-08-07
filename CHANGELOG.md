@@ -40,6 +40,14 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:prepare vX.Y.Z` inserts the generated block here -->
 
+## [0.5.1](https://github.com/stuffbucket/maximal-core/compare/v0.5.0...v0.5.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **client:** bind the default fetch to globalThis ([#105](https://github.com/stuffbucket/maximal-core/issues/105)) ([5422724](https://github.com/stuffbucket/maximal-core/commit/54227244f2fb034ef844244e96a99fef2930a57b)), closes [#104](https://github.com/stuffbucket/maximal-core/issues/104)
+* **release:** consent to bumpp's prompt when there is no TTY ([#103](https://github.com/stuffbucket/maximal-core/issues/103)) ([191959a](https://github.com/stuffbucket/maximal-core/commit/191959a232d3d0144058714ef0c6e6dd13bc0c54))
+
 ## [0.5.0](https://github.com/stuffbucket/maximal-core/compare/v0.4.5...v0.5.0) (2026-08-07)
 
 
