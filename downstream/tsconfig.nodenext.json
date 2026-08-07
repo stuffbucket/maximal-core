@@ -13,7 +13,10 @@
 {
   "compilerOptions": {
     "target": "ESNext",
-    "lib": ["ESNext"],
+    // See tsconfig.json for why "DOM" is present: `./client` types its
+    // injectable fetch as `typeof fetch`, which needs an ambient. `types: []`
+    // (no @types package at all) remains the load-bearing restriction.
+    "lib": ["ESNext", "DOM"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "moduleDetection": "force",

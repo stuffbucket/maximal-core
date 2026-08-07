@@ -17,6 +17,26 @@ var ControlRpcError = class extends Error {
     return this.data?.retryable === true;
   }
 };
+var CREDENTIAL_HEADER_NAMES = /* @__PURE__ */ new Set([
+  "authorization",
+  "x-api-key",
+  "api-key",
+  "proxy-authorization",
+  "cookie"
+]);
+function toRequestHeaders(headers) {
+  const copied = {};
+  if (headers === void 0) return copied;
+  for (const name of Object.keys(headers)) {
+    if (CREDENTIAL_HEADER_NAMES.has(name.trim().toLowerCase())) {
+      throw new TypeError(
+        `ControlClient: refusing to send the credential header "${name}". The control surface is loopback-only and takes no credential \u2014 the server never reads a key off a /control request, so this one would be inert on the wire and a leak if \`baseUrl\` were ever wrong. Pass non-credential headers only. See ADR-0001.`
+      );
+    }
+    copied[name] = headers[name];
+  }
+  return copied;
+}
 var DEFAULT_RECONNECT_MS = 500;
 var DEFAULT_MAX_RECONNECT_MS = 15e3;
 var ControlClient = class {
@@ -35,7 +55,7 @@ var ControlClient = class {
   constructor(options) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.controlPath = options.controlPath ?? "/control";
-    this.headers = options.headers ?? {};
+    this.headers = toRequestHeaders(options.headers);
     this.fetchImpl = options.fetch ?? fetch;
     this.reconnectMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_MS;
     this.maxReconnectMs = options.maxReconnectDelayMs ?? DEFAULT_MAX_RECONNECT_MS;
@@ -174,7 +194,12 @@ var ControlClient = class {
   async request(path, init) {
     const res = await this.fetchImpl(this.url(path), {
       method: init?.method ?? "GET",
-      headers: init?.body === void 0 ? this.headers : { ...this.headers, "content-type": "application/json" },
+      // Spread rather than handing `this.headers` over as-is: the client's copy
+      // is the one thing that has been validated, and an injected `fetch` (or a
+      // polyfill) that mutates the record it is given must not be able to reach
+      // it. Also keeps every send site an object literal, which is the shape a
+      // reader — and `eslint.config.js`'s guard — can actually inspect.
+      headers: init?.body === void 0 ? { ...this.headers } : { ...this.headers, "content-type": "application/json" },
       body: init?.body === void 0 ? void 0 : JSON.stringify(init.body)
     });
     return res.json();

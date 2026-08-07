@@ -145,7 +145,11 @@ for (const config of configs) {
     )
   }
 
-  for (const entry of ["supervisor.d.ts", "control-contract.d.ts"]) {
+  for (const entry of [
+    "client.d.ts",
+    "supervisor.d.ts",
+    "control-contract.d.ts",
+  ]) {
     const expected = join(repoRoot, "dist/lib", entry)
     if (!fromRepo.includes(expected)) {
       fail(
