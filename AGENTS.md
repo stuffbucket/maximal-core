@@ -85,6 +85,7 @@ Each rule states the prohibition; the linked doc is its only elaboration.
 | Routing, middleware, model dispatch, config, token store, control API, diagnostics | [`docs/architecture.md`](docs/architecture.md) |
 | Tests, especially mocks or mutation testing | [`docs/architecture.md`](docs/architecture.md) → _Testing gotchas_, then [`docs/dev/testing-strategy.md`](docs/dev/testing-strategy.md) |
 | Running scripts or setting up the dev environment | [`docs/commands.md`](docs/commands.md) |
+| Running the checks on the pinned toolchain, off your own PATH | [`docs/dev/container-toolchain.md`](docs/dev/container-toolchain.md) |
 | Opening a PR or cutting a release | [`docs/architecture.md`](docs/architecture.md) → _Release & PR conventions_, then [`docs/release-runbook.md`](docs/release-runbook.md) |
 | Branch protection, required checks, or anything in repo settings | [`docs/admin/branch-rulesets.md`](docs/admin/branch-rulesets.md) |
 | Spawning parallel agents or using worktrees | [`docs/architecture.md`](docs/architecture.md) → _Parallel-agent convention_ |

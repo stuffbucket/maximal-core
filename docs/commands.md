@@ -110,6 +110,15 @@ bun run rules:check  # the live branch rulesets on `main` vs the floor recorded
                      # reports that assertion as unverified, never as drift.
                      # docs/admin/branch-rulesets.md
 bun run watch:drift  # the daily external-surface pin watch (docs/admin/external-drift-watch.md)
+
+# The pinned toolchain container (docs/dev/container-toolchain.md)
+bun run container:build  # build maximal-core-ci:bun-<.bun-version>. The tag IS
+                         # the pin, so a stale image is not addressable.
+bun run container:run -- <cmd>  # run <cmd> against this tree inside it. Builds
+                         # on first use. Its own node_modules volume (never the
+                         # host's — platform-specific binaries) and your uid,
+                         # not root. `-- bun run check:deep` is the usual one.
+bun run container:shell  # interactive bash in the same environment
 ```
 
 `bun run typecheck` (root `tsc`) covers `src/`, `tests/`, `scripts/`,
