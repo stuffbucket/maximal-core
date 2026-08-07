@@ -40,6 +40,29 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:prepare vX.Y.Z` inserts the generated block here -->
 
+## [0.5.0](https://github.com/stuffbucket/maximal-core/compare/v0.4.5...v0.5.0) (2026-08-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ci:** remove the compiled-binary pipeline ([#97](https://github.com/stuffbucket/maximal-core/issues/97)) ([e1a448a](https://github.com/stuffbucket/maximal-core/commit/e1a448aa6285e8084ef758810ea129641ceb0433))
+* **client:** reject credential headers on ControlClient ([#52](https://github.com/stuffbucket/maximal-core/issues/52)) ([090fd1a](https://github.com/stuffbucket/maximal-core/commit/090fd1aa46e61b0a8120b34991b1ec8808f0e630))
+
+
+### Features
+
+* **client:** reject credential headers on ControlClient ([#52](https://github.com/stuffbucket/maximal-core/issues/52)) ([090fd1a](https://github.com/stuffbucket/maximal-core/commit/090fd1aa46e61b0a8120b34991b1ec8808f0e630))
+
+
+### Continuous Integration
+
+* run the test job in the pinned toolchain image ([#101](https://github.com/stuffbucket/maximal-core/issues/101)) ([b8b5d80](https://github.com/stuffbucket/maximal-core/commit/b8b5d80e18063a3a673f090446b80e651e27a84f)), closes [#88](https://github.com/stuffbucket/maximal-core/issues/88)
+
+
+### Miscellaneous Chores
+
+* **ci:** remove the compiled-binary pipeline ([#97](https://github.com/stuffbucket/maximal-core/issues/97)) ([e1a448a](https://github.com/stuffbucket/maximal-core/commit/e1a448aa6285e8084ef758810ea129641ceb0433))
+
 ## [0.4.5](https://github.com/stuffbucket/maximal-core/compare/v0.4.4...v0.4.5) (2026-08-07)
 
 
