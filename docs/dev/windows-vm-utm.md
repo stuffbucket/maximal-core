@@ -142,17 +142,16 @@ clicks in UTM's UI. There's no public API to script those clicks in
 
 ## Known limitations
 
-- **CI's Windows leg does not cover installers.** `ci.yml` has a
-  `windows` job (`windows-latest`) that runs `bun install`,
-  `build:binary`, `verify:artifact`, `e2e:binary` against the
-  compiled `bun-windows-x64` artifact, and then `bun test`, on every PR
-  — so install-time, artifact-level and unit-level Windows breakage is
-  caught before a tag. 1 case stays `skipIf`-ed on `win32`, in
-  `tests/secrets.test.ts`. What is still
-  missing is any installer workflow — MSI packaging lives in the parent
-  repo. That residue is what this VM is for.
+- **CI's Windows leg is install-time and unit-level only.** `ci.yml` has a
+  `windows` job (`windows-latest`) that runs `bun install` and `bun test` on
+  every PR, so a `prepare` script Bun's Windows shell cannot parse, and
+  Windows-only product bugs the unit suite can reach, are caught before a tag.
+  1 case stays `skipIf`-ed on `win32`, in `tests/secrets.test.ts`. Core builds
+  no Windows artifact any more, so there is no compiled-artifact leg; `e2e` does
+  not run there either (#89). That residue, and installers, are what this VM is
+  for.
 - **ARM64 emulation of x64 binaries is fast but not native.** The Windows
-  Bun output is x64 (`TARGETS` in `scripts/dev/build-binary.ts`); it runs on Windows 11
+  Bun output is x64 (`stuffbucket/maximal` targets `x86_64-pc-windows-msvc`); it runs on Windows 11
   ARM via Microsoft's x64 emulation layer, which is fine for installer
   validation but a poor target for performance regression testing.
 - **Shared-folder paths are case-insensitive and have a UNC prefix

@@ -36,8 +36,9 @@ SBOM.cdx.json
 reports/
 # bun --compile temp executables (live in cwd, ~60MB each)
 .*.bun-build
-# `bun run build:binary` default output (~75 MB per target) — a runbook step, so
-# it lands in a working tree routinely. `release-artifacts.yml` writes to
-# dist-release/ instead.
+# Compiled-binary output. Core no longer builds one — delivery is the GitHub
+# Package Registry — but `stuffbucket/maximal` compiles this repo's src/main.ts
+# through the git dependency, and a `bun build --compile` run started from here
+# still lands ~75 MB per target in the working tree.
 dist-bin/
 dist-release/
