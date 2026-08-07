@@ -45,15 +45,33 @@ afterEach(resetConfigFile)
 
 /** True when the platform actually made the file unwritable. Windows has no
  *  POSIX mode bits; `chmodSync` maps only the read-only attribute, so this is a
- *  precondition to check rather than assume. */
+ *  precondition to check rather than assume.
+ *
+ *  It is a precondition, NOT an escape hatch. On POSIX a 0o400 file is
+ *  unwritable, and a false there means the fixture silently stopped existing —
+ *  both cases below would fall through to asserting that a file is a file and
+ *  report green while checking nothing. The way to get that is running as root,
+ *  which bypasses DAC: exactly what a container run as root does, and why
+ *  `docs/dev/container-toolchain.md` runs as the host uid instead. Fail loudly
+ *  rather than quietly stop testing. */
 function makeUnwritable(file: string): boolean {
   fs.chmodSync(file, 0o400)
+  let writable = true
   try {
     fs.accessSync(file, fs.constants.W_OK)
-    return false
   } catch {
-    return true
+    writable = false
   }
+  if (!writable) return true
+  if (process.platform !== "win32") {
+    throw new Error(
+      `${file} is still writable at mode 0o400, so this test cannot construct `
+        + `its fixture. Almost certainly the suite is running as root, which `
+        + `bypasses DAC — run as an unprivileged user. See `
+        + `docs/dev/container-toolchain.md.`,
+    )
+  }
+  return false
 }
 
 describe("config boot with an unwritable config.json", () => {

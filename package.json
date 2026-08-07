@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "@stuffbucket/maximal-core",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "Headless core of maximal: a local proxy that exposes GitHub Copilot as OpenAI- and Anthropic-compatible HTTP endpoints. No UI.",
   "keywords": [
     "proxy",
@@ -59,6 +59,9 @@
     "check:fast": "bun run lint:fast && bun run typecheck && bun run lint:all",
     "check:ops": "bun run typecheck:ops && bun run test:ops",
     "ci:check": "bun scripts/ops/check-ci-coverage.ts",
+    "container:build": "bun scripts/dev/container.ts build",
+    "container:run": "bun scripts/dev/container.ts run",
+    "container:shell": "bun scripts/dev/container.ts shell",
     "deps:check": "bun scripts/check-deps.ts",
     "dev": "bun run --watch ./src/main.ts",
     "dev:stale-check": "bun scripts/dev/verify-build.ts",

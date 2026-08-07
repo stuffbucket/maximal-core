@@ -295,6 +295,23 @@ before the tag exists.
 The pushed tag fires [`release-tag-check.yml`](../.github/workflows/release-tag-check.yml)
 and [`publish-package.yml`](../.github/workflows/publish-package.yml).
 
+**If neither fires, they can both be run by hand.** Push events stop dispatching
+during an Actions outage — on 2026-08-06 the v0.4.4 tag push produced zero runs —
+and "the tripwire did not report" is indistinguishable from "the tripwire passed"
+unless you go and look. Both workflows accept a `workflow_dispatch`:
+
+```sh
+gh run list --workflow release-tag-check.yml --limit 3   # did it fire at all?
+gh workflow run release-tag-check.yml -f tag=vX.Y.Z
+gh workflow run publish-package.yml --ref vX.Y.Z -f dry_run=false
+```
+
+`release-tag-check.yml` checks out whatever tag it resolves, so the
+`package.json` its gates read is the one that tag publishes regardless of which
+ref the dispatch came from. It refuses a resolved value that is not a `v*` tag
+rather than comparing the string `main` against `package.json` and reporting a
+version mismatch that is really an operator error.
+
 > **The rebuild is 4a's `bumpp` step's `--execute` hook, and it is why the commit
 > is made with `--all`.** `bun build` inlines `package.json` — `BUILD_VERSION` in
 > `src/lib/update/build-info.ts` falls back to `packageJson.version` — so
@@ -567,8 +584,8 @@ the whole thing is unit-tested offline (`bun run check:ops`).
 |---|---|---|
 | 1 | The PR carries a milestone whose title is a release tag (`vX.Y.Z`) | `release-gates.yml`, every PR |
 | 2 | The PR's required bump ≤ the milestone's bump, measured from the current release | `release-gates.yml`, every PR; `release:check milestone` at preflight |
-| 3 | The tag matches `package.json` | `release:prepare vX.Y.Z` sets one from the other; **`release:tag vX.Y.Z` re-reads it off the merged commit**; `release:check version` preflight; `release-tag-check.yml` on tag push |
-| 4 | The tag does not exist and is above every release tag that does, locally **and** on `origin` | **`release:prepare vX.Y.Z`, before the bump, and `release:tag vX.Y.Z`, before the tag**; `release:check order` preflight and by-hand path; `release-tag-check.yml` on tag push (`--pushed`) |
+| 3 | The tag matches `package.json` | `release:prepare vX.Y.Z` sets one from the other; **`release:tag vX.Y.Z` re-reads it off the merged commit**; `release:check version` preflight; `release-tag-check.yml` on tag push, or dispatched by hand |
+| 4 | The tag does not exist and is above every release tag that does, locally **and** on `origin` | **`release:prepare vX.Y.Z`, before the bump, and `release:tag vX.Y.Z`, before the tag**; `release:check order` preflight and by-hand path; `release-tag-check.yml` on tag push (`--pushed`), or dispatched by hand |
 | 5 | Nothing still open claims to ship in this release | **`release:prepare vX.Y.Z`, before the bump**; `release:check milestone` at preflight |
 
 ```sh
