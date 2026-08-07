@@ -75,6 +75,49 @@ the thing it exists to check — this repo's most-repeated defect shape.
 Running as the host uid also keeps container-written files out of the work tree
 owned by a user the host cannot delete.
 
+## In CI
+
+`ci.yml`'s `test` job runs in this image
+(`ghcr.io/stuffbucket/maximal-core/ci:latest`, built and pushed by
+[`publish-ci-image.yml`](../../.github/workflows/publish-ci-image.yml)), so it no
+longer installs Bun or Node per run.
+
+**The image has to exist before the job can use it**, and that ordering is not
+advisory. When the containerised job was first proposed alongside its publisher,
+its very first run died at container creation:
+
+```
+docker pull ghcr.io/stuffbucket/maximal-core/ci:latest
+Error response from daemon: manifest unknown
+```
+
+No step executed, so no amount of re-running would have helped. The publisher
+therefore landed on its own first (maximal-core#98, via maximal-core#91); a
+`workflow_dispatch` cannot substitute, because a workflow is only dispatchable
+once it is on the default branch.
+
+It names the **floating** `latest` tag rather than `bun-<version>`, for one
+mechanical reason: `jobs.<id>.container.image` is resolved before any step of
+the job runs, so it cannot read a step output. Computing the tag from
+`.bun-version` would need a preceding job and a `needs:` edge — and if that job
+failed, `test` would never run, so the *required* `test` status check would
+never report and the PR would wedge with no way to push a fix past it. That is
+worse than the drift it prevents. So the job's first step asserts
+`bun --version` equals `.bun-version` and fails loudly if it does not, which is
+what makes the float safe.
+
+The consequence is an ordering rule when the pin moves: publish the image, then
+open the bump PR. It is written down in
+[`bun-version-policy.md`](../bun-version-policy.md).
+
+The job also runs `--user 1001:1001` (the `runner` uid), not root — see the
+section above; container jobs are root by default and
+`tests/config-unwritable-boot.test.ts` now refuses to run that way.
+
+The `windows` job stays native on
+[`.github/actions/setup-bun`](../../.github/actions/setup-bun/action.yml), which
+also remains in use by every other workflow.
+
 ## Why not `act`
 
 [`act`](https://github.com/nektos/act) runs the *workflow*, on images that

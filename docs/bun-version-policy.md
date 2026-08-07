@@ -1,11 +1,13 @@
 # Bun version policy
 
 Pinned in `.bun-version` — read by `bun install`, by Bun's own version manager,
-and at runtime by every CI workflow that needs Bun: `ci.yml`, `tooling-ci.yml`,
+and at runtime by every CI workflow that needs Bun: `tooling-ci.yml`,
 `watch-external-drift.yml`, `watch-branch-rules.yml`, `randomized-test-order.yml`,
-`release-gates.yml`, `release-tag-check.yml`, and
-`publish-package.yml` each
-`cat .bun-version` into `setup-bun`. No workflow holds a copy of the version
+`release-gates.yml`, `release-tag-check.yml`, `publish-package.yml` and
+`ci.yml`'s `windows` job each `cat .bun-version` into `setup-bun`;
+[`publish-ci-image.yml`](../.github/workflows/publish-ci-image.yml) bakes it into
+the toolchain image, and `ci.yml`'s `test` job runs in that image and `cat`s the
+file to assert the two agree. No workflow holds a copy of the version
 literal, so dev/CI drift is not representable — which is the point: drift is
 what got us a 22-test failure on a Bun `latest` regression once.
 
@@ -26,6 +28,15 @@ artifact that the version decides:
    and `bun run check:ops`.
 5. If green, commit `.bun-version` and `dist/main.js` together.
 6. Watch the next CI run.
+
+**Ordering, once `ci.yml`'s `test` job runs in the toolchain image:** dispatch
+[`publish-ci-image.yml`](../.github/workflows/publish-ci-image.yml) on your bump
+branch *before* opening the PR. That job
+names the image by a floating `latest` tag (it cannot compute one — see that
+workflow's header), and its first step asserts the image's Bun equals
+`.bun-version`. A bump PR opened against a not-yet-republished image fails that
+gate by design, naming the fix, rather than quietly running the suite on the old
+Bun and reporting `bindings:check` staleness with the wrong cause.
 
 Steps 3-4 are the ones that go wrong, because they depend on your PATH rather
 than on anything the repo can assert. `bun run container:run -- bun run check:deep`
