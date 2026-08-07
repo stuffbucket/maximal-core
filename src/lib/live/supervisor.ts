@@ -14,8 +14,35 @@
  */
 import {
   anyReadyLineSchema,
+  BOOT_STATUS_MARKER,
   type ParsedReadyLine,
   READY_MARKER,
+} from "~/lib/start/boot-status"
+
+/**
+ * The three non-ready stdout markers, re-exported so a supervisor can implement
+ * the documented behaviour without copying the literals.
+ *
+ * `boot-status.ts` says all marker constants MUST stay in sync with the
+ * supervisor that parses them — and until this export existed there was no way
+ * for a supervisor to obey it, because `./supervisor` carried only the
+ * ready-line helpers and Node's `exports` map rejects a deeper path. So a host
+ * hardcoded `"@@MAXIMAL_STATUS@@"` (stuffbucket/maximal
+ * `client/src/main/core.ts`), and a change here would have degraded it
+ * SILENTLY: the splash simply stops updating and shows a blank "Starting…"
+ * again — the exact failure the marker exists to prevent, with no error
+ * anywhere (maximal-core#110).
+ *
+ * - `BOOT_STATUS_MARKER` — prefixes a boot-phase line; use `parseBootStatus`
+ *   rather than matching it by hand.
+ * - `QUIT_REQUEST_MARKER` / `UPDATE_REQUEST_MARKER` — whole lines with no
+ *   payload, so an equality check against the trimmed line is the whole parse
+ *   and no helper would add anything.
+ */
+export {
+  BOOT_STATUS_MARKER,
+  QUIT_REQUEST_MARKER,
+  UPDATE_REQUEST_MARKER,
 } from "~/lib/start/boot-status"
 
 /**
@@ -117,6 +144,33 @@ export function parseReadyLine(line: string): ParsedReadyLine | null {
   } catch {
     return null
   }
+}
+
+/**
+ * Pull the human-readable message out of a boot-status line, or null if the
+ * line is not one.
+ *
+ * Paired with `awaitReadyLine`'s `onLine`, this is the whole splash relay: feed
+ * each line here, and show the string when it is non-null. Shipping the marker
+ * without the parser would leave every host to write `startsWith` + `slice`
+ * itself, which is the second-parser drift this module's ready-line docs argue
+ * against — and the same reasoning applies to a one-line prefix.
+ *
+ * The message is returned verbatim after the single separating space, NOT
+ * trimmed: `emitBootStatus` writes exactly what it was given, and a supervisor
+ * that wants to render leading indentation should be able to. Only the line
+ * terminator is stripped, and `\r\n` as well as `\n` — a host on Windows reads
+ * the same stdout, and `trimEnd()` here would eat a trailing space that is part
+ * of the message. An empty message yields `""`, which is a boot-status line
+ * carrying nothing — distinct from `null`, which means "not a boot-status line
+ * at all". Check against `null` explicitly; `if (parseBootStatus(line))`
+ * silently drops the empty case.
+ */
+export function parseBootStatus(line: string): string | null {
+  const withoutTerminator = line.replace(/\r?\n$/u, "")
+  const prefix = `${BOOT_STATUS_MARKER} `
+  if (!withoutTerminator.startsWith(prefix)) return null
+  return withoutTerminator.slice(prefix.length)
 }
 
 export interface AwaitReadyOptions {

@@ -21,6 +21,7 @@ import { z } from 'zod';
  * All marker constants MUST stay in sync with the supervisor that parses them.
  */
 
+declare const BOOT_STATUS_MARKER = "@@MAXIMAL_STATUS@@";
 /**
  * The ready-line payload **as this engine emits it**.
  *
@@ -80,6 +81,8 @@ type ReadyLine = z.infer<typeof readyLineSchema>;
  * gating only.
  */
 type ParsedReadyLine = z.infer<typeof anyReadyLineSchema>;
+declare const QUIT_REQUEST_MARKER = "@@MAXIMAL_QUIT@@";
+declare const UPDATE_REQUEST_MARKER = "@@MAXIMAL_UPDATE@@";
 
 /**
  * Sidecar supervision helpers for a host that spawns `maximal start`
@@ -129,6 +132,27 @@ declare class SidecarExitedError extends Error {
  * boot over one garbled write.
  */
 declare function parseReadyLine(line: string): ParsedReadyLine | null;
+/**
+ * Pull the human-readable message out of a boot-status line, or null if the
+ * line is not one.
+ *
+ * Paired with `awaitReadyLine`'s `onLine`, this is the whole splash relay: feed
+ * each line here, and show the string when it is non-null. Shipping the marker
+ * without the parser would leave every host to write `startsWith` + `slice`
+ * itself, which is the second-parser drift this module's ready-line docs argue
+ * against — and the same reasoning applies to a one-line prefix.
+ *
+ * The message is returned verbatim after the single separating space, NOT
+ * trimmed: `emitBootStatus` writes exactly what it was given, and a supervisor
+ * that wants to render leading indentation should be able to. Only the line
+ * terminator is stripped, and `\r\n` as well as `\n` — a host on Windows reads
+ * the same stdout, and `trimEnd()` here would eat a trailing space that is part
+ * of the message. An empty message yields `""`, which is a boot-status line
+ * carrying nothing — distinct from `null`, which means "not a boot-status line
+ * at all". Check against `null` explicitly; `if (parseBootStatus(line))`
+ * silently drops the empty case.
+ */
+declare function parseBootStatus(line: string): string | null;
 interface AwaitReadyOptions {
     /** Give up after this long. A supervisor needs an upper bound, or a sidecar
      *  wedged before its bind hangs the whole app launch. */
@@ -171,4 +195,4 @@ declare function sidecarSpawnEnv(parentPid?: number): {
     MAXIMAL_SIDECAR_PARENT_PID: string;
 };
 
-export { type AwaitReadyOptions, type ParsedReadyLine, type ReadyLine, SidecarExitedError, SidecarReadyTimeoutError, awaitReadyLine, parseReadyLine, sidecarSpawnEnv };
+export { type AwaitReadyOptions, BOOT_STATUS_MARKER, type ParsedReadyLine, QUIT_REQUEST_MARKER, type ReadyLine, SidecarExitedError, SidecarReadyTimeoutError, UPDATE_REQUEST_MARKER, awaitReadyLine, parseBootStatus, parseReadyLine, sidecarSpawnEnv };

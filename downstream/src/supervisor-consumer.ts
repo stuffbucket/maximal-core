@@ -16,10 +16,14 @@ import type { AwaitReadyOptions } from "@stuffbucket/maximal-core/supervisor"
 
 import {
   awaitReadyLine,
+  BOOT_STATUS_MARKER,
+  parseBootStatus,
   parseReadyLine,
+  QUIT_REQUEST_MARKER,
   sidecarSpawnEnv,
   SidecarExitedError,
   SidecarReadyTimeoutError,
+  UPDATE_REQUEST_MARKER,
 } from "@stuffbucket/maximal-core/supervisor"
 
 import { expectAssignable } from "./assert.js"
@@ -111,3 +115,45 @@ if (maybeReady !== null) {
 // without narrowing must stay an error, or every consumer silently accepts a
 // null ready-line.
 export const unsafePid: number = parseReadyLine("nope").pid
+
+// --- the non-ready markers -------------------------------------------------
+// All three must be VALUES, not types: a supervisor compares a stdout line
+// against them at runtime. A type-only export would compile here and be
+// `undefined` in the host, so every comparison would silently be false and the
+// splash would never update — the exact silent degradation maximal-core#110
+// was filed about.
+expectAssignable<string>(BOOT_STATUS_MARKER)
+expectAssignable<string>(QUIT_REQUEST_MARKER)
+expectAssignable<string>(UPDATE_REQUEST_MARKER)
+
+/**
+ * The splash relay, written the way the Electron host writes it: hand every
+ * non-ready stdout line to `parseBootStatus` and render whatever comes back.
+ *
+ * The `!== null` check is the assertion. `parseBootStatus` returns
+ * `string | null`, so a host that dropped the narrowing would be passing a
+ * possibly-null value to a renderer typed for a string. If the return type ever
+ * widened to a bare `string`, the `@ts-expect-error` below flips and this
+ * fixture fails.
+ */
+export function relayToSplash(
+  line: string,
+  show: (message: string) => void,
+): void {
+  const message = parseBootStatus(line)
+  if (message !== null) show(message)
+}
+
+// The quit/update markers carry no payload, so an equality check against the
+// trimmed line IS the parse — this is the whole supervisor-side handling.
+export function isQuitRequest(line: string): boolean {
+  return line.trim() === QUIT_REQUEST_MARKER
+}
+export function isUpdateRequest(line: string): boolean {
+  return line.trim() === UPDATE_REQUEST_MARKER
+}
+
+// @ts-expect-error parseBootStatus returns `string | null`; assigning it to a
+// bare `string` must stay an error, or a host renders `null` on the splash the
+// first time it sees a line that is not a boot-status line.
+export const unsafeMessage: string = parseBootStatus("nope")

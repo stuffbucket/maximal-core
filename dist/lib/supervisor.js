@@ -1,5 +1,6 @@
 // src/lib/start/boot-status.ts
 import { z } from "zod";
+var BOOT_STATUS_MARKER = "@@MAXIMAL_STATUS@@";
 var READY_MARKER = "@@MAXIMAL_READY@@";
 var port = z.number().int().min(0).max(65535);
 var readyLineSchema = z.object({
@@ -34,6 +35,8 @@ var readyLineV0Schema = z.object({ port, pid: z.number().int() }).transform((lin
   pid: line.pid
 }));
 var anyReadyLineSchema = z.union([readyLineSchema, readyLineV0Schema]);
+var QUIT_REQUEST_MARKER = "@@MAXIMAL_QUIT@@";
+var UPDATE_REQUEST_MARKER = "@@MAXIMAL_UPDATE@@";
 
 // src/lib/live/supervisor.ts
 function withOutput(message, output) {
@@ -74,6 +77,12 @@ function parseReadyLine(line) {
   } catch {
     return null;
   }
+}
+function parseBootStatus(line) {
+  const withoutTerminator = line.replace(/\r?\n$/u, "");
+  const prefix = `${BOOT_STATUS_MARKER} `;
+  if (!withoutTerminator.startsWith(prefix)) return null;
+  return withoutTerminator.slice(prefix.length);
 }
 var DEFAULT_READY_TIMEOUT_MS = 3e4;
 function flushTrailing(buffer, onLine) {
@@ -124,9 +133,13 @@ function sidecarSpawnEnv(parentPid = process.pid) {
   return { MAXIMAL_SIDECAR_PARENT_PID: String(parentPid) };
 }
 export {
+  BOOT_STATUS_MARKER,
+  QUIT_REQUEST_MARKER,
   SidecarExitedError,
   SidecarReadyTimeoutError,
+  UPDATE_REQUEST_MARKER,
   awaitReadyLine,
+  parseBootStatus,
   parseReadyLine,
   sidecarSpawnEnv
 };
