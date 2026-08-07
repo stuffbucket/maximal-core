@@ -1,0 +1,85 @@
+# Build and publish the pinned toolchain image that `ci.yml`'s `test` job runs
+# in. The image itself, and why it exists, are documented at
+# `docs/dev/container-toolchain.md`; this file is only its delivery.
+#
+# ## Two tags, and why one of them floats
+#
+# `bun-<version>` is the honest name — it carries the pin, so a stale image is
+# not addressable and the local runner (`scripts/dev/container.ts`) uses only
+# this form.
+#
+# `latest` exists solely because `jobs.<id>.container.image` in a workflow
+# CANNOT read a step output: `container` is resolved before any step of the job
+# runs. Computing the tag from `.bun-version` therefore needs a preceding job
+# and a `needs:` edge — and if that job fails, `test` never runs, so the
+# REQUIRED `test` status check never reports and the PR wedges with no way to
+# push a fix past it. That failure mode is strictly worse than the one it would
+# prevent, so `ci.yml` names `latest` and asserts the pin in its first step
+# instead. The parity gate is what keeps the float honest; see the
+# `Toolchain matches the pin` step there.
+#
+# ## Ordering, when the pin moves
+#
+# This workflow runs on a push to `main`, so a PR that bumps `.bun-version` has
+# no republished image to run against and its `test` job fails the parity gate
+# by design — loudly, naming the fix, rather than silently testing on the old
+# Bun. `docs/bun-version-policy.md` carries the ordering step: dispatch this
+# workflow from the bump branch first, then open the PR.
+name: publish-ci-image
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/docker/**"
+      - ".bun-version"
+      - ".github/workflows/publish-ci-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-ci-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve the pin and the tags
+        id: pin
+        run: |
+          set -euo pipefail
+          version="$(cat .bun-version)"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/ci"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "tags=$image:bun-$version,$image:latest" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          # The Dockerfile's own directory, not the repo root: nothing is COPYed
+          # in, and a repo-root context would upload node_modules and dist.
+          context: .github/docker
+          file: .github/docker/ci.Dockerfile
+          push: true
+          tags: ${{ steps.pin.outputs.tags }}
+          build-args: |
+            BUN_VERSION=${{ steps.pin.outputs.version }}
+
+      - name: Report
+        run: |
+          set -euo pipefail
+          echo "Published ${{ steps.pin.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"

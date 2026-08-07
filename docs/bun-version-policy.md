@@ -30,7 +30,8 @@ artifact that the version decides:
 6. Watch the next CI run.
 
 **Ordering, once `ci.yml`'s `test` job runs in the toolchain image:** dispatch
-the toolchain-image workflow on your bump branch *before* opening the PR. That job
+[`publish-ci-image.yml`](../.github/workflows/publish-ci-image.yml) on your bump
+branch *before* opening the PR. That job
 names the image by a floating `latest` tag (it cannot compute one — see that
 workflow's header), and its first step asserts the image's Bun equals
 `.bun-version`. A bump PR opened against a not-yet-republished image fails that

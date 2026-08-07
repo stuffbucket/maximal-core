@@ -78,12 +78,23 @@ owned by a user the host cannot delete.
 ## In CI
 
 `ci.yml`'s `test` job runs in this image
-(`ghcr.io/stuffbucket/maximal-core/ci:latest`), so it no longer installs Bun or
-Node per run. The workflow that builds and pushes that image lands separately
-and **must land first** — until it has run on `main` there is no image to pull,
-and the containerised job dies at container creation with
-`manifest unknown` before a single step executes. That is not a hypothesis: it
-is what this PR's first run did.
+(`ghcr.io/stuffbucket/maximal-core/ci:latest`, built and pushed by
+[`publish-ci-image.yml`](../../.github/workflows/publish-ci-image.yml)), so it no
+longer installs Bun or Node per run.
+
+**The image has to exist before the job can use it**, and that ordering is not
+advisory. When the containerised job was first proposed alongside its publisher,
+its very first run died at container creation:
+
+```
+docker pull ghcr.io/stuffbucket/maximal-core/ci:latest
+Error response from daemon: manifest unknown
+```
+
+No step executed, so no amount of re-running would have helped. The publisher
+therefore landed on its own first (maximal-core#98, via maximal-core#91); a
+`workflow_dispatch` cannot substitute, because a workflow is only dispatchable
+once it is on the default branch.
 
 It names the **floating** `latest` tag rather than `bun-<version>`, for one
 mechanical reason: `jobs.<id>.container.image` is resolved before any step of

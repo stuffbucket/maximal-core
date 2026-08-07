@@ -112,6 +112,49 @@ describe("applyFix (autonomous --fix path)", () => {
     const [spec] = VERSION_PINS
     expect(() => applyFix("// constant removed", spec, "1.0.0")).toThrow(spec.id)
   })
+
+  test("claudeCode --fix carries the coupled agent-sdk version with it", async () => {
+    // Regression guard for the desync this pin already shipped once: the old
+    // pattern captured the `vscode_claude_code/` site inside the UA, so a --fix
+    // bumped the agent version and left `agent-sdk/` frozen, emitting a pair
+    // that never existed upstream. The UA must therefore DERIVE the agent-sdk
+    // version rather than repeat a literal — assert that, then assert a real
+    // --fix leaves no trace of the old patch anywhere in the file.
+    const spec = VERSION_PINS.find((p) => p.id === "claudeCode")
+    expect(spec).toBeDefined()
+    if (!spec) return
+    const source = await fs.readFile(repoPath(spec.file), "utf8")
+    const current = extractPin(spec, source)
+
+    // Scoped to the UA definition, not the whole file: the surrounding comments
+    // legitimately cite past version pairs as the rationale for this guard.
+    const uaLine = source.match(/const CLAUDE_AGENT_USER_AGENT = .*/u)?.[0]
+    expect(uaLine).toBeDefined()
+    // `agent-sdk/` is followed by an interpolation, never a hardcoded version.
+    expect(uaLine).toMatch(/agent-sdk\/\$\{/u)
+    expect(uaLine).not.toMatch(/agent-sdk\/[\d.]+/u)
+
+    const bumped = applyFix(source, spec, "9.9.999")
+    expect(extractPin(spec, bumped)).toBe("9.9.999")
+    expect(applyFix(bumped, spec, current)).toBe(source)
+  })
+})
+
+describe("coupled agent-sdk minor line", () => {
+  test("the pinned minor matches the committed baseline", async () => {
+    const source = await fs.readFile(
+      repoPath("src/lib/config/api-config.ts"),
+      "utf8",
+    )
+    const pinned = source.match(/const CLAUDE_AGENT_SDK_MINOR = "([\d.]+)"/u)
+    expect(pinned?.[1]).toBeDefined()
+    const raw = await fs.readFile(BASELINE_PATH)
+    const baseline = JSON.parse(raw.toString()) as Record<string, string>
+    // Not a VERSION_PIN or HEADER_PIN: the minor has no derivable "latest"
+    // (upstream moved 0.2.x -> 0.3.x mid-2.1.x), so it is pinned in src and
+    // mirrored here. Changing one without the other must red the build.
+    expect(pinned?.[1]).toBe(baseline.claudeAgentSdkMinor)
+  })
 })
 
 describe("baseline fixture", () => {
