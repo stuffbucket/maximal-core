@@ -40,6 +40,37 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:prepare vX.Y.Z` inserts the generated block here -->
 
+## [0.4.5](https://github.com/stuffbucket/maximal-core/compare/v0.4.4...v0.4.5) (2026-08-07)
+
+
+### Bug Fixes
+
+* **auth:** stop proxying a Copilot bearer that is known expired ([#86](https://github.com/stuffbucket/maximal-core/issues/86)) ([3eb7a14](https://github.com/stuffbucket/maximal-core/commit/3eb7a14247a7994525988ecc4396c6f2df81f1db))
+* **bin:** declare the Bun shebang the CLI bundle actually needs ([#95](https://github.com/stuffbucket/maximal-core/issues/95)) ([a018b94](https://github.com/stuffbucket/maximal-core/commit/a018b94c5771e449ccb7e8ddfb1c74b81c54bfb3)), closes [#94](https://github.com/stuffbucket/maximal-core/issues/94)
+* **release:** refuse to tag a merged head that is not the release commit ([#87](https://github.com/stuffbucket/maximal-core/issues/87)) ([3b00371](https://github.com/stuffbucket/maximal-core/commit/3b00371ab04ecfcd515c0dc534cc4b31ed3bd14b))
+
+
+### Build System
+
+* **ci:** add a pinned toolchain container for running checks locally ([#91](https://github.com/stuffbucket/maximal-core/issues/91)) ([de6ecf7](https://github.com/stuffbucket/maximal-core/commit/de6ecf71755d1faeb8c519bb590273ee19ed858f))
+
+
+### Continuous Integration
+
+* make CI dispatchable by hand ([#99](https://github.com/stuffbucket/maximal-core/issues/99)) ([5b2d7a8](https://github.com/stuffbucket/maximal-core/commit/5b2d7a80d61831216cad70adb8fc5332d63a8f12))
+* publish the pinned toolchain image to GHCR ([#98](https://github.com/stuffbucket/maximal-core/issues/98)) ([17299f4](https://github.com/stuffbucket/maximal-core/commit/17299f4d024b9f711a659b957d4a6f3aecea6b58))
+* **release:** let the tag tripwire be dispatched by hand ([#93](https://github.com/stuffbucket/maximal-core/issues/93)) ([b12e1ca](https://github.com/stuffbucket/maximal-core/commit/b12e1cabf5a7eaf70a9a8b17108aa2971cd61743))
+
+
+### Documentation
+
+* **update:** name both producers of the build-info defines ([#96](https://github.com/stuffbucket/maximal-core/issues/96)) ([fd3215e](https://github.com/stuffbucket/maximal-core/commit/fd3215e5871ef96bf59ba584d76c94e76c2e72fc))
+
+
+### Miscellaneous Chores
+
+* **config:** reconcile external-surface drift from #1 ([#85](https://github.com/stuffbucket/maximal-core/issues/85)) ([f2a07c0](https://github.com/stuffbucket/maximal-core/commit/f2a07c050b177f33d18c3880d76f30b1ba069170))
+
 ## [0.4.4](https://github.com/stuffbucket/maximal-core/compare/v0.4.3...v0.4.4) (2026-08-06)
 
 
