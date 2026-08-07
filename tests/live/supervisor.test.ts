@@ -2,17 +2,24 @@ import { describe, expect, test } from "bun:test"
 
 import {
   awaitReadyLine,
+  BOOT_STATUS_MARKER,
   type ParsedReadyLine,
+  parseBootStatus,
   parseReadyLine,
+  QUIT_REQUEST_MARKER,
   type ReadyLine,
   SidecarExitedError,
   SidecarReadyTimeoutError,
   sidecarSpawnEnv,
+  UPDATE_REQUEST_MARKER,
 } from "~/lib/live/supervisor"
 import {
+  BOOT_STATUS_MARKER as EMITTER_BOOT_STATUS_MARKER,
+  QUIT_REQUEST_MARKER as EMITTER_QUIT_REQUEST_MARKER,
   READY_LINE_VERSION,
   READY_MARKER,
   readyLineSchema,
+  UPDATE_REQUEST_MARKER as EMITTER_UPDATE_REQUEST_MARKER,
 } from "~/lib/start/boot-status"
 
 const READY = `${READY_MARKER} {"v":1,"controlPort":51234,"proxyPort":4141,"pid":99}`
@@ -238,5 +245,85 @@ describe("sidecarSpawnEnv", () => {
     expect(sidecarSpawnEnv(1234)).toEqual({
       MAXIMAL_SIDECAR_PARENT_PID: "1234",
     })
+  })
+})
+
+describe("marker re-exports", () => {
+  test("the markers `./supervisor` publishes ARE the ones the engine emits", () => {
+    // The point of the re-export (maximal-core#110). Comparing against the
+    // emitter's own constants, not against string literals: a literal here
+    // would be a second copy of exactly the thing a supervisor was hardcoding,
+    // and this test would keep passing while both drifted from the emitter.
+    expect(BOOT_STATUS_MARKER).toBe(EMITTER_BOOT_STATUS_MARKER)
+    expect(QUIT_REQUEST_MARKER).toBe(EMITTER_QUIT_REQUEST_MARKER)
+    expect(UPDATE_REQUEST_MARKER).toBe(EMITTER_UPDATE_REQUEST_MARKER)
+  })
+})
+
+describe("parseBootStatus", () => {
+  test("returns the message a boot-status line carries", () => {
+    expect(parseBootStatus(`${BOOT_STATUS_MARKER} Checking for updates`)).toBe(
+      "Checking for updates",
+    )
+  })
+
+  test("round-trips what emitBootStatus actually writes", () => {
+    // The parser must agree with the emitter, not with a hand-written sample.
+    // Spelled as the emitter spells it (one space, trailing newline), so a
+    // change to that format fails here rather than in a host's splash.
+    const written = `${BOOT_STATUS_MARKER} Starting proxy\n`
+    expect(parseBootStatus(written)).toBe("Starting proxy")
+  })
+
+  test("null for a plain log line, a ready-line, and the other markers", () => {
+    // A supervisor feeds EVERY stdout line through this. Anything that is not
+    // a boot-status line must be null, or a quit request renders as splash text.
+    expect(parseBootStatus("listening on 4141")).toBeNull()
+    expect(parseBootStatus(READY)).toBeNull()
+    expect(parseBootStatus(QUIT_REQUEST_MARKER)).toBeNull()
+    expect(parseBootStatus(UPDATE_REQUEST_MARKER)).toBeNull()
+  })
+
+  test("the bare marker is not a boot-status line", () => {
+    // `emitBootStatus` always writes a separating space. A bare marker is
+    // malformed, and reporting it as an empty message would put a blank line on
+    // the splash instead of leaving the previous status up.
+    expect(parseBootStatus(BOOT_STATUS_MARKER)).toBeNull()
+  })
+
+  test('an empty message is `""`, distinct from null', () => {
+    // Documented contract: `""` is a boot-status line carrying nothing, `null`
+    // is not a boot-status line. A host that tests truthiness conflates them.
+    expect(parseBootStatus(`${BOOT_STATUS_MARKER} `)).toBe("")
+    expect(parseBootStatus(`${BOOT_STATUS_MARKER} \n`)).toBe("")
+  })
+
+  test("strips a CRLF terminator, and only the terminator", () => {
+    // A host on Windows reads the same stdout. Trimming trailing whitespace
+    // generally would also eat a space the emitter was handed as part of the
+    // message, so only the line terminator goes.
+    expect(parseBootStatus(`${BOOT_STATUS_MARKER} Loading\r\n`)).toBe("Loading")
+    expect(parseBootStatus(`${BOOT_STATUS_MARKER} Loading \n`)).toBe("Loading ")
+  })
+
+  test("preserves leading whitespace in the message", () => {
+    // Not trimmed, so a host can render indentation the emitter chose.
+    expect(parseBootStatus(`${BOOT_STATUS_MARKER}   indented`)).toBe(
+      "  indented",
+    )
+  })
+
+  test("composes with awaitReadyLine's onLine — the splash relay", () => {
+    // The actual downstream use: every non-ready line goes through onLine, and
+    // the boot-status ones become splash text.
+    const lines = [
+      "some noise",
+      `${BOOT_STATUS_MARKER} Loading config`,
+      `${BOOT_STATUS_MARKER} Binding ports`,
+    ]
+    const shown = lines
+      .map((line) => parseBootStatus(line))
+      .filter((message): message is string => message !== null)
+    expect(shown).toEqual(["Loading config", "Binding ports"])
   })
 })
