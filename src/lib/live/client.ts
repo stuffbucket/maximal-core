@@ -8,9 +8,12 @@
  * request/response, and a `subscriptions/listen` stream for push. Both go to the
  * one `POST /control/rpc` endpoint.
  *
- * A fetch-based SSE reader, NOT native EventSource — so it can send auth headers
- * and issue the subscription as a POST, at the cost of re-implementing
- * reconnect/backoff here.
+ * A fetch-based SSE reader, NOT native EventSource — the subscription IS a POST
+ * (`subscriptions/listen` to the one `/control/rpc` endpoint) and EventSource is
+ * GET-only and browser-only, at the cost of re-implementing reconnect/backoff
+ * here. It is NOT "so it can send auth headers": this client sends no
+ * credential, and the surface it talks to accepts none (see
+ * `ControlClientOptions.headers`).
  *
  * State model mirrors the server: a `control/snapshot` notification seeds
  * per-topic state, then `control/<topic>` notifications overwrite by topic.
@@ -44,15 +47,141 @@ export class ControlRpcError extends Error {
   }
 }
 
+/**
+ * The value type a credential-bearing header name is given in
+ * `NonCredentialHeaders`. Uninhabited, so nothing can be assigned to it — its
+ * only job is to make the compiler's message name the reason.
+ */
+interface CredentialHeaderNotSupported {
+  readonly credentialsAreNotSupportedOnTheControlSurface: never
+}
+
+/**
+ * The header names this client refuses to send, lowercased.
+ *
+ * The first two are the only names the sidecar's own `extractRequestApiKey`
+ * ever reads, so they are the ones a caller would reach for; the rest are the
+ * remaining standard credential-bearing request headers plus the common
+ * misspelling of `x-api-key`. Matched case-insensitively — HTTP header names
+ * are case-insensitive, so `Authorization` and `AUTHORIZATION` are the same
+ * header and must be rejected the same way.
+ */
+const CREDENTIAL_HEADER_NAMES: ReadonlySet<string> = new Set([
+  "authorization",
+  "x-api-key",
+  "api-key",
+  "proxy-authorization",
+  "cookie",
+])
+
+/**
+ * Request headers that are NOT credentials — tracing ids, content negotiation,
+ * a correlation header a dev proxy needs. Credential-bearing names are typed as
+ * an uninhabited sentinel, so `{ "x-api-key": key }` is a compile error at the
+ * call site rather than a request that silently ships a secret.
+ *
+ * This is a tripwire, not a proof, and for exactly the reason `eslint.config.js`
+ * gives for the repo-side guard: it decides on the SHAPE of the key, so it
+ * catches literal spellings (including a `const` holding an object literal) and
+ * cannot catch a `Record<string, string>` assembled elsewhere and passed in —
+ * `keyof` that is `string`, which matches no literal. The constructor's runtime
+ * check is what closes that half, and it is case-insensitive where this type
+ * can only enumerate spellings.
+ */
+export type NonCredentialHeaders = Record<string, string> & {
+  [K in
+    | "api-key"
+    | "API-Key"
+    | "Api-Key"
+    | "authorization"
+    | "Authorization"
+    | "AUTHORIZATION"
+    | "cookie"
+    | "Cookie"
+    | "proxy-authorization"
+    | "Proxy-Authorization"
+    | "x-api-key"
+    | "X-API-KEY"
+    | "X-Api-Key"]?: CredentialHeaderNotSupported
+}
+
+/**
+ * Validate and copy the caller's headers into the record this client actually
+ * sends.
+ *
+ * Copying is not incidental. The caller keeps a reference to the object it
+ * passed, so validating in place would leave it free to add a credential after
+ * construction and have every later request pick it up; the copy makes the
+ * check hold for the client's whole life.
+ *
+ * @throws TypeError if any header name is credential-bearing.
+ */
+function toRequestHeaders(
+  headers: NonCredentialHeaders | undefined,
+): Record<string, string> {
+  const copied: Record<string, string> = {}
+  if (headers === undefined) return copied
+  // Keys + index access, not `Object.entries`: entries widens the value to the
+  // union that includes the rejection sentinel, while indexing by a `string`
+  // resolves through the record's index signature and stays `string`.
+  for (const name of Object.keys(headers)) {
+    if (CREDENTIAL_HEADER_NAMES.has(name.trim().toLowerCase())) {
+      throw new TypeError(
+        `ControlClient: refusing to send the credential header "${name}". `
+          + "The control surface is loopback-only and takes no credential — the "
+          + "server never reads a key off a /control request, so this one would "
+          + "be inert on the wire and a leak if `baseUrl` were ever wrong. "
+          + "Pass non-credential headers only. See ADR-0001.",
+      )
+    }
+    copied[name] = headers[name]
+  }
+  return copied
+}
+
+/**
+ * The shape of the injectable `fetch`.
+ *
+ * Narrowed on purpose rather than `typeof fetch`, mirroring
+ * `lib/update/update-check.ts`: `typeof fetch` carries implementation extras
+ * (Bun's types put `preconnect` on it), so a plain stub function is NOT
+ * assignable to it and the "injectable fetch (tests / custom agents)" seam did
+ * not actually accept one. This signature is what the real `fetch` and a plain
+ * stub are both assignable to. It only widens what callers may pass — a value
+ * that satisfied `typeof fetch` still satisfies this.
+ */
+export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
+
 export interface ControlClientOptions {
   /** Origin the proxy is listening on, e.g. "http://127.0.0.1:4141". */
   baseUrl: string
   /** Mount prefix for the control surface (matches server.ts). */
   controlPath?: string
-  /** Auth headers sent on every request (e.g. { "x-api-key": "…" }). */
-  headers?: Record<string, string>
+  /**
+   * Extra NON-CREDENTIAL headers sent on every request — tracing/correlation
+   * ids and the like. This is not an auth hook, and there is no auth hook:
+   *
+   * - The control surface takes **no** credential. `/control` is listed in the
+   *   auth middleware's `allowUnauthenticatedPrefixes`, and `shouldBypass`
+   *   returns before a key is ever extracted, so a key sent here is not merely
+   *   optional — it is never read. The surface is protected by being
+   *   loopback-only (the control router 404s a remote caller itself) on an
+   *   ephemeral port, behind an Origin allowlist (ADR-0021).
+   * - Credentials that DO leave this project attach in exactly one place,
+   *   `src/lib/http/send-request.ts`, which picks the credential from the
+   *   destination host so a caller cannot choose the wrong one (ADR-0001). A
+   *   credential passed through here would bypass that mechanism entirely, and
+   *   `baseUrl` is caller-supplied — so a misconfigured origin would put the
+   *   operator's key on a wire it was never meant to reach.
+   *
+   * Credential-bearing names are therefore rejected: at compile time by the
+   * type for literal spellings, and at construction time by a case-insensitive
+   * check that also covers a record built elsewhere. Passing one throws
+   * `TypeError`.
+   */
+  headers?: NonCredentialHeaders
   /** Injectable fetch (tests / custom agents). Defaults to global fetch. */
-  fetch?: typeof fetch
+  fetch?: FetchLike
   /** Initial reconnect backoff and its ceiling. */
   reconnectDelayMs?: number
   maxReconnectDelayMs?: number
@@ -70,7 +199,7 @@ export class ControlClient {
   private readonly baseUrl: string
   private readonly controlPath: string
   private readonly headers: Record<string, string>
-  private readonly fetchImpl: typeof fetch
+  private readonly fetchImpl: FetchLike
   private readonly reconnectMs: number
   private readonly maxReconnectMs: number
   private readonly sleep: (ms: number) => Promise<void>
@@ -84,7 +213,9 @@ export class ControlClient {
   constructor(options: ControlClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "")
     this.controlPath = options.controlPath ?? "/control"
-    this.headers = options.headers ?? {}
+    // Validated + copied once, here, rather than checked at each send: the
+    // record is fixed for the client's life, so one check covers every request.
+    this.headers = toRequestHeaders(options.headers)
     this.fetchImpl = options.fetch ?? fetch
     this.reconnectMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_MS
     this.maxReconnectMs =
@@ -253,9 +384,14 @@ export class ControlClient {
   ): Promise<unknown> {
     const res = await this.fetchImpl(this.url(path), {
       method: init?.method ?? "GET",
+      // Spread rather than handing `this.headers` over as-is: the client's copy
+      // is the one thing that has been validated, and an injected `fetch` (or a
+      // polyfill) that mutates the record it is given must not be able to reach
+      // it. Also keeps every send site an object literal, which is the shape a
+      // reader — and `eslint.config.js`'s guard — can actually inspect.
       headers:
         init?.body === undefined ?
-          this.headers
+          { ...this.headers }
         : { ...this.headers, "content-type": "application/json" },
       body: init?.body === undefined ? undefined : JSON.stringify(init.body),
     })

@@ -15,7 +15,18 @@
 {
   "compilerOptions": {
     "target": "ESNext",
-    "lib": ["ESNext"],
+    // "DOM" is here because `./client` is a fetch-based SDK: its
+    // `ControlClientOptions.fetch` is `typeof fetch`, which resolves against an
+    // ambient global. That is unavoidable for this entrypoint — a structural
+    // stand-in would still need `Response` and `AbortSignal`, which are equally
+    // ambient — and it is not a gap in the contract: every real consumer has
+    // fetch, from DOM (browser/Electron renderer), @types/node, or bun-types.
+    // What this relaxes is narrow, and the load-bearing guard is untouched:
+    // `types: []` below still admits NO @types package, so a binding that leans
+    // on `process`, `Buffer`, or Bun globals still fails here. `./client` is the
+    // only entrypoint that names an ambient at all (`grep -n 'typeof fetch'
+    // dist/lib/*.d.ts`).
+    "lib": ["ESNext", "DOM"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "moduleDetection": "force",
