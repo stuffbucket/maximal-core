@@ -196,6 +196,40 @@ describe("pruneEmptyNodeModules", () => {
     expect(fs.existsSync(path.join(root, "node_modules", ".bin"))).toBe(true)
   })
 
+  // `readdirSync` follows a symlink and answers about its TARGET, so without an
+  // lstat this would consult someone else's directory and then act on the link.
+  it("leaves a symlinked node_modules alone, even one pointing at an empty dir", () => {
+    const root = tmpdir()
+    const target = path.join(root, "shared")
+    fs.mkdirSync(target)
+    fs.symlinkSync(target, path.join(root, "node_modules"))
+    expect(pruneEmptyNodeModules(root)).toBe(false)
+    expect(fs.lstatSync(path.join(root, "node_modules")).isSymbolicLink()).toBe(
+      true,
+    )
+    expect(fs.existsSync(target)).toBe(true)
+  })
+
+  // Not "this code declines to recurse" — `rmdir(2)` cannot remove a non-empty
+  // directory at all, so a populated tree is unreachable from here.
+  it("is a no-op on a directory holding only an empty subdirectory", () => {
+    const root = tmpdir()
+    fs.mkdirSync(path.join(root, "node_modules", "left-behind"), {
+      recursive: true,
+    })
+    expect(pruneEmptyNodeModules(root)).toBe(false)
+    expect(fs.existsSync(path.join(root, "node_modules", "left-behind"))).toBe(
+      true,
+    )
+  })
+
+  it("fails soft on a file, so cleanup can never turn a green run red", () => {
+    const root = tmpdir()
+    fs.writeFileSync(path.join(root, "node_modules"), "not a directory")
+    expect(pruneEmptyNodeModules(root)).toBe(false)
+    expect(fs.existsSync(path.join(root, "node_modules"))).toBe(true)
+  })
+
   it("is a no-op when there is nothing there", () => {
     expect(pruneEmptyNodeModules(tmpdir())).toBe(false)
   })

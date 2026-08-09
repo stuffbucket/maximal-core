@@ -33,7 +33,7 @@
  * Exit code: the container's, so this is transparent in a `&&` chain.
  */
 import { spawnSync } from "node:child_process"
-import { existsSync, readdirSync, readFileSync, rmdirSync } from "node:fs"
+import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync } from "node:fs"
 import { isAbsolute, posix, resolve } from "node:path"
 
 const REPO_ROOT = resolve(import.meta.dir, "../..")
@@ -158,6 +158,11 @@ export function gitDirMount(root: string = REPO_ROOT): GitDirMount {
   return { mounts: [{ hostPath: hostCommon, containerPath: containerCommon }] }
 }
 
+/** Where docker creates the named volume's mount target, on the HOST. */
+export function nodeModulesPath(root: string = REPO_ROOT): string {
+  return resolve(root, "node_modules")
+}
+
 /**
  * `/work/node_modules` is a named volume mounted over a path INSIDE the
  * bind-mounted work tree, and docker creates a mount target that does not
@@ -169,17 +174,38 @@ export function gitDirMount(root: string = REPO_ROOT): GitDirMount {
  * for byte-identical sources (measured: 21 banner lines). That is reported as
  * staleness, and following the fix command it prints commits the wrong bytes.
  *
- * Removing it is a restoration, not a cleanup: an empty `node_modules` is
- * useful to nobody and is the whole of the residue. Only ever empty ones —
- * `rmdirSync` would fail on anything else anyway, and the `readdirSync` guard
- * keeps a real tree from even being attempted.
+ * This is the ONE destructive thing this script does to a work tree, so every
+ * way it could reach something a developer cares about is closed:
+ *
+ *   - `lstatSync().isDirectory()` — a symlinked `node_modules` is left alone.
+ *     `readdirSync` would follow the link and answer about its TARGET, and
+ *     `rmdirSync` would then act on the link; neither is what anyone meant.
+ *   - `rmdirSync`, never `rm -r`. It is not merely that this code declines to
+ *     recurse: `rmdir(2)` FAILS with ENOTEMPTY on a directory with anything in
+ *     it, so a populated tree is unreachable from here at the syscall level,
+ *     not merely by convention. The `readdirSync` guard means one is not even
+ *     attempted.
+ *   - Every failure is swallowed and reported as `false`. The caller ignores
+ *     the answer, so a run's exit status is the container's and nothing else —
+ *     cleanup cannot turn a green run red.
+ *   - The caller only asks when `node_modules` did NOT exist before the run,
+ *     so this can only ever remove a directory THIS run caused to appear.
+ *
+ * The one window that cannot be closed is a `bun install` started in this same
+ * tree while the container was running: it creates `node_modules` and this
+ * could remove it between its `mkdir` and its first write. That is acceptable
+ * because the loser is a command the developer is watching, whose failure is an
+ * ENOENT they can simply re-run — as against the silent, committable wrong
+ * bytes it exists to prevent. `rmdirSync` is atomic and empties-only, so even
+ * in that race a populated `node_modules` is never at risk.
  *
  * The container itself needs no guard for this: inside it `node_modules` is the
  * named volume, which the bootstrap `bun install`s when it is empty.
  */
 export function pruneEmptyNodeModules(root: string = REPO_ROOT): boolean {
-  const dir = resolve(root, "node_modules")
+  const dir = nodeModulesPath(root)
   try {
+    if (!lstatSync(dir).isDirectory()) return false
     if (readdirSync(dir).length > 0) return false
     rmdirSync(dir)
     return true
@@ -311,11 +337,16 @@ function runInContainer(tag: string, command: ReadonlyArray<string>, tty: boolea
     )
     return 1
   }
+  // Only a `node_modules` that was NOT there beforehand can be this run's
+  // residue, so that is the only one the prune is ever offered. Sampled before
+  // the run for the same reason the prune is empties-only: a directory the
+  // developer already had is never a candidate, whatever is or is not in it.
+  const hadNodeModules = existsSync(nodeModulesPath())
   const status = run(
     "docker",
     runArgs(tag, command, { tty, user: hostUser(), mounts: git.mounts }),
   )
-  pruneEmptyNodeModules()
+  if (!hadNodeModules) pruneEmptyNodeModules()
   return status
 }
 
