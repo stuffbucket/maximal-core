@@ -108,10 +108,15 @@ the root it actually resolved. Byte-different output for byte-identical sources
 and its fix command, run in that worktree, produced exactly those wrong bytes
 and staged them.
 
-`container:run` now removes that directory after the run, if and only if it is
-empty. An empty `node_modules` is useful to nobody and is the whole of the
-residue. The container itself needs no guard for this: inside it `node_modules`
-is the named volume, which the bootstrap `bun install`s when it is empty.
+`container:run` now removes that directory after the run — and only ever that
+one. It is offered the prune solely when `node_modules` did **not** exist before
+the run, so it can only remove something the run itself caused to appear; it
+`lstat`s first, so a symlinked `node_modules` is left alone; it uses `rmdir(2)`,
+which fails outright on a directory with anything in it, so a populated tree is
+unreachable at the syscall level rather than by convention; and every failure is
+swallowed, so cleanup cannot turn a green run red. The container itself needs no
+guard for this: inside it `node_modules` is the named volume, which the
+bootstrap `bun install`s when it is empty.
 
 ## Two decisions that look like overhead and are not
 
