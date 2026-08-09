@@ -29908,7 +29908,7 @@ var ONE_DAY_MS, CLEANUP_INTERVAL_MS, LOG_DIR, FLUSH_INTERVAL_MS = 1000, MAX_BUFF
     appendLine(filePath, `[${timestamp}] [${type}] [${name}]${traceIdStr}${message ? ` ${message}` : ""}`);
   };
   const tee = (type) => (...args) => {
-    c5[type](...args);
+    c5[type](...args.map((arg) => typeof arg === "string" ? scrubSecrets(arg) : arg));
     writeFile(type, args);
   };
   return {
