@@ -1,0 +1,23 @@
+# `dist/` is committed (`git add -f` against the `dist/` line in `.gitignore`):
+# `bin.maximal` is `dist/main.js` and the `exports` map points at `dist/lib`, so
+# a git-dependency install RUNS these exact bytes with no build step. See
+# docs/bun-version-policy.md and scripts/ops/check-bindings.ts.
+#
+# `-merge` — DO NOT auto-merge these. A bundle is a text file with thousands of
+# lines, so git's ort strategy will happily 3-way merge two independently-built
+# bundles whose hunks do not overlap, and produce a `dist/main.js` that
+# corresponds to NO source tree at all. Measured: `gh pr update-branch` on
+# maximal-core#116 — a PR that changes no `src/` file — merged a bundle built by
+# one Bun version with one built by another and reported "Auto-merging
+# dist/main.js", silently. `bindings:check` then failed on a branch whose diff
+# contained nothing that could explain it.
+#
+# With this attribute git refuses and raises a conflict instead, leaving OURS in
+# the work tree unmodified (no conflict markers spliced into a 7 MB bundle,
+# which would make it unrunnable). The resolution is never a hand-edit: rebuild.
+#
+#     bun run container:run -- bun run build && git add -f dist/main.js
+#
+# `dist/lib/*.d.ts` has the identical exposure — verified the same way — so the
+# rule covers the whole directory rather than just the bundle.
+dist/** -merge
