@@ -226,6 +226,16 @@ caller — picks the credential, keyed on the **destination host**
 | `https://api.anthropic.com` | `x-api-key: <anthropicApiKey>` (count_tokens only), when configured |
 | anything else (incl. `github.com/login/*`) | none — a typo'd host fails unauthenticated rather than leaking |
 
+The `github.com/login/*` row is the *default* arrangement, and it holds because
+the login host and the API host are two different origins. Under
+`GITHUB_API_BASE` (below) they are deliberately collapsed onto one, so the
+device-flow endpoints then sit on the credentialed origin and do receive the
+GitHub token. That is the intended trade: routing the override through
+`getGitHubApiBaseUrl()` is precisely what keeps the origin comparison
+recognising the configured host, so a fixture-pointed auth path stays
+credentialed instead of silently going anonymous. The override is unset in
+production, so nothing about the default posture changes.
+
 There is **one** `fetch` sink (`dispatch`) and one CodeQL
 `js/file-access-to-http` suppression. The invariant is enforced by a
 `no-restricted-syntax` rule in `eslint.config.js` that bans hand-attaching an
@@ -290,6 +300,33 @@ first:
 The two config-driven overrides outrank discovery **intentionally**: both are
 explicit operator choices pinning the edge, and a discovered `endpoints.api`
 must not silently redirect them.
+
+### GitHub host override (`GITHUB_API_BASE`)
+
+`getGitHubBaseUrl()` / `getGitHubApiBaseUrl()` (`src/lib/config/api-config.ts`),
+highest precedence first:
+
+1. **`GITHUB_API_BASE`** — a full origin (`http://127.0.0.1:8787`,
+   `https://fixture.example:8443`). It replaces **both** hosts: the login/OAuth
+   host and the API host. One variable covers both because the device-code flow
+   straddles them — `/login/device/code` and `/login/oauth/access_token` are
+   login-host paths, while `/user` and `/copilot_internal/*` are API-host paths
+   — and the override exists so a **single** local fixture can serve the whole
+   auth path deterministically and offline. Modelling a *split* deployment is
+   what `COPILOT_API_ENTERPRISE_URL` is for.
+2. **`COPILOT_API_ENTERPRISE_URL`** — a bare domain, re-prefixed `https://` and
+   `https://api.`. It cannot express a loopback origin (no scheme, no port),
+   which is why the override is a second variable rather than a reuse.
+3. **Public GitHub** — `https://github.com` / `https://api.github.com`.
+
+`GITHUB_API_BASE` wins because it is the more explicit of the two: a full
+origin, not a domain to be re-prefixed. A value that is not a parseable
+`http:`/`https:` URL is ignored (the defaults stand — a typo must not null out
+the auth path), and only the origin is used; any path, query, or fragment is
+dropped. It does **not** affect `copilotBaseUrl(state)`, which is the LLM edge
+rather than the auth path. Covered by
+`tests/github-api-base-override.test.ts`, which drives the real device-code
+flow against a `Bun.serve({ port: 0 })` fixture.
 
 ## Injected upstream headers
 
