@@ -115,7 +115,7 @@ Settings can be supplied through five sources. Higher in the list wins:
 | # | Source | Lifetime | Notes |
 |---|---|---|---|
 | 1 | **CLI flags** | per-invocation | `--port`, `--account-type`, `--verbose`, etc. See `maximal start --help`. |
-| 2 | **Environment variables** | shell scope | `OLLAMA_API_KEY`, `ANTHROPIC_API_KEY`, `COPILOT_API_HOME`, `COPILOT_API_ENTERPRISE_URL`, `COPILOT_API_OAUTH_APP`. Bun also auto-loads `.env`. |
+| 2 | **Environment variables** | shell scope | `OLLAMA_API_KEY`, `ANTHROPIC_API_KEY`, `COPILOT_API_HOME`, `COPILOT_API_ENTERPRISE_URL`, `COPILOT_API_OAUTH_APP`, `GITHUB_API_BASE`. Bun also auto-loads `.env`. |
 | 3 | **Secrets files** | persistent, mode 0600 | `~/.local/share/maximal/secrets/<provider>` (e.g. `secrets/ollama`). Refused if mode is broader than 0600. |
 | 4 | **Config file** | persistent | `~/.local/share/maximal/config.json`. Schema-validated at boot; bad keys fail with a key path. Unknown keys warn but pass through. |
 | 5 | **Built-in defaults** | always | `src/lib/config/config.ts`. |
@@ -141,6 +141,7 @@ and config are shared with the parent `maximal` app.
 | GitHub token | `--github-token` / `-g` | — | `app/github_token` | from `auth` flow |
 | App home dir | — | `COPILOT_API_HOME` | — | `~/.local/share/maximal` |
 | Enterprise URL | — | `COPILOT_API_ENTERPRISE_URL` | — | unset |
+| GitHub host override | — | `GITHUB_API_BASE` | — | unset |
 | OAuth app ID | — | `COPILOT_API_OAUTH_APP` | — | upstream default |
 | Use Messages API | — | — | `useMessagesApi` | `true` |
 | Use Apply Patch | — | — | `useFunctionApplyPatch` | `true` |
@@ -155,6 +156,18 @@ and config are shared with the parent `maximal` app.
 
 The full `AppConfig` shape is `src/lib/config/config.ts`; the `start` flags are
 `src/lib/start/cli.ts` (or `maximal start --help`).
+
+`GITHUB_API_BASE` is a full origin (scheme, host, and port — e.g.
+`http://127.0.0.1:8787`) that replaces **both** GitHub hosts at once: the
+login/OAuth host (`https://github.com`, which serves `/login/device/code` and
+`/login/oauth/access_token`) and the API host (`https://api.github.com`, which
+serves `/user` and `/copilot_internal/*`). The device-code sign-in flow spans
+both, so one variable covers both — that is what lets a single local fixture
+server answer the whole auth path for deterministic offline testing. It
+outranks `COPILOT_API_ENTERPRISE_URL`, which takes a bare *domain* and always
+re-prefixes `https://`, and so cannot express a loopback origin. A value that
+is not a parseable `http:`/`https:` URL is ignored; only the origin is used.
+Unset (the default) leaves every host exactly as before.
 
 Secrets follow that order with no exceptions: `readSecret()` in
 `src/lib/auth/secrets.ts` resolves env → file → unset, and the Anthropic key

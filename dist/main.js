@@ -30694,10 +30694,28 @@ var isOpencodeOauthApp = () => {
     return null;
   const normalized = normalizeDomain(raw);
   return normalized || null;
+}, getGitHubApiBaseOverride = () => {
+  const raw = (process.env.GITHUB_API_BASE ?? "").trim();
+  if (!raw)
+    return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
 }, getGitHubBaseUrl = () => {
+  const override = getGitHubApiBaseOverride();
+  if (override)
+    return override;
   const resolvedDomain = getEnterpriseDomain();
   return resolvedDomain ? `https://${resolvedDomain}` : GITHUB_BASE_URL;
 }, getGitHubApiBaseUrl = () => {
+  const override = getGitHubApiBaseOverride();
+  if (override)
+    return override;
   const resolvedDomain = getEnterpriseDomain();
   return resolvedDomain ? `https://api.${resolvedDomain}` : GITHUB_API_BASE_URL;
 }, COPILOT_TOKEN_PATH = "/copilot_internal/v2/token", getCopilotTokenUrl = () => `${getGitHubApiBaseUrl()}${COPILOT_TOKEN_PATH}`, getOpencodeOauthHeaders = () => {
