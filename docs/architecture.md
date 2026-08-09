@@ -86,6 +86,30 @@ models use the native Messages API or fall back to Chat Completions.
 - `src/lib/auth/secrets.ts` — file-based provider keys at `~/.local/share/maximal/secrets/<name>` (mode 0600). Env wins; file fills in unset values.
 - `src/lib/runtime-state/cache.ts` — `Cache<K,V>` LRU wrapper with hit/miss/eviction metrics. Wrapped instances register globally for `/_debug/state`.
 
+#### Token storage: 0600 file, no OS keyring (maximal-core#6)
+
+The GitHub bearer lives in a `0600` file under the data home (`COPILOT_API_HOME`
+/ `~/.local/share/maximal`) and nowhere else — written temp+rename with
+`{ mode: 0o600 }` so the mode survives the swap, and `ensurePaths` chmods on
+create. **An OS keyring was considered and deliberately not built.** Core is a
+headless sidecar; a keyring would add a native dependency and three per-platform
+code paths (Keychain / libsecret / Windows Credential Manager), plus a headless
+story for CI and Linux runners where no keyring is unlocked — all to defend
+against an attacker who can already read the user's own files *as the user*, at
+which point the process memory and the live proxy port are theirs too. That is
+the same model `gh auth login` ships (see ADR-0001), and the repo's documented
+threat model is about the *network* surface (ADR-0021's Origin/CSRF hardening,
+loopback-only control plane), not local same-user file reads. Revisit only if
+core ever runs under an account the user does not control.
+
+The paired invariant is that the bearer never leaves that file: the file sink in
+`logger.ts` runs every string through `scrubSecrets` and every object through
+`redactForLog`. `tests/github-token-store.test.ts` asserts the mode;
+`tests/token-never-logged.test.ts` boots the real engine with a seeded token and
+asserts it appears in neither stdout/stderr nor `<home>/logs/`. The one exception
+is `--show-token`, an explicit operator opt-in that prints through bare `consola`
+(stdout only, never the file sink) because the user asked to see it.
+
 ### Two listeners
 
 `/v1` and the control plane bind separate ports (maximal-core#10), as two
