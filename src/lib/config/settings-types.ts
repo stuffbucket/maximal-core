@@ -45,8 +45,29 @@ export type TokenStatus = z.infer<typeof TokenStatus>
  */
 export const CopilotRefreshStatus = z.object({
   /** `healthy` · `refreshing` (failing, bearer still live) · `expired` (bearer
-   *  past its stated expiry AND refresh failing) · `unknown` (no bearer). */
-  health: z.enum(["healthy", "refreshing", "expired", "unknown"]),
+   *  past its stated expiry AND refresh failing) · `unknown` (no bearer).
+   *
+   *  SPELLED AS AN OBJECT, NOT AN ARRAY, AND IT HAS TO BE. `z.enum([...])`
+   *  infers `ZodEnum<{ [K in T[number]]: K }>` — a mapped type over a UNION, so
+   *  the emitted declaration's key order is TypeScript's internal union order,
+   *  which is literal-type creation order across the whole program. `build:lib`
+   *  compiles five entry points in one dts pass, and `"unknown"` also occurs in
+   *  `NetworkFailure.kind` below and in the auth vocabulary, so whichever entry
+   *  the compiler reaches first decided the order. Measured in the pinned
+   *  container: 14 runs of `build:lib` on an unchanged tree produced TWO
+   *  distinct declaration files, differing only in these four lines — which
+   *  made `bindings:check`, a REQUIRED status check, fail about half the time
+   *  on correct input (maximal-core#116, #119).
+   *
+   *  `z.enum({...})` infers `ZodEnum<T>` with `T` the object type AS WRITTEN,
+   *  so the emitted order is source order and cannot depend on anything else.
+   *  Runtime behaviour is identical: zod validates against `Object.values`. */
+  health: z.enum({
+    healthy: "healthy",
+    refreshing: "refreshing",
+    expired: "expired",
+    unknown: "unknown",
+  }),
   /** ISO expiry of the bearer held, or null when it has none (`gho_`). */
   token_expires_at: z.string().nullable(),
   last_success_at: z.string().nullable(),
