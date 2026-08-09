@@ -34,7 +34,7 @@
  */
 import { spawnSync } from "node:child_process"
 import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync } from "node:fs"
-import { isAbsolute, posix, resolve } from "node:path"
+import pathModule, { join, posix, resolve } from "node:path"
 
 const REPO_ROOT = resolve(import.meta.dir, "../..")
 const DOCKERFILE_DIR = resolve(REPO_ROOT, ".github/docker")
@@ -79,6 +79,89 @@ export interface GitDirMount {
 }
 
 /**
+ * ONE PLACE, IN BOTH PATH UNIVERSES. This file deals in two kinds of path and
+ * they do not obey the same rules:
+ *
+ *   - a HOST path is spelled the way this platform spells one — `/` and no
+ *     drive on POSIX, `\` and `C:` on Windows, compared case-insensitively
+ *     there;
+ *   - a CONTAINER path is ALWAYS POSIX, because the container is Linux,
+ *     whatever the host is.
+ *
+ * Mixing them is not a rounding error, it is a category error: resolving a
+ * Windows path with `path.posix` yields a string that is neither, and every
+ * comparison against it then fails for the wrong reason — which is exactly how
+ * this landed red on the Windows runner with a `/a/maximal-core` common dir
+ * that exists on no filesystem. So the two are resolved separately, in
+ * `locate` and nowhere else, and every caller downstream reads one field or the
+ * other by name.
+ */
+export interface Located {
+  /** Where it is on the host, in this platform's spelling. */
+  readonly host: string
+  /** Where it is inside the container, POSIX. Empty when there is no such place. */
+  readonly container: string
+  /** Why the container has no equivalent, if it has none. */
+  readonly objection?: string
+}
+
+/**
+ * Host separators to POSIX ones. Only ever applied to a RELATIVE fragment,
+ * where the swap is total; an absolute Windows path has no POSIX equivalent at
+ * all and is refused rather than mangled into one.
+ */
+function posixify(fragment: string, flavour: typeof posix): string {
+  return flavour.sep === "\\" ? fragment.split("\\").join("/") : fragment
+}
+
+/**
+ * Resolve `target` against `from` in each universe. For a RELATIVE target the
+ * two answers are genuinely different places — the work tree on the host, and
+ * `/work` inside the container — which is the whole reason both are carried.
+ *
+ * `flavour` is the HOST platform's path rules, defaulting to this one's and
+ * injectable so the Windows semantics are pinned by tests that run everywhere.
+ * Windows is where this goes wrong if the universes are ever conflated, and it
+ * is the platform least likely to be the one running the test.
+ */
+export function locate(
+  target: string,
+  from: Located,
+  flavour: typeof posix = pathModule,
+): Located {
+  if (!flavour.isAbsolute(target)) {
+    return {
+      host: flavour.resolve(from.host, target),
+      container: posix.resolve(from.container, posixify(target, flavour)),
+    }
+  }
+  // Absolute: the container equivalent can only be the same path, since that is
+  // the string `/work/.git` already names and nothing rewrites it. A Windows
+  // path cannot be a Linux container's mount destination, so there is none.
+  if (!target.startsWith("/")) {
+    return {
+      host: target,
+      container: "",
+      objection:
+        `${target} is an absolute host path with no container equivalent — a Linux `
+        + "container's mount destination must be POSIX. Run the container from the "
+        + "main checkout, whose `.git` needs no mount of its own.",
+    }
+  }
+  return { host: target, container: target }
+}
+
+/**
+ * Whether `child` is `parent` or sits under it, decided in ONE universe.
+ * `flavour` is which — `pathModule` for host paths (this platform's rules,
+ * case-insensitive on Windows) or `posix` for container ones.
+ */
+function contains(parent: string, child: string, flavour: typeof posix): boolean {
+  const rel = flavour.relative(parent, child)
+  return rel === "" || (!rel.startsWith("..") && !flavour.isAbsolute(rel))
+}
+
+/**
  * A LINKED WORKTREE'S `.git` IS A FILE, AND WHAT IT POINTS AT IS OUTSIDE /work.
  *
  *     gitdir: /Users/you/repo/.git/worktrees/<name>
@@ -103,59 +186,70 @@ export interface GitDirMount {
  *
  * One mount covers both directories git needs, because git's own layout puts
  * the per-worktree dir at `<common>/worktrees/<id>`. That is asserted rather
- * than assumed: a layout this does not cover is refused, not half-mounted.
+ * than assumed — in HOST space, where the comparison is platform-correct — and
+ * a layout this does not cover is refused, not half-mounted.
  */
 export function gitDirMount(root: string = REPO_ROOT): GitDirMount {
+  const pointerFile = resolve(root, ".git")
   let pointer: string
   try {
-    pointer = readFileSync(resolve(root, ".git"), "utf8")
+    pointer = readFileSync(pointerFile, "utf8")
   } catch {
     // EISDIR — a plain checkout, already inside the work tree mount. ENOENT —
     // not a checkout at all, which is not this script's business to diagnose.
     return { mounts: [] }
   }
   const match = /^gitdir: (\S.*)$/mu.exec(pointer)
-  if (match === undefined || match === null) {
-    return { mounts: [], objection: `${resolve(root, ".git")} is a file but does not name a gitdir.` }
+  if (match === null) {
+    return { mounts: [], objection: `${pointerFile} is a file but does not name a gitdir.` }
   }
-  const target = match[1].trim()
-  // A relative pointer (`git worktree --relative-paths`) resolves against the
-  // directory holding the `.git` file — which is `root` on the host and
-  // `/work` in the container, so the two answers differ and both are needed.
-  const hostGitDir = isAbsolute(target) ? target : resolve(root, target)
-  const containerGitDir = isAbsolute(target) ? target : posix.resolve(WORKDIR, target)
 
-  let hostCommon = hostGitDir
-  let containerCommon = containerGitDir
+  const workTree: Located = { host: root, container: WORKDIR }
+  const gitDir = locate(match[1].trim(), workTree)
+  if (gitDir.objection !== undefined) {
+    return { mounts: [], objection: `${pointerFile} points at ${gitDir.objection}` }
+  }
+
+  let common = gitDir
   try {
-    const rel = readFileSync(resolve(hostGitDir, "commondir"), "utf8").trim()
-    hostCommon = isAbsolute(rel) ? rel : resolve(hostGitDir, rel)
-    containerCommon = isAbsolute(rel) ? rel : posix.resolve(containerGitDir, rel)
+    // `commondir` is normally the relative `../..`, but git permits an absolute
+    // one, so it goes through the same two-universe resolution as the pointer.
+    common = locate(readFileSync(join(gitDir.host, "commondir"), "utf8").trim(), gitDir)
   } catch {
     // No `commondir` — the pointer names a main git directory directly.
   }
+  if (common.objection !== undefined) {
+    return { mounts: [], objection: `${pointerFile} names a common dir at ${common.objection}` }
+  }
 
-  if (!existsSync(hostCommon)) {
-    return { mounts: [], objection: `${resolve(root, ".git")} points at ${hostCommon}, which does not exist.` }
+  // Docker would create a missing bind SOURCE as an empty root-owned directory,
+  // so an absent one is refused here rather than mounted.
+  if (!existsSync(common.host)) {
+    return { mounts: [], objection: `${pointerFile} points at ${common.host}, which does not exist.` }
   }
-  // Docker would happily create a missing bind source as an empty root-owned
-  // directory, so an unusable path must be refused here rather than mounted.
-  if (!containerCommon.startsWith("/") || containerCommon === "/") {
+  // Decided on the HOST paths: that is the universe both were measured in, and
+  // `path.relative` there is the platform's own answer — case-insensitive on
+  // Windows, separator-correct everywhere.
+  if (!contains(common.host, gitDir.host, pathModule)) {
     return {
       mounts: [],
       objection:
-        `${resolve(root, ".git")} points at ${target}, which is not a path this container can mount.`,
+        `${pointerFile} points at ${gitDir.host}, which is not inside its common dir `
+        + `${common.host}; this script only knows how to mount git's own worktree layout.`,
     }
   }
-  if (containerGitDir !== containerCommon && !containerGitDir.startsWith(`${containerCommon}/`)) {
+  // And once more in the container's universe, because the mount is only useful
+  // if the pointer resolves THERE — the two can disagree for a relative pointer
+  // that walks off `/work`.
+  if (common.container === "/" || !contains(common.container, gitDir.container, posix)) {
     return {
       mounts: [],
       objection:
-        `${resolve(root, ".git")} points at ${containerGitDir}, which is not inside its common dir `
-        + `${containerCommon}; this script only knows how to mount git's own worktree layout.`,
+        `${pointerFile} resolves to ${gitDir.container} inside the container, which is not `
+        + `inside a mountable common dir (${common.container || "none"}).`,
     }
   }
-  return { mounts: [{ hostPath: hostCommon, containerPath: containerCommon }] }
+  return { mounts: [{ hostPath: common.host, containerPath: common.container }] }
 }
 
 /** Where docker creates the named volume's mount target, on the HOST. */

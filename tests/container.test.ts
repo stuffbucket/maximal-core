@@ -6,6 +6,7 @@ import path from "node:path"
 import {
   gitDirMount,
   imageTag,
+  locate,
   pruneEmptyNodeModules,
   readPin,
   runArgs,
@@ -18,6 +19,12 @@ import {
 // the developer happened to be standing in.
 
 const made: Array<string> = []
+
+// The container is Linux, so a mount DESTINATION is always a POSIX path. On
+// Windows every fixture path is `C:\…`, which is not one — the code refuses
+// there by design, and the cases below split on that rather than pretending
+// either platform's answer is the other's.
+const isWindows = process.platform === "win32"
 
 function tmpdir(): string {
   const dir = fs.mkdtempSync(
@@ -54,6 +61,62 @@ function worktreeFixture(options: { relative?: boolean } = {}): {
   return { main, worktree, commonGitDir }
 }
 
+describe("locate — the host/container path universes", () => {
+  // These run on EVERY platform by injecting the host flavour, which is the
+  // point: Windows is where conflating the two universes goes wrong, and it is
+  // the platform least likely to be the one running the test. This is the third
+  // Windows-only path-handling defect found in a day (see maximal-core#90), and
+  // the first one whose semantics are pinned from a POSIX runner.
+
+  it("a relative pointer is two different places, and says so", () => {
+    const from = { host: "/repo/wt", container: WORKDIR }
+    const located = locate("../../.git/worktrees/x", from, path.posix)
+    expect(located.host).toBe("/.git/worktrees/x")
+    expect(located.container).toBe("/.git/worktrees/x")
+    expect(locate("worktrees/x", from, path.posix)).toEqual({
+      host: "/repo/wt/worktrees/x",
+      container: "/work/worktrees/x",
+    })
+  })
+
+  it("a relative WINDOWS pointer keeps `\\` on the host and `/` in the container", () => {
+    const located = locate(
+      String.raw`..\..\.git\worktrees\x`,
+      { host: String.raw`C:\repo\a\b`, container: WORKDIR },
+      path.win32,
+    )
+    expect(located.objection).toBeUndefined()
+    expect(located.host).toBe(String.raw`C:\repo\.git\worktrees\x`)
+    expect(located.container).toBe("/.git/worktrees/x")
+  })
+
+  // The category error itself: `path.posix.resolve` on a `C:\…` string returns
+  // something that is neither universe's path, and every later comparison then
+  // fails for the wrong reason. There is no honest mount, so there is a refusal.
+  it("an absolute WINDOWS pointer has no container equivalent, and is refused", () => {
+    const located = locate(
+      String.raw`C:\repo\.git\worktrees\x`,
+      { host: String.raw`C:\repo\wt`, container: WORKDIR },
+      path.win32,
+    )
+    expect(located.host).toBe(String.raw`C:\repo\.git\worktrees\x`)
+    expect(located.container).toBe("")
+    expect(located.objection).toContain("no container equivalent")
+  })
+
+  it("an absolute POSIX pointer is the same string in both", () => {
+    const located = locate(
+      "/repo/.git/worktrees/x",
+      { host: "/repo/wt", container: WORKDIR },
+      path.posix,
+    )
+    expect(located).toEqual({
+      host: "/repo/.git/worktrees/x",
+      container: "/repo/.git/worktrees/x",
+    })
+  })
+})
+
 describe("gitDirMount", () => {
   it("mounts nothing for a plain checkout — its .git is a directory inside /work", () => {
     const root = tmpdir()
@@ -68,37 +131,55 @@ describe("gitDirMount", () => {
   // The bug: the absolute host path in the `.git` file does not exist inside
   // the container, so every `git` call exits 128 and `bindings:check` reports
   // "could not run". maximal-core#124.
+  //
+  // The two platforms have genuinely DIFFERENT correct answers here, so both
+  // are pinned rather than either being skipped. A container path is always
+  // POSIX because the container is Linux; git on Windows writes `C:\…` into the
+  // pointer, and no mount destination can be that, so there the honest answer
+  // is a refusal that says so.
   it("mounts a linked worktree's common git dir at the path its pointer names", () => {
     const { worktree, commonGitDir } = worktreeFixture()
-    expect(gitDirMount(worktree)).toEqual({
+    const result = gitDirMount(worktree)
+    if (isWindows) {
+      expect(result.mounts).toEqual([])
+      expect(result.objection).toContain("no container equivalent")
+      return
+    }
+    expect(result).toEqual({
       mounts: [{ hostPath: commonGitDir, containerPath: commonGitDir }],
     })
   })
 
   // One mount, not two: git's own layout puts the per-worktree dir inside the
-  // common one, which is why mounting the common dir resolves both hops.
+  // common one, which is why mounting the common dir resolves both hops. Stated
+  // on the HOST paths, so the assertion is the platform's own answer —
+  // separator-correct everywhere, case-insensitive on Windows.
   it("the per-worktree dir the pointer names is inside the single mount", () => {
-    const { worktree, commonGitDir } = worktreeFixture()
+    const { worktree, commonGitDir } = worktreeFixture({ relative: true })
     const mount = gitDirMount(worktree).mounts[0]
-    expect(
-      path
-        .join(commonGitDir, "worktrees", "agent-1")
-        .startsWith(`${mount.containerPath}/`),
-    ).toBe(true)
+    expect(mount.hostPath).toBe(commonGitDir)
+    const rel = path.relative(
+      mount.hostPath,
+      path.join(commonGitDir, "worktrees", "agent-1"),
+    )
+    expect(rel.startsWith("..")).toBe(false)
+    expect(path.isAbsolute(rel)).toBe(false)
   })
 
   // `git worktree --relative-paths`. The pointer resolves against the directory
   // holding the `.git` file, which is the worktree root on the host and /work
-  // in the container — so the two paths are genuinely different and the
-  // container side is the one that has to be mounted at.
+  // in the container — so the two answers are different places, and the
+  // container one is what has to be mounted at. This case is identical on both
+  // platforms precisely because the container side is derived from `/work`
+  // rather than carried over from the host.
   it("resolves a relative pointer against /work for the container side", () => {
     const { worktree, commonGitDir } = worktreeFixture({ relative: true })
     const { mounts, objection } = gitDirMount(worktree)
     expect(objection).toBeUndefined()
     expect(mounts).toHaveLength(1)
     expect(mounts[0].hostPath).toBe(commonGitDir)
-    // The fixture's pointer is `../../../.git/worktrees/agent-1`, which from
-    // /work walks off the mount — so the container path is NOT the host one.
+    // The fixture's pointer walks three levels up from the worktree root, which
+    // from /work leaves the mount — so the container path is NOT the host one.
     expect(mounts[0].containerPath).toBe("/.git")
     expect(mounts[0].containerPath).not.toBe(mounts[0].hostPath)
   })
@@ -125,15 +206,15 @@ describe("gitDirMount", () => {
   })
 
   // A layout this does not understand is refused, not half-mounted: a partial
-  // mount would leave git working for some commands and not others.
+  // mount would leave git working for some commands and not others. Built from
+  // RELATIVE pointers so it reaches the containment check itself on both
+  // platforms, rather than tripping an earlier guard on one of them.
   it("objects when the per-worktree dir is not inside its own common dir", () => {
     const root = tmpdir()
-    const gitDir = path.join(root, "elsewhere")
-    const common = path.join(root, "common")
-    fs.mkdirSync(gitDir, { recursive: true })
-    fs.mkdirSync(common, { recursive: true })
-    fs.writeFileSync(path.join(gitDir, "commondir"), `${common}\n`)
-    fs.writeFileSync(path.join(root, ".git"), `gitdir: ${gitDir}\n`)
+    fs.mkdirSync(path.join(root, "elsewhere"), { recursive: true })
+    fs.mkdirSync(path.join(root, "common"), { recursive: true })
+    fs.writeFileSync(path.join(root, "elsewhere", "commondir"), "../common\n")
+    fs.writeFileSync(path.join(root, ".git"), "gitdir: elsewhere\n")
     expect(gitDirMount(root).objection).toContain("not inside its common dir")
     expect(gitDirMount(root).mounts).toEqual([])
   })
