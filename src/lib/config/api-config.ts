@@ -25,12 +25,63 @@ export const getEnterpriseDomain = (): string | null => {
   return normalized || null
 }
 
+/**
+ * `GITHUB_API_BASE` — a full origin that replaces **both** GitHub hosts.
+ *
+ * *What it means.* When set, it is the origin for the login/OAuth host
+ * (normally `https://github.com`) **and** the API host (normally
+ * `https://api.github.com`). One variable covers both deliberately: the device
+ * flow straddles them — `/login/device/code` and `/login/oauth/access_token`
+ * are login-host paths, while `/user` and `/copilot_internal/*` are API-host
+ * paths — so a fixture that can serve the whole auth path has to be reachable
+ * as both. A single local server serves every one of those paths, so
+ * collapsing the two onto one origin is what makes one variable sufficient.
+ * Two variables would only be needed to model a *split* deployment, which is
+ * what `COPILOT_API_ENTERPRISE_URL` already expresses.
+ *
+ * *Why not reuse `COPILOT_API_ENTERPRISE_URL`.* That one carries a bare
+ * **domain**: `getEnterpriseDomain()` strips the scheme and the accessors
+ * re-prefix `https://` / `https://api.` / `https://copilot-api.`. A loopback
+ * fixture (`http://127.0.0.1:<ephemeral port>`) is therefore unrepresentable
+ * through it — no scheme control, no port. This override takes a full origin,
+ * so it can express one.
+ *
+ * *Consequence that matters.* `send-request.ts` decides whether to attach the
+ * GitHub credential by comparing the destination's origin against
+ * `getGitHubApiBaseUrl()`. Because the override flows through that same
+ * accessor, a request to the overridden host is still recognised as the GitHub
+ * API host and still gets its token — the auth path does not silently go
+ * anonymous when pointed at a fixture, which would make a test pass for the
+ * wrong reason.
+ *
+ * Precedence: this wins over `COPILOT_API_ENTERPRISE_URL`; it is the more
+ * explicit of the two (a full origin, not a domain to be re-prefixed).
+ * Anything that is not a parseable `http:`/`https:` URL is ignored, so a
+ * typo'd value falls back to the default hosts rather than nulling out the
+ * auth path. Only the origin is used; any path, query, or fragment is dropped.
+ */
+const getGitHubApiBaseOverride = (): string | null => {
+  const raw = (process.env.GITHUB_API_BASE ?? "").trim()
+  if (!raw) return null
+  try {
+    const parsed = new URL(raw)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null
+    return parsed.origin
+  } catch {
+    return null
+  }
+}
+
 export const getGitHubBaseUrl = (): string => {
+  const override = getGitHubApiBaseOverride()
+  if (override) return override
   const resolvedDomain = getEnterpriseDomain()
   return resolvedDomain ? `https://${resolvedDomain}` : GITHUB_BASE_URL
 }
 
 export const getGitHubApiBaseUrl = (): string => {
+  const override = getGitHubApiBaseOverride()
+  if (override) return override
   const resolvedDomain = getEnterpriseDomain()
   return resolvedDomain ? `https://api.${resolvedDomain}` : GITHUB_API_BASE_URL
 }
