@@ -275,10 +275,23 @@ export const createTeeLogger = (name: string): TeeLogger => {
   // Each level forwards to console then tees the same args to the file sink.
   // `c[type]` is looked up at call time (not captured) so tests that swap
   // `consola.warn`/`.error` for a spy after construction still intercept it.
+  //
+  // String args are scrubbed on the CONSOLE path too, not only in `writeFile`.
+  // Redacting one sink and not the other is not a defensible split: this engine
+  // runs as a supervised sidecar whose stdout the host captures, so an
+  // interpolated `${token}` reaching stdout is a leak by the same argument that
+  // makes one on disk a leak. Objects are left alone here (the file sink runs
+  // its own key-driven redactor over them) so a dev console keeps showing real
+  // error objects. `--show-token` is unaffected: it prints through plain
+  // `consola`, deliberately never through this logger.
   const tee =
     (type: "info" | "warn" | "error" | "debug") =>
     (...args: Array<unknown>) => {
-      c[type](...args)
+      c[type](
+        ...args.map((arg) =>
+          typeof arg === "string" ? scrubSecrets(arg) : arg,
+        ),
+      )
       writeFile(type, args)
     }
 
