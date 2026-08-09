@@ -156,7 +156,7 @@ export const getOpencodeVersion = () => {
 // the drift watcher's `--fix` path bumps this one constant and every derived
 // string follows — a raw literal would half-update. See
 // scripts/ops/watch-external-drift.ts (opencode pin → OPENCODE_SEMVER).
-const OPENCODE_SEMVER = "1.18.14"
+const OPENCODE_SEMVER = "1.18.15"
 const OPENCODE_VERSION = `opencode/${OPENCODE_SEMVER}`
 const OPENCODE_LLM_USER_AGENT = `opencode/${OPENCODE_SEMVER} ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14, opencode/${OPENCODE_SEMVER}`
 
@@ -168,7 +168,7 @@ const USER_AGENT = `GitHubCopilotChat/${COPILOT_VERSION}`
 // so the drift watcher's `--fix` path bumps this one constant and the copy
 // follows. A raw literal half-updates: that is exactly how 2.1.208 shipped
 // against a frozen agent-sdk/0.2.112. Same shape as OPENCODE_SEMVER above.
-const CLAUDE_AGENT_SEMVER = "2.1.223"
+const CLAUDE_AGENT_SEMVER = "2.1.226"
 // The agent-sdk release that ships claude-code X.Y.N carries the SAME patch N
 // and declares `claudeCodeVersion: "X.Y.N"` in its package.json (verified for
 // 0.2.81/2.1.81, 0.2.98/2.1.98, 0.2.112/2.1.112, 0.3.223/2.1.223). The MINOR
