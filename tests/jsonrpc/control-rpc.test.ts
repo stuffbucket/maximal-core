@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
-import { stopControlHub } from "~/lib/live/service"
-import { createControlRoutes } from "~/routes/control/route"
 import {
   PROTOCOL_VERSION_HEADER,
   SUPPORTED_PROTOCOL_VERSION,
-} from "~/routes/control/rpc"
+} from "~/lib/live/contract"
+import { stopControlHub } from "~/lib/live/service"
+import { createControlRoutes } from "~/routes/control/route"
 
 afterEach(() => {
   stopControlHub()
