@@ -74,10 +74,10 @@ client — opencode also sends request headers we currently omit. When the
 inbound request is opencode-shaped, these should pass through verbatim
 too; the synthesized fallback (opencode mode with no inbound opencode
 headers) should include them from constants. Known gaps as of `sst/opencode`
-v1.18.14 (source: `packages/opencode/src/plugin/github-copilot/copilot.ts`),
-surfaced during the #317 pin bump and re-verified at the v1.18.14 bump — the
+v1.18.15 (source: `packages/opencode/src/plugin/github-copilot/copilot.ts`),
+surfaced during the #317 pin bump and re-verified at the v1.18.15 bump — the
 whole `github-copilot` plugin tree is byte-identical between v1.17.20 and
-v1.18.14, so every gap below still stands:
+v1.18.15, so every gap below still stands:
 
 - `X-GitHub-Api-Version: 2026-06-01` — sent on **both** the Copilot
   completions and `/models` requests by every opencode ≥ v1.16.0
