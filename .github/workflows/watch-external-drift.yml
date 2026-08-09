@@ -13,17 +13,13 @@
 #   - nothing drifting → close a stale drift issue if one is open.
 #
 # It deliberately does NOT open a PR. The watcher hands off a detailed,
-# PR-derivable issue, and repoman's issue triage (wired in
-# .github/workflows/triage.yml) routes it so the reconciliation PR can be
-# derived and landed; a maintainer can also pick it up straight from the
-# labelled issue. Note the drift issue below is created with `github.token`, so
-# it does NOT fire the issues.opened event that triage.yml keys on — repoman's
-# poll backstop (processMissedTriage) is what triages it. This also keeps the
-# watcher off the require-PR ruleset path entirely — filing an issue needs only
-# a plain `GITHUB_TOKEN` with `issues: write`, so there is no app-token or
-# CI-won't-fire-on-a-bot-PR fragility to manage here. Bumping an impersonated
-# client version can shift proxy behaviour, so a human/agent reviewing the
-# upstream release before the pin moves is the correct gate, not a blind rewrite.
+# PR-derivable issue that a maintainer picks up from the `external-drift`
+# label. This also keeps the watcher off the require-PR ruleset path entirely —
+# filing an issue needs only a plain `GITHUB_TOKEN` with `issues: write`, so
+# there is no app-token or CI-won't-fire-on-a-bot-PR fragility to manage here.
+# Bumping an impersonated client version can shift proxy behaviour, so a
+# human/agent reviewing the upstream release before the pin moves is the
+# correct gate, not a blind rewrite.
 
 name: watch-external-drift
 
@@ -71,10 +67,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: bun run scripts/ops/watch-external-drift.ts --body-file external-drift-report.md
 
-      # Any drift → one idempotent labelled issue. repoman triages it (via the
-      # poll backstop, since this token-authored create fires no issues event)
-      # and derives the reconciliation PR (the body is written to be
-      # PR-derivable).
+      # Any drift → one idempotent labelled issue. A maintainer derives the
+      # reconciliation PR from it (the body is written to be PR-derivable).
       - name: File or refresh drift issue
         if: steps.watch.outputs.drift == 'true'
         env:

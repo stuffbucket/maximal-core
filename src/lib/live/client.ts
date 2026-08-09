@@ -23,6 +23,8 @@
 
 import {
   frameEnvelopeSchema,
+  PROTOCOL_VERSION_HEADER,
+  SUPPORTED_PROTOCOL_VERSION,
   type ControlTopic,
   type SnapshotPayload,
 } from "~/lib/live/contract"
@@ -199,6 +201,9 @@ export class ControlClient {
   private readonly baseUrl: string
   private readonly controlPath: string
   private readonly headers: Record<string, string>
+  /** `headers` plus the pinned wire version — what every request but
+   *  `server/discover` is sent with (maximal-core#8). */
+  private readonly versionedHeaders: Record<string, string>
   private readonly fetchImpl: FetchLike
   private readonly reconnectMs: number
   private readonly maxReconnectMs: number
@@ -216,6 +221,12 @@ export class ControlClient {
     // Validated + copied once, here, rather than checked at each send: the
     // record is fixed for the client's life, so one check covers every request.
     this.headers = toRequestHeaders(options.headers)
+    // Built once alongside them: the version this client speaks is fixed for its
+    // life, so there is nothing to recompute per request (maximal-core#8).
+    this.versionedHeaders = {
+      ...this.headers,
+      [PROTOCOL_VERSION_HEADER]: SUPPORTED_PROTOCOL_VERSION,
+    }
     // BOUND, not bare. The field is invoked as `this.fetchImpl(...)`, so an
     // unbound `fetch` receives the ControlClient instance as its receiver.
     // Node and Bun tolerate that; a browser or Electron renderer does not —
@@ -298,7 +309,13 @@ export class ControlClient {
     const res = await this.fetchImpl(this.url("/rpc"), {
       method: "POST",
       headers: {
-        ...this.headers,
+        // Every request pins the wire version EXCEPT `server/discover` — the
+        // one call a client makes to LEARN that version. Pinning it there would
+        // be circular, and the server's allowance for an absent header exists
+        // for exactly that case; this is its client half (maximal-core#8).
+        ...(method === "server/discover" ?
+          this.headers
+        : this.versionedHeaders),
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
       },
@@ -326,7 +343,7 @@ export class ControlClient {
   private async streamOnce(onProgress: () => void): Promise<void> {
     this.abort = new AbortController()
     const headers: Record<string, string> = {
-      ...this.headers,
+      ...this.versionedHeaders,
       accept: "text/event-stream",
     }
     // The subscription IS a request: its response stream stays open and carries
@@ -406,8 +423,8 @@ export class ControlClient {
       // reader — and `eslint.config.js`'s guard — can actually inspect.
       headers:
         init?.body === undefined ?
-          { ...this.headers }
-        : { ...this.headers, "content-type": "application/json" },
+          { ...this.versionedHeaders }
+        : { ...this.versionedHeaders, "content-type": "application/json" },
       body: init?.body === undefined ? undefined : JSON.stringify(init.body),
     })
     return res.json()

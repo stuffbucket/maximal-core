@@ -1,6 +1,8 @@
 import {
+  PROTOCOL_VERSION_HEADER,
+  SUPPORTED_PROTOCOL_VERSION,
   frameEnvelopeSchema
-} from "./chunk-ITKEMUH2.js";
+} from "./chunk-IFWVZ24P.js";
 
 // src/lib/live/client.ts
 var ControlRpcError = class extends Error {
@@ -43,6 +45,9 @@ var ControlClient = class {
   baseUrl;
   controlPath;
   headers;
+  /** `headers` plus the pinned wire version — what every request but
+   *  `server/discover` is sent with (maximal-core#8). */
+  versionedHeaders;
   fetchImpl;
   reconnectMs;
   maxReconnectMs;
@@ -56,6 +61,10 @@ var ControlClient = class {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.controlPath = options.controlPath ?? "/control";
     this.headers = toRequestHeaders(options.headers);
+    this.versionedHeaders = {
+      ...this.headers,
+      [PROTOCOL_VERSION_HEADER]: SUPPORTED_PROTOCOL_VERSION
+    };
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.reconnectMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_MS;
     this.maxReconnectMs = options.maxReconnectDelayMs ?? DEFAULT_MAX_RECONNECT_MS;
@@ -112,7 +121,11 @@ var ControlClient = class {
     const res = await this.fetchImpl(this.url("/rpc"), {
       method: "POST",
       headers: {
-        ...this.headers,
+        // Every request pins the wire version EXCEPT `server/discover` — the
+        // one call a client makes to LEARN that version. Pinning it there would
+        // be circular, and the server's allowance for an absent header exists
+        // for exactly that case; this is its client half (maximal-core#8).
+        ...method === "server/discover" ? this.headers : this.versionedHeaders,
         "content-type": "application/json",
         accept: "application/json, text/event-stream"
       },
@@ -136,7 +149,7 @@ var ControlClient = class {
   async streamOnce(onProgress) {
     this.abort = new AbortController();
     const headers = {
-      ...this.headers,
+      ...this.versionedHeaders,
       accept: "text/event-stream"
     };
     const res = await this.fetchImpl(this.url("/rpc"), {
@@ -199,7 +212,7 @@ var ControlClient = class {
       // polyfill) that mutates the record it is given must not be able to reach
       // it. Also keeps every send site an object literal, which is the shape a
       // reader — and `eslint.config.js`'s guard — can actually inspect.
-      headers: init?.body === void 0 ? { ...this.headers } : { ...this.headers, "content-type": "application/json" },
+      headers: init?.body === void 0 ? { ...this.versionedHeaders } : { ...this.versionedHeaders, "content-type": "application/json" },
       body: init?.body === void 0 ? void 0 : JSON.stringify(init.body)
     });
     return res.json();
