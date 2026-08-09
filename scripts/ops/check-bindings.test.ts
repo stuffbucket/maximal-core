@@ -23,7 +23,6 @@ import {
   listFiles,
   main,
   MAIN_ARTIFACT,
-  MAIN_BUILD_ARGV,
   MAIN_BUNDLE,
   needsNodeModules,
   needsPinnedBun,
@@ -36,6 +35,7 @@ import {
   renderReport,
   runningBunVersion,
 } from "./check-bindings"
+import { BUILD_COMMAND, OUT_DIR as BUILD_OUT_DIR } from "./build-bundle"
 
 // Offline and deterministic: every build and every `git` read is injected, so
 // nothing here runs a bundler or touches the repo's real dist/. The parity
@@ -102,9 +102,16 @@ function makeDir(files: Record<string, string>): string {
 }
 
 /** A scratch repo root, optionally with a `node_modules` and a `.bun-version`. */
-function makeRoot(opts: { nodeModules?: boolean, bunVersion?: string } = {}): string {
+function makeRoot(
+  opts: { nodeModules?: boolean, emptyNodeModules?: boolean, bunVersion?: string } = {},
+): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "check-bindings-root-"))
-  if (opts.nodeModules === true) fs.mkdirSync(path.join(dir, "node_modules"))
+  // `.bin`, not the bare directory: an empty `node_modules` is not an install,
+  // and Bun resolves upward past one. See `needsNodeModules`.
+  if (opts.nodeModules === true) {
+    fs.mkdirSync(path.join(dir, "node_modules", ".bin"), { recursive: true })
+  }
+  if (opts.emptyNodeModules === true) fs.mkdirSync(path.join(dir, "node_modules"))
   if (opts.bunVersion !== undefined) {
     fs.writeFileSync(path.join(dir, BUN_VERSION_FILE), `${opts.bunVersion}\n`)
   }
@@ -140,13 +147,16 @@ describe("parity with the real build config", () => {
     expect(bin.maximal).toBe(`./${MAIN_BUNDLE}`)
   })
 
-  // The rebuild must be the build. If `build` grows a flag (a --define, a
-  // --minify) and the checker's argv does not, the gate compares the committed
-  // bundle against a bundle nobody ships.
-  test("the bundle rebuild is `bun run build` with only --outdir moved", () => {
+  // The rebuild must be the build. It used to be asserted textually, because
+  // `build` was an inline `bun build …` that this file restated as
+  // MAIN_BUILD_ARGV. `build` is now a script — an inline one could not carry a
+  // pin guard — and both sides call the SAME `realMainBuild`, so the argv
+  // parity is structural. What is left to assert is that `build` still routes
+  // through that script and still writes where the committed bundle lives.
+  test("`build` is the guarded script, writing where `bin` ships", () => {
     const scripts = readPackageJson().scripts as Record<string, string>
-    const outDir = path.posix.dirname(MAIN_BUNDLE)
-    expect(scripts.build).toBe(`bun ${MAIN_BUILD_ARGV.join(" ")} --outdir ${outDir}`)
+    expect(scripts.build).toBe(BUILD_COMMAND)
+    expect(BUILD_OUT_DIR).toBe(path.posix.dirname(MAIN_BUNDLE))
   })
 
   // The pin is the whole basis of the bundle's reproducibility, so the file has
@@ -198,6 +208,21 @@ describe("environment requirements", () => {
   // own fix command commits the wrong bundle.
   test("a checkout without node_modules objects, naming `bun install`", () => {
     const root = makeRoot()
+    try {
+      expect(needsNodeModules(root)).toContain("bun install")
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // The hole this closed. A linked worktree driven through `container:run`
+  // acquires an EMPTY `node_modules` — docker creates the bind-mount target on
+  // the host — and Bun then resolves upward to the parent checkout anyway. An
+  // existence check passed, and the bundle came out with
+  // `../../../node_modules/...` banner comments: 21 lines of difference for
+  // byte-identical sources, reported as staleness.
+  test("an EMPTY node_modules objects too — existing is not installed", () => {
+    const root = makeRoot({ emptyNodeModules: true })
     try {
       expect(needsNodeModules(root)).toContain("bun install")
     } finally {

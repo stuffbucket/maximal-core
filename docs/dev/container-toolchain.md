@@ -18,12 +18,19 @@ needed to rebuild deliberately.
 `dist/main.js` is committed and is a **function of the Bun version** — see
 [`bun-version-policy.md`](../bun-version-policy.md), where the 2x2 measurement
 lives. So `bindings:check` is only meaningful on the pin. Worse, `bun run build`
-re-resolves a bare `bun` from PATH, so *having* the pinned Bun installed is not
-enough; it has to be first. Getting that wrong does not fail loudly — it reports
-the committed bundle as **stale**, which sends you off to regenerate it on the
-wrong toolchain and commit bytes CI cannot reproduce. That has happened, at
-scale: a dozen parallel agents each had to be told to prepend
+used to re-resolve a bare `bun` from PATH, so *having* the pinned Bun installed
+was not enough; it had to be first. Getting that wrong did not fail loudly — it
+reported the committed bundle as **stale**, which sends you off to regenerate it
+on the wrong toolchain and commit bytes CI cannot reproduce. That has happened,
+at scale: a dozen parallel agents each had to be told to prepend
 `/tmp/bun1311/bin`, and one still emitted a 1.3.14 bundle.
+
+`bun run build` now refuses off-pin
+([`scripts/dev/../ops/build-bundle.ts`](../../scripts/ops/build-bundle.ts)), so
+the silent path is closed. The refusal names this container, because inside it
+the running Bun **is** the pin and the guard cannot fire — the guard compares
+versions and nothing else, so `container:run -- bun run build` needs no
+container awareness and cannot deadlock on one.
 
 CI never had this problem. Every workflow `cat .bun-version` into
 [`.github/actions/setup-bun`](../../.github/actions/setup-bun/action.yml), so
@@ -43,6 +50,15 @@ refuses to finish if the installed Bun disagrees with it. It installs Bun with
 the same `curl -fsSL https://bun.sh/install | bash -s bun-v<version>` line the
 composite action uses, so the container and every CI job get Bun by an identical
 path.
+
+Its base image is pinned by **digest**, not just by tag
+(`node:24-bookworm-slim@sha256:…`). `node:24-bookworm-slim` floats — it moves on
+every upstream rebuild — so a tag-only base would make the image a function of
+the day it was built as well as of `.bun-version`, and the `bun-<pin>` tag would
+stop being the whole story. Refresh it with
+`docker buildx imagetools inspect node:24-bookworm-slim` and take the top-level
+`Digest:`, which is the multi-arch index and therefore resolves on arm64 and
+amd64 alike.
 
 Nothing from the repo is `COPY`ed into the image. The tree is bind-mounted at
 run time, so the image is a pure function of the toolchain: it is rebuilt when

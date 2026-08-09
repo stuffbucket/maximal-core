@@ -85,7 +85,9 @@ bun run ./src/main.ts start --account-type enterprise      # listen on :4141
 ```
 
 Build a standalone bundle with `bun run build` (`bun build src/main.ts
---target=bun --outdir dist`).
+--target=bun --outdir dist`). It refuses to run when your Bun is not the one
+`.bun-version` pins, because the bundle is committed and its bytes are a
+function of the Bun version — use `bun run container:run -- bun run build`.
 
 ## Run
 

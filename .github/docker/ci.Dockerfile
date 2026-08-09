@@ -11,8 +11,18 @@
 
 # Node 24 for unflagged `node:sqlite` — ci.yml's `test` job verifies that import
 # explicitly before anything else runs, and src/lib/platform/sqlite.ts depends
-# on it.
-FROM node:24-bookworm-slim
+# on it. Bun is NOT the base image: it is installed below by the same
+# `bun.sh/install` line the composite action runs, so the container and every CI
+# job get Bun by an identical path (see docs/dev/container-toolchain.md).
+#
+# Pinned by DIGEST, not just by tag. `node:24-bookworm-slim` is a floating tag —
+# it moves on every upstream rebuild — so a tag-only base makes this image a
+# function of the day it was built as well as of `.bun-version`, and the
+# `bun-<pin>` tag stops being the whole story. The digest is the multi-arch
+# index digest, so it resolves on arm64 and amd64 alike. Refresh it with:
+#
+#     docker buildx imagetools inspect node:24-bookworm-slim   # take `Digest:`
+FROM node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
 
 # No default: a build that forgets to pass it fails here rather than floating to
 # whatever `bun.sh/install` serves today. scripts/dev/container.ts reads
