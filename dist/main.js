@@ -32002,6 +32002,7 @@ async function attemptMint() {
   } catch (err) {
     if (err instanceof CopilotAuthFatalError)
       return "auth_fatal";
+    log2.warn("Copilot token re-mint failed; treating as offline:", err);
     return "offline";
   }
 }
@@ -38385,6 +38386,31 @@ var init_dispatch = __esm(() => {
   init_message2();
 });
 
+// src/lib/live/contract.ts
+function methodForTopic(topic) {
+  return `control/${topic}`;
+}
+function serializeFrame(frame) {
+  const payload = {
+    jsonrpc: "2.0",
+    method: methodForTopic(frame.topic),
+    params: frame.data
+  };
+  return `data: ${JSON.stringify(payload)}
+
+`;
+}
+var CONTROL_PROTOCOL_VERSION = 2, PROTOCOL_VERSION_HEADER = "mcp-protocol-version", SUPPORTED_PROTOCOL_VERSION, frameEnvelopeSchema;
+var init_contract = __esm(() => {
+  init_zod();
+  SUPPORTED_PROTOCOL_VERSION = String(CONTROL_PROTOCOL_VERSION);
+  frameEnvelopeSchema = exports_external.object({
+    jsonrpc: exports_external.literal("2.0"),
+    method: exports_external.string().min(1),
+    params: exports_external.unknown().optional()
+  });
+});
+
 // src/lib/live/mutex.ts
 class AsyncMutex {
   tail = Promise.resolve();
@@ -39030,30 +39056,6 @@ var init_resources = __esm(() => {
   init_token_usage();
 });
 
-// src/lib/live/contract.ts
-function methodForTopic(topic) {
-  return `control/${topic}`;
-}
-function serializeFrame(frame) {
-  const payload = {
-    jsonrpc: "2.0",
-    method: methodForTopic(frame.topic),
-    params: frame.data
-  };
-  return `data: ${JSON.stringify(payload)}
-
-`;
-}
-var CONTROL_PROTOCOL_VERSION = 2, frameEnvelopeSchema;
-var init_contract = __esm(() => {
-  init_zod();
-  frameEnvelopeSchema = exports_external.object({
-    jsonrpc: exports_external.literal("2.0"),
-    method: exports_external.string().min(1),
-    params: exports_external.unknown().optional()
-  });
-});
-
 // src/lib/live/queue.ts
 class BoundedQueue {
   items = [];
@@ -39491,7 +39493,6 @@ function unsupportedVersion(c5) {
     return null;
   return pinned;
 }
-var PROTOCOL_VERSION_HEADER = "mcp-protocol-version", SUPPORTED_PROTOCOL_VERSION;
 var init_rpc = __esm(() => {
   init_auth_controller();
   init_auth_recovery();
@@ -39508,7 +39509,6 @@ var init_rpc = __esm(() => {
   init_token_usage();
   init_build_info();
   init_update_check();
-  SUPPORTED_PROTOCOL_VERSION = String(CONTROL_PROTOCOL_VERSION);
 });
 
 // node_modules/@mixmark-io/domino/lib/Event.js
@@ -57527,6 +57527,7 @@ var init_route2 = __esm(() => {
   init_dispatch();
   init_errors3();
   init_message2();
+  init_contract();
   init_resources();
   init_service();
   init_stream_subscription();

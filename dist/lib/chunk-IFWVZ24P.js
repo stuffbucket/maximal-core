@@ -1,6 +1,8 @@
 // src/lib/live/contract.ts
 import { z } from "zod";
 var CONTROL_PROTOCOL_VERSION = 2;
+var PROTOCOL_VERSION_HEADER = "mcp-protocol-version";
+var SUPPORTED_PROTOCOL_VERSION = String(CONTROL_PROTOCOL_VERSION);
 var CONTROL_TOPICS = [
   "snapshot",
   "auth",
@@ -33,6 +35,8 @@ function serializeFrame(frame) {
 
 export {
   CONTROL_PROTOCOL_VERSION,
+  PROTOCOL_VERSION_HEADER,
+  SUPPORTED_PROTOCOL_VERSION,
   CONTROL_TOPICS,
   methodForTopic,
   frameEnvelopeSchema,
