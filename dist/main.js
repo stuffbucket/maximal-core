@@ -16944,6 +16944,7 @@ var init_config_schema = __esm(() => {
     tokenUsageRetentionDays: exports_external.number().int().min(0).max(3650).optional(),
     autoRecoverAccount: exports_external.boolean().optional(),
     checkUpdates: exports_external.boolean().optional(),
+    enforceVersionFloor: exports_external.boolean().optional(),
     editorVersion: exports_external.string().optional(),
     apps: exports_external.object({
       claudeCode: exports_external.object({
@@ -17242,6 +17243,10 @@ function isAutoRecoverAccountEnabled() {
 function isUpdateCheckEnabled() {
   const config2 = getConfig();
   return config2.checkUpdates ?? true;
+}
+function isVersionFloorEnforced() {
+  const config2 = getConfig();
+  return config2.enforceVersionFloor ?? true;
 }
 var DEFAULT_PORT_POLICY = "next", gpt5ExplorationPrompt = `## Exploration and reading files
 - **Think first.** Before any tool call, decide ALL files/resources you will need.
@@ -30784,7 +30789,7 @@ var isOpencodeOauthApp = () => {
     return "opencode/" + version4;
   }
   return OPENCODE_VERSION;
-}, OPENCODE_SEMVER = "1.18.14", OPENCODE_VERSION, OPENCODE_LLM_USER_AGENT, COPILOT_VERSION = "0.46.0", EDITOR_PLUGIN_VERSION, USER_AGENT, CLAUDE_AGENT_SEMVER = "2.1.223", CLAUDE_AGENT_SDK_MINOR = "0.3", CLAUDE_AGENT_SDK_SEMVER, CLAUDE_AGENT_USER_AGENT, API_VERSION = "2025-10-01", copilotBaseUrl = (state2) => {
+}, OPENCODE_SEMVER = "1.18.15", OPENCODE_VERSION, OPENCODE_LLM_USER_AGENT, COPILOT_VERSION = "0.46.0", EDITOR_PLUGIN_VERSION, USER_AGENT, CLAUDE_AGENT_SEMVER = "2.1.226", CLAUDE_AGENT_SDK_MINOR = "0.3", CLAUDE_AGENT_SDK_SEMVER, CLAUDE_AGENT_USER_AGENT, API_VERSION = "2025-10-01", copilotBaseUrl = (state2) => {
   const enterpriseDomain = getEnterpriseDomain();
   if (enterpriseDomain) {
     return `https://copilot-api.${enterpriseDomain}`;
@@ -30905,7 +30910,7 @@ var init_api_config = __esm(() => {
 });
 
 // src/lib/http/http-timeouts.ts
-var COPILOT_TOKEN_TIMEOUT_MS = 30000, GITHUB_API_TIMEOUT_MS = 15000, DEVICE_POLL_TIMEOUT_MS = 15000;
+var COPILOT_TOKEN_TIMEOUT_MS = 30000, GITHUB_API_TIMEOUT_MS = 15000, DEVICE_POLL_TIMEOUT_MS = 15000, UPDATE_MANIFEST_TIMEOUT_MS = 2000;
 
 // src/lib/http/send-request.ts
 function isSameOrigin(url2, baseUrl) {
@@ -37633,6 +37638,185 @@ var init_status = __esm(() => {
   init_build_info();
 });
 
+// src/lib/update/update-check.ts
+function parseSemver(v2) {
+  const raw2 = typeof v2 === "string" ? v2.replace(/^v/u, "") : "";
+  const prereleaseAt = raw2.indexOf("-");
+  const core2 = prereleaseAt === -1 ? raw2 : raw2.slice(0, prereleaseAt);
+  const prerelease = prereleaseAt === -1 ? [] : raw2.slice(prereleaseAt + 1).split(".");
+  const parts = core2.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, prerelease];
+}
+function isNewerVersion(a3, b2) {
+  const [a0, a1, a22, aPre] = parseSemver(a3);
+  const [b0, b1, b22, bPre] = parseSemver(b2);
+  if (a0 !== b0)
+    return a0 > b0;
+  if (a1 !== b1)
+    return a1 > b1;
+  if (a22 !== b22)
+    return a22 > b22;
+  if (aPre.length === 0 || bPre.length === 0)
+    return bPre.length > 0;
+  for (let i3 = 0;i3 < Math.max(aPre.length, bPre.length); i3++) {
+    if (i3 >= aPre.length)
+      return false;
+    if (i3 >= bPre.length)
+      return true;
+    const aId = aPre[i3];
+    const bId = bPre[i3];
+    const aNum = /^\d+$/u.test(aId);
+    const bNum = /^\d+$/u.test(bId);
+    if (aNum && bNum) {
+      const diff = Number.parseInt(aId, 10) - Number.parseInt(bId, 10);
+      if (diff !== 0)
+        return diff > 0;
+    } else if (aNum !== bNum) {
+      return !aNum;
+    } else if (aId !== bId) {
+      return aId > bId;
+    }
+  }
+  return false;
+}
+function normalizeCurrent(version4) {
+  const devAt = version4.indexOf("-dev+");
+  return devAt === -1 ? version4 : version4.slice(0, devAt);
+}
+function readChannelVersion(parsed, channel, field) {
+  const value = parsed?.channels?.[channel]?.[field];
+  if (typeof value !== "string")
+    return null;
+  const match2 = VERSION_RE.exec(value.trim());
+  return match2 ? match2[1] : null;
+}
+function parseManifest(body, channel = UPDATE_CHANNEL) {
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return { latest: null, minSupported: null };
+  }
+  return {
+    latest: readChannelVersion(parsed, channel, "version"),
+    minSupported: readChannelVersion(parsed, channel, "min_supported_version")
+  };
+}
+async function refreshManifest() {
+  try {
+    const res = await fetchImpl(MANIFEST_URL, {
+      headers: { "user-agent": "maximal" },
+      signal: AbortSignal.timeout(UPDATE_MANIFEST_TIMEOUT_MS)
+    });
+    if (!res.ok) {
+      lastError = `manifest fetch returned HTTP ${res.status}`;
+      log6.warn(`Update check: ${lastError}; skipping.`);
+      return;
+    }
+    const facts = parseManifest(await res.text());
+    lastError = facts.latest === null ? "manifest had no usable version for this channel" : null;
+    cache = { atMs: nowMs(), facts };
+  } catch (err) {
+    lastError = err instanceof Error ? `network error: ${err.message}` : "update check failed";
+    log6.warn("Update check failed (continuing):", err);
+  }
+}
+function ensureManifest(force) {
+  if (inFlight)
+    return inFlight;
+  const now = nowMs();
+  if (!force) {
+    if (cache && now - cache.atMs < CACHE_TTL_MS)
+      return Promise.resolve();
+    if (now < nextAttemptAtMs)
+      return Promise.resolve();
+  }
+  nextAttemptAtMs = now + REFRESH_RETRY_MS;
+  const started = refreshManifest().finally(() => {
+    if (inFlight === started)
+      inFlight = null;
+  });
+  inFlight = started;
+  return started;
+}
+async function getUpdateStatus(force = false) {
+  const current2 = versionImpl;
+  if (!isUpdateCheckEnabled()) {
+    return {
+      current: current2,
+      latest: null,
+      update_available: false,
+      url: DOWNLOAD_URL,
+      enabled: false,
+      checked_at: cache ? new Date(cache.atMs).toISOString() : null,
+      last_error: null,
+      min_supported: cache?.facts.minSupported ?? null
+    };
+  }
+  await ensureManifest(force);
+  const latest = cache?.facts.latest ?? null;
+  return {
+    current: current2,
+    latest,
+    update_available: latest !== null && isNewerVersion(latest, normalizeCurrent(current2)),
+    url: DOWNLOAD_URL,
+    enabled: true,
+    checked_at: cache ? new Date(cache.atMs).toISOString() : null,
+    last_error: lastError,
+    min_supported: cache?.facts.minSupported ?? null
+  };
+}
+function checkVersionFloor() {
+  const current2 = versionImpl;
+  if (!isVersionFloorEnforced()) {
+    return { current: current2, minSupported: null, retired: false };
+  }
+  ensureManifest(false);
+  const minSupported = cache?.facts.minSupported ?? null;
+  return {
+    current: current2,
+    minSupported,
+    retired: minSupported !== null && isNewerVersion(minSupported, normalizeCurrent(current2))
+  };
+}
+var log6, MANIFEST_URL = "https://mxml.sh/updates/manifest.json", UPDATE_CHANNEL, DOWNLOAD_URL = "https://mxml.sh/", CACHE_TTL_MS, REFRESH_RETRY_MS, fetchImpl, nowMs, versionImpl, cache = null, lastError = null, inFlight = null, nextAttemptAtMs = 0, VERSION_RE;
+var init_update_check = __esm(() => {
+  init_config();
+  init_logger();
+  init_build_info();
+  log6 = createTeeLogger("update");
+  UPDATE_CHANNEL = BUILD_CHANNEL;
+  CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+  REFRESH_RETRY_MS = 5 * 60 * 1000;
+  fetchImpl = fetch;
+  nowMs = Date.now;
+  versionImpl = BUILD_VERSION;
+  VERSION_RE = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$/u;
+});
+
+// src/lib/update/version-gate.ts
+function buildRetiredBody(current2, minSupported) {
+  return {
+    error: {
+      message: `This maximal build (${current2}) has been retired: the minimum supported` + ` version is ${minSupported}. Proxy requests are refused until the` + " engine is updated \u2014 retrying, re-authenticating, or changing API" + ` keys will not help. Update from ${DOWNLOAD_URL} (or run` + " `maximal upgrade`).",
+      type: BUILD_RETIRED_TYPE,
+      current_version: current2,
+      min_supported_version: minSupported,
+      upgrade_url: DOWNLOAD_URL
+    }
+  };
+}
+var BUILD_RETIRED_TYPE = "build_retired", requireSupportedBuild = async (c5, next) => {
+  const verdict = checkVersionFloor();
+  if (!verdict.retired || verdict.minSupported === null) {
+    return next();
+  }
+  return c5.json(buildRetiredBody(verdict.current, verdict.minSupported), 426);
+};
+var init_version_gate = __esm(() => {
+  init_update_check();
+});
+
 // node_modules/hono/dist/utils/stream.js
 var StreamingApi = class {
   writer;
@@ -39297,135 +39481,6 @@ function streamSubscription(c5, hub2) {
 }
 var init_stream_subscription = __esm(() => {
   init_streaming2();
-});
-
-// src/lib/update/update-check.ts
-function parseSemver(v2) {
-  const raw2 = typeof v2 === "string" ? v2.replace(/^v/u, "") : "";
-  const prereleaseAt = raw2.indexOf("-");
-  const core2 = prereleaseAt === -1 ? raw2 : raw2.slice(0, prereleaseAt);
-  const prerelease = prereleaseAt === -1 ? [] : raw2.slice(prereleaseAt + 1).split(".");
-  const parts = core2.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
-  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, prerelease];
-}
-function isNewerVersion(a3, b2) {
-  const [a0, a1, a22, aPre] = parseSemver(a3);
-  const [b0, b1, b22, bPre] = parseSemver(b2);
-  if (a0 !== b0)
-    return a0 > b0;
-  if (a1 !== b1)
-    return a1 > b1;
-  if (a22 !== b22)
-    return a22 > b22;
-  if (aPre.length === 0 || bPre.length === 0)
-    return bPre.length > 0;
-  for (let i3 = 0;i3 < Math.max(aPre.length, bPre.length); i3++) {
-    if (i3 >= aPre.length)
-      return false;
-    if (i3 >= bPre.length)
-      return true;
-    const aId = aPre[i3];
-    const bId = bPre[i3];
-    const aNum = /^\d+$/u.test(aId);
-    const bNum = /^\d+$/u.test(bId);
-    if (aNum && bNum) {
-      const diff = Number.parseInt(aId, 10) - Number.parseInt(bId, 10);
-      if (diff !== 0)
-        return diff > 0;
-    } else if (aNum !== bNum) {
-      return !aNum;
-    } else if (aId !== bId) {
-      return aId > bId;
-    }
-  }
-  return false;
-}
-function normalizeCurrent(version4) {
-  const devAt = version4.indexOf("-dev+");
-  return devAt === -1 ? version4 : version4.slice(0, devAt);
-}
-function parseManifestVersion(body, channel = UPDATE_CHANNEL) {
-  let parsed;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    return null;
-  }
-  const entry = parsed?.channels?.[channel];
-  const version4 = entry?.version;
-  if (typeof version4 !== "string")
-    return null;
-  const match2 = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$/u.exec(version4.trim());
-  return match2 ? match2[1] : null;
-}
-async function getUpdateStatus(force = false) {
-  const current2 = versionImpl;
-  const enabled = isUpdateCheckEnabled();
-  const checkedAt = cache ? new Date(cache.atMs).toISOString() : null;
-  if (!enabled) {
-    return {
-      current: current2,
-      latest: null,
-      update_available: false,
-      url: DOWNLOAD_URL,
-      enabled: false,
-      checked_at: checkedAt,
-      last_error: null
-    };
-  }
-  if (!force && cache && nowMs() - cache.atMs < CACHE_TTL_MS) {
-    return cache.status;
-  }
-  const fallback2 = (error51) => ({
-    current: current2,
-    latest: cache?.status.latest ?? null,
-    update_available: cache?.status.update_available ?? false,
-    url: DOWNLOAD_URL,
-    enabled: true,
-    checked_at: checkedAt,
-    last_error: error51
-  });
-  try {
-    const res = await fetchImpl(MANIFEST_URL, {
-      headers: { "user-agent": "maximal" },
-      signal: AbortSignal.timeout(GITHUB_API_TIMEOUT_MS)
-    });
-    if (!res.ok) {
-      const error52 = `manifest fetch returned HTTP ${res.status}`;
-      log6.warn(`Update check: ${error52}; skipping.`);
-      return fallback2(error52);
-    }
-    const latest = parseManifestVersion(await res.text());
-    const error51 = latest === null ? "manifest had no usable version for this channel" : null;
-    const atMs = nowMs();
-    const status = {
-      current: current2,
-      latest,
-      update_available: latest !== null && isNewerVersion(latest, normalizeCurrent(current2)),
-      url: DOWNLOAD_URL,
-      enabled: true,
-      checked_at: new Date(atMs).toISOString(),
-      last_error: error51
-    };
-    cache = { atMs, status };
-    return status;
-  } catch (err) {
-    const error51 = err instanceof Error ? `network error: ${err.message}` : "update check failed";
-    log6.warn("Update check failed (continuing):", err);
-    return fallback2(error51);
-  }
-}
-var log6, MANIFEST_URL = "https://mxml.sh/updates/manifest.json", UPDATE_CHANNEL, DOWNLOAD_URL = "https://mxml.sh/", CACHE_TTL_MS, fetchImpl, nowMs, versionImpl, cache = null;
-var init_update_check = __esm(() => {
-  init_config();
-  init_logger();
-  init_build_info();
-  log6 = createTeeLogger("update");
-  UPDATE_CHANNEL = BUILD_CHANNEL;
-  CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-  fetchImpl = fetch;
-  nowMs = Date.now;
-  versionImpl = BUILD_VERSION;
 });
 
 // src/routes/control/rpc.ts
@@ -72469,7 +72524,7 @@ function applyCommonMiddleware(app) {
     onError: (err) => consola.warn("Background models refresh failed; keeping stale cache", err)
   }));
 }
-var publicApp, controlApp, SERVER_START_MS, controlPort = () => state.controlPort;
+var publicApp, controlApp, SERVER_START_MS, controlPort = () => state.controlPort, UPSTREAM_ROUTES;
 var init_server = __esm(() => {
   init_dist();
   init_dist3();
@@ -72483,6 +72538,7 @@ var init_server = __esm(() => {
   init_state();
   init_status();
   init_build_info();
+  init_version_gate();
   init_route();
   init_route2();
   init_route3();
@@ -72507,16 +72563,22 @@ var init_server = __esm(() => {
   publicApp.get("/status", (c5) => c5.json(buildStatus(SERVER_START_MS)));
   publicApp.route("/_internal", internalRoutes);
   publicApp.route("/", productApiRoutes);
-  publicApp.use("/chat/completions", requireGithubAuth);
-  publicApp.use("/chat/completions/*", requireGithubAuth);
-  publicApp.use("/models", requireGithubAuth);
-  publicApp.use("/models/*", requireGithubAuth);
-  publicApp.use("/embeddings", requireGithubAuth);
-  publicApp.use("/embeddings/*", requireGithubAuth);
-  publicApp.use("/responses", requireGithubAuth);
-  publicApp.use("/responses/*", requireGithubAuth);
-  publicApp.use("/v1/*", requireGithubAuth);
-  publicApp.use("/:provider/v1/*", requireGithubAuth);
+  UPSTREAM_ROUTES = [
+    "/chat/completions",
+    "/chat/completions/*",
+    "/models",
+    "/models/*",
+    "/embeddings",
+    "/embeddings/*",
+    "/responses",
+    "/responses/*",
+    "/v1/*",
+    "/:provider/v1/*"
+  ];
+  for (const path25 of UPSTREAM_ROUTES) {
+    publicApp.use(path25, requireSupportedBuild);
+    publicApp.use(path25, requireGithubAuth);
+  }
   publicApp.route("/chat/completions", completionRoutes);
   publicApp.route("/models", modelRoutes);
   publicApp.route("/embeddings", embeddingRoutes);

@@ -13,7 +13,7 @@ import {
   DOWNLOAD_URL,
   getUpdateStatus,
   isNewerVersion,
-  parseManifestVersion,
+  parseManifest,
 } from "~/lib/update/update-check"
 
 /** A manifest body advertising `version` on the `stable` channel, exactly as
@@ -56,11 +56,11 @@ describe("isNewerVersion", () => {
   })
 })
 
-describe("parseManifestVersion", () => {
+describe("parseManifest (version field)", () => {
   test("reads the channel's version, tolerating a leading v", () => {
-    expect(parseManifestVersion(manifestBody("0.4.32"))).toBe("0.4.32")
-    expect(parseManifestVersion(manifestBody("v0.4.32"))).toBe("0.4.32")
-    expect(parseManifestVersion(manifestBody("0.5.0-rc.1"))).toBe("0.5.0-rc.1")
+    expect(parseManifest(manifestBody("0.4.32")).latest).toBe("0.4.32")
+    expect(parseManifest(manifestBody("v0.4.32")).latest).toBe("0.4.32")
+    expect(parseManifest(manifestBody("0.5.0-rc.1")).latest).toBe("0.5.0-rc.1")
   })
 
   test("selects the requested channel", () => {
@@ -70,20 +70,20 @@ describe("parseManifestVersion", () => {
         beta: { version: "0.5.0-rc.1" },
       },
     })
-    expect(parseManifestVersion(multi, "beta")).toBe("0.5.0-rc.1")
-    expect(parseManifestVersion(multi, "stable")).toBe("0.4.32")
+    expect(parseManifest(multi, "beta").latest).toBe("0.5.0-rc.1")
+    expect(parseManifest(multi, "stable").latest).toBe("0.4.32")
   })
 
   test("returns null for unrecognized shapes", () => {
-    expect(parseManifestVersion("<!DOCTYPE html>")).toBeNull() // not JSON
-    expect(parseManifestVersion("{}")).toBeNull() // no channels
-    expect(parseManifestVersion(JSON.stringify({ channels: {} }))).toBeNull()
-    expect(parseManifestVersion(manifestBody(42))).toBeNull() // non-string version
-    expect(parseManifestVersion(manifestBody("0.4"))).toBeNull() // incomplete x.y.z
+    expect(parseManifest("<!DOCTYPE html>").latest).toBeNull() // not JSON
+    expect(parseManifest("{}").latest).toBeNull() // no channels
+    expect(parseManifest(JSON.stringify({ channels: {} })).latest).toBeNull()
+    expect(parseManifest(manifestBody(42)).latest).toBeNull() // non-string version
+    expect(parseManifest(manifestBody("0.4")).latest).toBeNull() // incomplete x.y.z
   })
 
   test("an absent requested channel degrades to null", () => {
-    expect(parseManifestVersion(manifestBody("0.4.32"), "beta")).toBeNull()
+    expect(parseManifest(manifestBody("0.4.32"), "beta").latest).toBeNull()
   })
 })
 

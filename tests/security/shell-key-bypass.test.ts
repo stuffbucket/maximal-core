@@ -2,6 +2,7 @@ import {
   afterAll,
   afterEach,
   beforeAll,
+  beforeEach,
   describe,
   expect,
   test,
@@ -11,6 +12,10 @@ import type { ModelsResponse } from "~/services/copilot/get-models"
 
 import { getConfig, writeConfig } from "~/lib/config/config"
 import { setModels, state } from "~/lib/runtime-state/state"
+import {
+  __resetUpdateCheckDepsForTests,
+  __setUpdateCheckDepsForTests,
+} from "~/lib/update/update-check"
 import { publicApp } from "~/server"
 
 /**
@@ -70,8 +75,22 @@ beforeAll(() => {
   } as unknown as ModelsResponse)
 })
 
+// `/v1/*` also passes through `requireSupportedBuild` (maximal-core#7), whose
+// synchronous cache read kicks a fire-and-forget manifest refresh when the cache
+// is cold — the real fetch would hit the public CDN. Pin the seam the
+// update-check suite owns so this file stays offline, exactly as
+// tests/live/control-route.test.ts does. An unknown floor fails open, so the
+// gate is transparent here.
+beforeEach(() => {
+  __resetUpdateCheckDepsForTests()
+  __setUpdateCheckDepsForTests({
+    fetch: () => Promise.reject(new Error("offline (shell-key-bypass)")),
+  })
+})
+
 afterEach(() => {
   state.shellApiKey = prior.shellApiKey
+  __resetUpdateCheckDepsForTests()
 })
 
 afterAll(() => {
