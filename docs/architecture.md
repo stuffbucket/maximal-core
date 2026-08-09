@@ -164,6 +164,34 @@ drift from it the way a prose spec does.
 - **REST (deprecated, one cycle):** `GET /control/{auth,accounts,apps,models,usage,config,clients,update-status,api-keys,gh/status,diagnostics}` and the `POST`/`DELETE` actions (`auth/start`, `auth/cancel`, `auth/rearm`, `auth/sign-out`, `models/refresh`, `accounts/switch`, `accounts/remove`, `quit`, `upgrade`, `api-keys`, `api-keys/:id`, `gh/use`, `apps/claude-code/toggle`, `apps/claude-desktop/toggle`) still work and share the same builders, so the two surfaces cannot drift. Registration is split between `src/routes/control/route.ts` and `src/routes/control/settings-endpoints.ts`. `GET /control/events` still streams but is **no longer resumable** — it ignores `Last-Event-ID`/`epoch`.
 - **Loopback gate:** the whole `/control` surface re-checks the caller IP itself — a remote caller gets `404`, exactly like `/_internal`, *above* the JSON-RPC layer so no well-formed error confirms the endpoint exists. Cross-origin browser requests are additionally 403'd by the Origin guard.
 
+### Not in scope: agent-run state
+
+Core does **not** own agent runs and the control plane will not expose a read
+model for them. A run's status, branch, diff summary, approval state, project,
+and current-activity line are filesystem, VCS and orchestration facts that never
+reach a loopback proxy — core could not populate them without a harness telling
+it, so a core-owned schema would be core-owned coupling with none of the
+knowledge, and a core release every time a field is added. Agent-run
+orchestration belongs to the harness that does the orchestrating.
+
+What core does own is per-request facts, tagged with a caller-supplied key it
+never interprets. `traceIdMiddleware` (`src/lib/http/trace.ts`) accepts
+`x-trace-id`, `x-session-affinity` and `x-parent-session-id` on any request,
+echoes the trace id back, and carries all three in `AsyncLocalStorage`.
+`x-session-affinity` then becomes the `session_id` on every persisted usage row
+(`src/lib/token-usage/`), which records model, endpoint, timestamps, the four
+token counts, nano-AIU and the premium flag. A harness that stamps its own run
+id on outbound requests can therefore attribute cost and model choice per run
+without core knowing what a run is.
+
+Reading those rows back by key is not exposed today — `usage/get` returns a
+day summary, not per-event rows filtered by session. Note also that the `usage`
+control topic is coalesced last-value on purpose (`src/lib/live/hub.ts`): a
+per-request event storm would overflow every subscriber's bounded queue and get
+slow clients dropped, so "stream every request as it happens" is the shape this
+design rejects. The workable pattern is the coalesced tick as a change signal,
+with the consumer re-querying by key when it fires.
+
 ## Diagnostic surfaces
 
 - **`maximal debug`** (and `--json`) — effective config, executor selection (which `Executor` `selectExecutor()` would pick), secret sources (env/file/config/unset, never values), paths.
