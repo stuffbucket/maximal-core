@@ -361,7 +361,14 @@ describe("main", () => {
   const injected = (argv: Array<string>): Array<Invocation> => {
     const { calls, run } = recorder()
     const { log } = silent()
-    main(argv, { bun: "/pin/bun", running: PINNED, pinned: PINNED, run, log })
+    main(argv, {
+      bun: "/pin/bun",
+      running: PINNED,
+      pinned: PINNED,
+      run,
+      log,
+      ...NO_REQUIREMENTS,
+    })
     return calls
   }
 
