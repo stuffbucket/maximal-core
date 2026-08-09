@@ -64,6 +64,55 @@ Nothing from the repo is `COPY`ed into the image. The tree is bind-mounted at
 run time, so the image is a pure function of the toolchain: it is rebuilt when
 the toolchain moves, not when the code does.
 
+## Linked worktrees
+
+Most work here happens in a linked worktree (`docs/architecture.md` →
+_Parallel-agent convention_), and a linked worktree's `.git` is a **file**, not a
+directory:
+
+```
+gitdir: /Users/you/repo/.git/worktrees/<name>
+```
+
+That is an absolute **host** path into the main checkout. Bind-mounting only the
+worktree at `/work` left it absent inside the container, so every `git` call
+exited 128 — and both things that read it degraded quietly instead of going red:
+`bindings:check` reported "could not run" (the committed-`dist` freshness gate,
+silently off for exactly the people most likely to break it) and `getGitVersion`
+returned undefined, turning one unit test into a false negative. maximal-core#124.
+
+`scripts/dev/container.ts` now reads that pointer and mounts the common git
+directory **at the absolute path the pointer already names**. Not somewhere
+tidier with `GIT_DIR` set to it: [`src/lib/update/version.ts`](../../src/lib/update/version.ts)
+follows the pointer with `fs`, never through the git binary, so it honours no
+environment variable — the only mount that fixes both readers is the one that
+makes the existing path resolve. It also means nothing has to rewrite a file in
+your work tree. One mount covers both directories git needs, because git's own
+layout puts the per-worktree dir at `<common>/worktrees/<id>`; a layout that is
+not that is refused with a named reason rather than half-mounted.
+
+`git config --system --add safe.directory '*'` in the Dockerfile is a
+**different** problem. That one is a git dir git distrusts; this one was
+genuinely not there.
+
+### The empty `node_modules` a run used to leave behind
+
+`/work/node_modules` is a named volume mounted over a path *inside* the
+bind-mounted work tree, and docker creates a mount target that does not exist —
+on the host, because that is where the bind source lives. A worktree with no
+`node_modules` therefore acquired an empty one that the container never writes
+into, and was left worse off than before the run: Bun resolves upward past an
+empty directory, and `bun build` writes its module banner comments relative to
+the root it actually resolved. Byte-different output for byte-identical sources
+(measured: 21 banner lines), which `bindings:check` reported as **staleness** —
+and its fix command, run in that worktree, produced exactly those wrong bytes
+and staged them.
+
+`container:run` now removes that directory after the run, if and only if it is
+empty. An empty `node_modules` is useful to nobody and is the whole of the
+residue. The container itself needs no guard for this: inside it `node_modules`
+is the named volume, which the bootstrap `bun install`s when it is empty.
+
 ## Two decisions that look like overhead and are not
 
 ### `node_modules` is a named volume, never the host's

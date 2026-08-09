@@ -33,11 +33,14 @@
  * Exit code: the container's, so this is transparent in a `&&` chain.
  */
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { existsSync, readdirSync, readFileSync, rmdirSync } from "node:fs"
+import { isAbsolute, posix, resolve } from "node:path"
 
 const REPO_ROOT = resolve(import.meta.dir, "../..")
 const DOCKERFILE_DIR = resolve(REPO_ROOT, ".github/docker")
+
+/** Where the work tree is mounted. Hard-coded in the image's `WORKDIR` too. */
+export const WORKDIR = "/work"
 
 /**
  * A named volume, NOT the host's `node_modules`. `oxlint`, `esbuild` (through
@@ -58,6 +61,131 @@ export function readPin(root: string = REPO_ROOT): string {
 
 export function imageTag(pin: string): string {
   return `maximal-core-ci:bun-${pin}`
+}
+
+// --- the linked-worktree git dir ---
+
+/** One `--volume host:container` pair. */
+export interface Mount {
+  readonly hostPath: string
+  readonly containerPath: string
+}
+
+export interface GitDirMount {
+  /** Empty for a plain checkout, whose `.git` rides in on the work tree mount. */
+  readonly mounts: ReadonlyArray<Mount>
+  /** Why this tree's git dir cannot be mounted. Refuse rather than degrade. */
+  readonly objection?: string
+}
+
+/**
+ * A LINKED WORKTREE'S `.git` IS A FILE, AND WHAT IT POINTS AT IS OUTSIDE /work.
+ *
+ *     gitdir: /Users/you/repo/.git/worktrees/<name>
+ *
+ * That is an absolute HOST path into the main checkout. Bind-mounting only the
+ * worktree at `/work` leaves it absent inside the container, so every `git` call
+ * exits 128 — and the two things that read it both degrade quietly rather than
+ * going red: `bindings:check` reports "could not run" (the committed-`dist`
+ * freshness gate, silently off) and `getGitVersion` returns undefined (one unit
+ * test, a false negative). See maximal-core#124.
+ *
+ * `git config --system --add safe.directory '*'` in the Dockerfile is a
+ * DIFFERENT problem — that one is about a git dir git distrusts. This one is
+ * genuinely not there.
+ *
+ * MOUNTED AT ITS OWN ABSOLUTE PATH, not somewhere tidier with `GIT_DIR` set to
+ * point at it. `src/lib/update/version.ts` reads `.git` and follows the pointer
+ * with `fs`, never through the git binary, so it honours no environment
+ * variable — the only mount that fixes both readers is the one that makes the
+ * path the pointer already names resolve. It also means nothing has to rewrite
+ * a file in the developer's work tree.
+ *
+ * One mount covers both directories git needs, because git's own layout puts
+ * the per-worktree dir at `<common>/worktrees/<id>`. That is asserted rather
+ * than assumed: a layout this does not cover is refused, not half-mounted.
+ */
+export function gitDirMount(root: string = REPO_ROOT): GitDirMount {
+  let pointer: string
+  try {
+    pointer = readFileSync(resolve(root, ".git"), "utf8")
+  } catch {
+    // EISDIR — a plain checkout, already inside the work tree mount. ENOENT —
+    // not a checkout at all, which is not this script's business to diagnose.
+    return { mounts: [] }
+  }
+  const match = /^gitdir: (\S.*)$/mu.exec(pointer)
+  if (match === undefined || match === null) {
+    return { mounts: [], objection: `${resolve(root, ".git")} is a file but does not name a gitdir.` }
+  }
+  const target = match[1].trim()
+  // A relative pointer (`git worktree --relative-paths`) resolves against the
+  // directory holding the `.git` file — which is `root` on the host and
+  // `/work` in the container, so the two answers differ and both are needed.
+  const hostGitDir = isAbsolute(target) ? target : resolve(root, target)
+  const containerGitDir = isAbsolute(target) ? target : posix.resolve(WORKDIR, target)
+
+  let hostCommon = hostGitDir
+  let containerCommon = containerGitDir
+  try {
+    const rel = readFileSync(resolve(hostGitDir, "commondir"), "utf8").trim()
+    hostCommon = isAbsolute(rel) ? rel : resolve(hostGitDir, rel)
+    containerCommon = isAbsolute(rel) ? rel : posix.resolve(containerGitDir, rel)
+  } catch {
+    // No `commondir` — the pointer names a main git directory directly.
+  }
+
+  if (!existsSync(hostCommon)) {
+    return { mounts: [], objection: `${resolve(root, ".git")} points at ${hostCommon}, which does not exist.` }
+  }
+  // Docker would happily create a missing bind source as an empty root-owned
+  // directory, so an unusable path must be refused here rather than mounted.
+  if (!containerCommon.startsWith("/") || containerCommon === "/") {
+    return {
+      mounts: [],
+      objection:
+        `${resolve(root, ".git")} points at ${target}, which is not a path this container can mount.`,
+    }
+  }
+  if (containerGitDir !== containerCommon && !containerGitDir.startsWith(`${containerCommon}/`)) {
+    return {
+      mounts: [],
+      objection:
+        `${resolve(root, ".git")} points at ${containerGitDir}, which is not inside its common dir `
+        + `${containerCommon}; this script only knows how to mount git's own worktree layout.`,
+    }
+  }
+  return { mounts: [{ hostPath: hostCommon, containerPath: containerCommon }] }
+}
+
+/**
+ * `/work/node_modules` is a named volume mounted over a path INSIDE the
+ * bind-mounted work tree, and docker creates a mount target that does not
+ * exist — on the host, because that is where the bind source lives. So a
+ * checkout with no `node_modules` acquires an empty one that the container
+ * never writes into, and the host is left worse off than before the run: `bun
+ * build` resolves upward to a sibling checkout's `node_modules` and writes its
+ * module banner comments relative to THAT root, producing byte-different output
+ * for byte-identical sources (measured: 21 banner lines). That is reported as
+ * staleness, and following the fix command it prints commits the wrong bytes.
+ *
+ * Removing it is a restoration, not a cleanup: an empty `node_modules` is
+ * useful to nobody and is the whole of the residue. Only ever empty ones —
+ * `rmdirSync` would fail on anything else anyway, and the `readdirSync` guard
+ * keeps a real tree from even being attempted.
+ *
+ * The container itself needs no guard for this: inside it `node_modules` is the
+ * named volume, which the bootstrap `bun install`s when it is empty.
+ */
+export function pruneEmptyNodeModules(root: string = REPO_ROOT): boolean {
+  const dir = resolve(root, "node_modules")
+  try {
+    if (readdirSync(dir).length > 0) return false
+    rmdirSync(dir)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function run(
@@ -113,7 +241,11 @@ const BOOTSTRAP =
 export function runArgs(
   tag: string,
   command: ReadonlyArray<string>,
-  options: { readonly tty: boolean; readonly user: string | null },
+  options: {
+    readonly tty: boolean
+    readonly user: string | null
+    readonly mounts?: ReadonlyArray<Mount>
+  },
 ): Array<string> {
   return [
     "run",
@@ -131,13 +263,15 @@ export function runArgs(
     // work tree owned by someone the host cannot delete.
     ...(options.user === null ? [] : ["--user", options.user]),
     "--volume",
-    `${REPO_ROOT}:/work`,
+    `${REPO_ROOT}:${WORKDIR}`,
     "--volume",
-    `${NODE_MODULES_VOLUME}:/work/node_modules`,
+    `${NODE_MODULES_VOLUME}:${WORKDIR}/node_modules`,
     "--volume",
     `${HOME_VOLUME}:/home/dev`,
+    // Empty unless this is a linked worktree — see `gitDirMount`.
+    ...(options.mounts ?? []).flatMap((m) => ["--volume", `${m.hostPath}:${m.containerPath}`]),
     "--workdir",
-    "/work",
+    WORKDIR,
     tag,
     "bash",
     "-c",
@@ -162,6 +296,29 @@ function ensureImage(tag: string, pin: string): number {
   return run("docker", buildArgs(tag, pin))
 }
 
+/**
+ * One container run, plus the two things a linked worktree needs around it: the
+ * git dir mounted in (refusing loudly if it cannot be), and the empty
+ * `node_modules` docker leaves behind taken back out.
+ */
+function runInContainer(tag: string, command: ReadonlyArray<string>, tty: boolean): number {
+  const git = gitDirMount()
+  if (git.objection !== undefined) {
+    console.error(
+      `container: REFUSING to run — git would not work inside the container.\n\n  ${git.objection}\n\n`
+        + "Every `git` call would exit 128, which `bindings:check` reports as \"could not run\"\n"
+        + "rather than as a failure. Run from the main checkout instead.\n",
+    )
+    return 1
+  }
+  const status = run(
+    "docker",
+    runArgs(tag, command, { tty, user: hostUser(), mounts: git.mounts }),
+  )
+  pruneEmptyNodeModules()
+  return status
+}
+
 function main(): number {
   const argv = process.argv.slice(2)
   const [subcommand, ...rest] = argv
@@ -183,21 +340,12 @@ function main(): number {
       }
       const built = ensureImage(tag, pin)
       if (built !== 0) return built
-      return run(
-        "docker",
-        runArgs(tag, command, {
-          tty: process.stdin.isTTY === true,
-          user: hostUser(),
-        }),
-      )
+      return runInContainer(tag, command, process.stdin.isTTY === true)
     }
     case "shell": {
       const built = ensureImage(tag, pin)
       if (built !== 0) return built
-      return run(
-        "docker",
-        runArgs(tag, ["bash"], { tty: true, user: hostUser() }),
-      )
+      return runInContainer(tag, ["bash"], true)
     }
     default: {
       console.error(

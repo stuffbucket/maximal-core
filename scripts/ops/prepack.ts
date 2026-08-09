@@ -96,7 +96,16 @@
 import { spawnSync } from "node:child_process"
 import path from "node:path"
 
-import { BUN_VERSION_FILE, MAIN_BUILD_ARGV, pinnedBunVersion, runningBunVersion } from "./check-bindings"
+import {
+  BUN_VERSION_FILE,
+  firstObjection,
+  MAIN_ARTIFACT,
+  MAIN_BUILD_ARGV,
+  needsPinnedBun,
+  pinnedBunVersion,
+  type Requirement,
+  runningBunVersion,
+} from "./check-bindings"
 
 /** Repo root resolved from this file, so `prepack` works from any cwd. */
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..")
@@ -189,6 +198,19 @@ export function pinObjection(
   )
 }
 
+/**
+ * The shared environment list, minus the pin. `pinObjection` IS the pin check
+ * here and it takes both versions as inputs, so the tests can simulate an
+ * on-pin run while themselves running off-pin (`check:ops` does, routinely);
+ * re-running `needsPinnedBun` would re-measure the ambient process and
+ * contradict them. Everything else in the shared list applies verbatim, and by
+ * subtracting rather than re-listing, a requirement added over there reaches
+ * `prepack` without anyone having to remember this file.
+ */
+export const REQUIREMENTS: ReadonlyArray<Requirement> = MAIN_ARTIFACT.requires.filter(
+  (requirement) => requirement !== needsPinnedBun,
+)
+
 // --- entry point ---
 
 export interface PrepackOptions {
@@ -202,6 +224,15 @@ export interface PrepackOptions {
   bun?: string
   running?: string | undefined
   pinned?: string
+  /**
+   * What else the environment has to be true for before these bytes mean
+   * anything. Defaults to the SHARED list — the one `check-bindings.ts` judges
+   * a rebuild by and `build-bundle.ts` refuses on — so `prepack` refuses in
+   * exactly the cases they do rather than in a subset of its own. Injected so
+   * the tests assert nothing about the ambient environment; `check:ops` runs
+   * with no `bun install` and off-pin.
+   */
+  requirements?: ReadonlyArray<Requirement>
   outDir?: string
   /** Where `.bun-version` is read from when `pinned` is not supplied. */
   root?: string
@@ -213,10 +244,11 @@ export function prepack(options: PrepackOptions = {}): number {
   const bun = options.bun ?? process.execPath
   const run = options.run ?? realRunner
   const outDir = options.outDir ?? OUT_DIR
+  const root = options.root ?? REPO_ROOT
 
   let pinned: string
   try {
-    pinned = options.pinned ?? pinnedBunVersion(options.root ?? REPO_ROOT)
+    pinned = options.pinned ?? pinnedBunVersion(root)
   } catch (err) {
     log(`prepack: could not read ${BUN_VERSION_FILE} — ${err instanceof Error ? err.message : String(err)}`)
     return 2
@@ -226,6 +258,19 @@ export function prepack(options: PrepackOptions = {}): number {
   const objection = pinObjection(running, pinned)
   if (objection !== undefined) {
     log(objection)
+    return 1
+  }
+
+  // The pin was its own check above, not one of these: the refusal a publish
+  // deserves is not the one a rebuild deserves, and `pinObjection` takes its
+  // two versions as inputs. What this list reaches that nothing here did is
+  // `needsNodeModules` — `prepack` was the one guarded build path that probe
+  // never covered (maximal-core#124). `release:prepare` rebuilds `dist/`
+  // through this function, so an empty `node_modules` put
+  // `../../../node_modules/…` banners in the one commit you least want them in.
+  const environment = firstObjection(options.requirements ?? REQUIREMENTS, root)
+  if (environment !== undefined) {
+    log(`prepack: REFUSING to build the published tarball.\n\n  ${environment}\n`)
     return 1
   }
 

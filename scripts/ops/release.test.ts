@@ -234,9 +234,11 @@ function ghStub(
 /**
  * The pin, always injected: `check:ops` runs on whatever Bun the developer or
  * the workflow has, so a test that let `prepack` measure the real one would be
- * red off-pin for reasons that have nothing to do with this file.
+ * red off-pin for reasons that have nothing to do with this file. The empty
+ * requirement list is there for the same reason — `prepack` now also refuses
+ * without an installed `node_modules`, and `check:ops` runs without one.
  */
-const ON_PIN = { running: PINNED, pinned: PINNED } as const
+const ON_PIN = { running: PINNED, pinned: PINNED, requirements: [] } as const
 
 describe("parity with the real package.json", () => {
   // The whole point of the wrapper is that the sequence lives in ONE process

@@ -723,19 +723,21 @@ export function withNonInteractiveConsent(
 // --- steps ---
 
 /**
- * The pin inputs `prepack` reads from the environment, overridable so the tests
- * never depend on the Bun they happen to be running under (`check:ops` runs
- * off-pin routinely). Forwarded verbatim, and only when present: `prepack`
- * distinguishes "no `running` given, go measure" from "`running` is
+ * The environment inputs `prepack` would otherwise measure for itself,
+ * overridable so the tests never depend on the Bun they happen to be running
+ * under or on whether anything has been installed (`check:ops` runs off-pin and
+ * with no `bun install`, routinely). Forwarded verbatim, and only when present:
+ * `prepack` distinguishes "no `running` given, go measure" from "`running` is
  * `undefined`, i.e. not Bun at all" by key presence.
  */
-export type PinOptions = Pick<PrepackOptions, "running" | "pinned" | "root">
+export type PinOptions = Pick<PrepackOptions, "running" | "pinned" | "root" | "requirements">
 
 function pinOptions(options: PinOptions): PinOptions {
   const pin: PinOptions = {}
   if ("running" in options) pin.running = options.running
   if (options.pinned !== undefined) pin.pinned = options.pinned
   if (options.root !== undefined) pin.root = options.root
+  if (options.requirements !== undefined) pin.requirements = options.requirements
   return pin
 }
 
