@@ -93,6 +93,13 @@ export async function bootstrapUpstream(
     if (existing) {
       setGithubToken(existing.accessToken)
       if (state.showToken) {
+        // console-only: a raw token must never reach the auth-*.log file sink.
+        // Printing it here is the FEATURE, not a leak — `--show-token` is an
+        // explicit operator opt-in (the user asked to see the bearer). The rule
+        // is threefold: gated on that opt-in, emitted through bare `consola`
+        // (whose reporters only write stdout) and never `createTeeLogger`, so
+        // nothing durable lands under `<home>/logs/`. `tests/token-never-logged.test.ts`
+        // asserts the no-opt-in case; do not route this through a tee'd logger.
         consola.info("GitHub token:", existing.accessToken)
       }
     }
