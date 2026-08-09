@@ -18,16 +18,25 @@ artifact that the version decides:
    open regressions affecting our patterns: parallel test loading,
    module-export resolution, `with { type: "file" }` import
    attributes).
-2. Install it locally, so the rest of these steps run on the version you are
-   pinning and not the one you happened to have:
-   `curl -fsSL https://bun.sh/install | bash -s bun-v<new>`.
-3. Rebuild and stage the committed CLI bundle:
-   `bun run build && git add -f dist/main.js`. **This step is not optional and
-   it is not cosmetic** — see below.
-4. Run the whole suite locally on the new version: `bun run check:deep`
-   and `bun run check:ops`.
+2. Edit `.bun-version`, then build the toolchain image for the new pin:
+   `bun run container:build`. The tag carries the pin, so this cannot reuse the
+   old image — [`docs/dev/container-toolchain.md`](dev/container-toolchain.md).
+3. Rebuild and stage the committed CLI bundle **on the pin**:
+   `bun run container:run -- bun run build && git add -f dist/main.js`. **This
+   step is not optional and it is not cosmetic** — see below.
+4. Run the whole suite on the new version:
+   `bun run container:run -- bun run check:deep`, then `bun run check:ops` and
+   `bun run e2e`.
 5. If green, commit `.bun-version` and `dist/main.js` together.
-6. Watch the next CI run.
+6. Watch the next CI run — including the `windows` job, which is native rather
+   than containerised and is where a Bun bump has broken `bun install`'s
+   lifecycle scripts before (maximal-core#38, #90).
+
+Steps 3 and 4 can be run off the host PATH instead
+(`curl -fsSL https://bun.sh/install | bash -s bun-v<new>`, pinned Bun FIRST on
+`PATH`), but there is no reason to: `bun run build` now refuses to bundle when
+the running Bun is not the pin, and the container is the only place that is
+true without arranging anything.
 
 **Ordering, once `ci.yml`'s `test` job runs in the toolchain image:** dispatch
 [`publish-ci-image.yml`](../.github/workflows/publish-ci-image.yml) on your bump
@@ -38,10 +47,13 @@ workflow's header), and its first step asserts the image's Bun equals
 gate by design, naming the fix, rather than quietly running the suite on the old
 Bun and reporting `bindings:check` staleness with the wrong cause.
 
-Steps 3-4 are the ones that go wrong, because they depend on your PATH rather
-than on anything the repo can assert. `bun run container:run -- bun run check:deep`
-runs them inside an image whose Bun **is** `.bun-version` and cannot be anything
-else; its tag carries the pin, so bumping the file builds a new image rather
+Steps 3-4 used to be the ones that went wrong, because they depended on your
+PATH rather than on anything the repo could assert. Two things now close that:
+`bun run build` is [`scripts/ops/build-bundle.ts`](../scripts/ops/build-bundle.ts),
+which **refuses** to bundle when the running Bun is not the pin; and
+`bun run container:run -- <command>` runs inside an image whose Bun **is**
+`.bun-version` and cannot be anything else, so the refusal cannot fire there.
+The image's tag carries the pin, so bumping the file builds a new image rather
 than reusing the old one. See
 [`docs/dev/container-toolchain.md`](dev/container-toolchain.md).
 
@@ -104,12 +116,17 @@ $ /path/to/1.3.11/bin/bun pm pack     # tarball dist/main.js → ffdee378… (1.
 $ /tmp/bun1311/bin/bun run build      # dist/main.js → a 1.3.14 bundle
 ```
 
-`bun run build` is exposed the same way, and that one is **step 3 above** (and
-the by-hand release path in the runbook's § 4): the nested `bun build` inside
-the npm script re-resolves `bun` from PATH, so the rebuild that blesses a new
-pin gets built by whatever Bun is on PATH instead. `bindings:check` caught it as
-stale. Put the pinned Bun first on your PATH; invoking it by absolute path is
-not enough.
+`bun run build` **was** exposed the same way, and that one is **step 3 above**
+(and the by-hand release path in the runbook's § 4): the nested `bun build`
+inside the npm script re-resolved `bun` from PATH, so the rebuild that blesses a
+new pin got built by whatever Bun was on PATH instead. `bindings:check` caught
+it as stale, downstream, after the wrong bytes were already in the work tree —
+three people hit exactly that in one session. `build` is now
+[`scripts/ops/build-bundle.ts`](../scripts/ops/build-bundle.ts), which asserts
+`process.versions.bun` against the pin and then bundles with `process.execPath`,
+so the binary that was checked is the binary that bundles and there is no PATH
+lookup in between. Off-pin it refuses, naming
+`bun run container:run -- bun run build`.
 
 That is the same trap `check-bindings.ts` solved with `process.execPath`, and it
 is why `prepack` is [`scripts/ops/prepack.ts`](../scripts/ops/prepack.ts) rather

@@ -256,12 +256,22 @@ export type Requirement = (root?: string) => string | undefined
  * found it (module paths are banner comments relative to the resolved build
  * root), so a worktree that resolves upward to a sibling checkout's
  * `node_modules` produces different bytes for identical sources.
+ *
+ * It probes `node_modules/.bin`, NOT `node_modules`, because the directory
+ * existing does not mean it was installed into. A linked worktree used with
+ * `container:run` acquires an EMPTY `node_modules` — the docker bind-mount
+ * target is created on the host — and Bun then resolves upward anyway. Measured
+ * here: an existence check passed, the bundle came out with
+ * `// ../../../node_modules/consola/dist/core.mjs` banners, and the only
+ * difference from the correct bundle was 21 such lines. `.bin` is the same
+ * probe the container's own bootstrap uses to decide whether to `bun install`.
  */
 export const needsNodeModules: Requirement = (root = REPO_ROOT) => {
-  if (fs.existsSync(path.join(root, "node_modules"))) return undefined
+  if (fs.existsSync(path.join(root, "node_modules", ".bin"))) return undefined
   return (
-    `no \`node_modules\` in ${root}, so a rebuild would not be byte-comparable `
-    + "(`bun build` writes module paths relative to the resolved build root).\n"
+    `no installed \`node_modules\` in ${root}, so a rebuild would not be `
+    + "byte-comparable (`bun build` writes module paths relative to the resolved "
+    + "build root, and resolves upward when this one is empty).\n"
     + "    bun install"
   )
 }
@@ -295,8 +305,11 @@ export const needsPinnedBun: Requirement = (root = REPO_ROOT) => {
   return (
     `Bun ${running ?? "(not running under Bun)"} is bundling but ${BUN_VERSION_FILE} pins `
     + `${pinned}, and \`bun build\` output is a function of the Bun version. `
-    + "Rebuilding here would commit a bundle CI cannot reproduce, so this is not "
-    + "a staleness report. Switch Bun first:\n"
+    + "A bundle built here is one CI cannot reproduce, so this is not "
+    + "a staleness report — do not regenerate until the toolchain matches.\n"
+    + "Build on the pin, which needs nothing on your PATH:\n"
+    + "    bun run container:run -- bun run build\n"
+    + "or put the pinned Bun first on your own PATH:\n"
     + `    curl -fsSL https://bun.sh/install | bash -s bun-v${pinned}`
   )
 }

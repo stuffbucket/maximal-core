@@ -14,6 +14,8 @@ import {
   prepack,
   realRunner,
 } from "./prepack"
+import { BUILD_COMMAND, OUT_DIR as BUILD_OUT_DIR } from "./build-bundle"
+import { MAIN_BUILD_ARGV } from "./check-bindings"
 
 // Offline and deterministic: the runner is injected, so nothing here invokes a
 // bundler or writes to dist/. The parity guards are the deliberate exception —
@@ -80,10 +82,14 @@ describe("parity with the real package.json", () => {
     expect(readScripts()["release:preflight"]).toBe(`bun scripts/ops/prepack.ts ${CHECK_FLAG}`)
   })
 
-  // The published build must be THE build. If `build` grows a flag and this
-  // does not, the tarball ships a bundle no other gate has ever looked at.
-  test("the bundle build is argv-identical to `bun run build`", () => {
-    expect(readScripts().build).toBe(`bun ${mainBuildArgv().join(" ")}`)
+  // The published build must be THE build. Both `prepack` and `bun run build`
+  // now bundle with `MAIN_BUILD_ARGV` + `--outdir` — `prepack` through
+  // `mainBuildArgv`, `build` through `check-bindings.ts`'s `realMainBuild` — so
+  // the argv cannot diverge textually any more. What still can is the OUT DIR,
+  // and a tarball built into the wrong one ships a bundle no gate has seen.
+  test("the bundle build writes the `dist` `bun run build` writes", () => {
+    expect(readScripts().build).toBe(BUILD_COMMAND)
+    expect(mainBuildArgv()).toEqual([...MAIN_BUILD_ARGV, "--outdir", BUILD_OUT_DIR])
   })
 
   test("the outDir is the `dist` that `files` ships", () => {

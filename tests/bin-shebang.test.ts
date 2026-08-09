@@ -34,14 +34,19 @@
  * required `test` job on every PR, which is where a gate on this has to be.
  *
  * The expectation is DERIVED, not recorded: the interpreter comes from the
- * `--target=` in `package.json`'s own `build` script. Retarget the build and
- * this follows, rather than going stale and asserting the old runtime.
+ * `--target=` the bundler is actually invoked with. That used to be readable
+ * straight out of `package.json`'s `build` script; `build` is now
+ * `scripts/ops/build-bundle.ts` (an inline `bun build` could not carry the pin
+ * guard), so the argv it bundles with — `MAIN_BUILD_ARGV` — is the source of
+ * truth. Retarget the build and this follows, rather than going stale and
+ * asserting the old runtime.
  */
 import { describe, expect, it } from "bun:test"
 import fs from "node:fs"
 import { fileURLToPath } from "node:url"
 
 import packageJson from "../package.json" with { type: "json" }
+import { MAIN_BUILD_ARGV } from "../scripts/ops/check-bindings"
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url))
 
@@ -63,8 +68,8 @@ const readFirstLine = (file: string): string =>
  * names none, which is itself worth failing on: a bundle whose target is
  * implicit has no shebang this test could justify.
  */
-export function buildTarget(buildScript: string): string | undefined {
-  const flag = buildScript.split(/\s+/u).find((a) => a.startsWith("--target="))
+export function buildTarget(argv: ReadonlyArray<string>): string | undefined {
+  const flag = argv.find((a) => a.startsWith("--target="))
   return flag?.slice("--target=".length)
 }
 
@@ -74,14 +79,14 @@ export function shebangFor(target: string): string {
 }
 
 describe("the shipped bin declares the runtime that can run it", () => {
-  it("package.json's build names an explicit --target", () => {
-    expect(buildTarget(packageJson.scripts.build)).toBe("bun")
+  it("the bundler is invoked with an explicit --target", () => {
+    expect(buildTarget(MAIN_BUILD_ARGV)).toBe("bun")
   })
 
   // The source of the shebang. `bun build` preserves the entry's first line
   // verbatim, so this is where the artifact's shebang is actually decided.
   it("src/main.ts asks for the build's target, not another runtime", () => {
-    const target = buildTarget(packageJson.scripts.build) ?? ""
+    const target = buildTarget(MAIN_BUILD_ARGV) ?? ""
     expect(readFirstLine("src/main.ts")).toBe(shebangFor(target))
   })
 
@@ -89,7 +94,7 @@ describe("the shipped bin declares the runtime that can run it", () => {
   // survives the bundler. `dist/main.js` is force-tracked, so this reads what
   // a consumer receives rather than what a rebuild would produce.
   it("the committed dist/main.js carries it too", () => {
-    const target = buildTarget(packageJson.scripts.build) ?? ""
+    const target = buildTarget(MAIN_BUILD_ARGV) ?? ""
     expect(readFirstLine("dist/main.js")).toBe(shebangFor(target))
   })
 

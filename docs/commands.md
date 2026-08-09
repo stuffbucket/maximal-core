@@ -5,7 +5,7 @@ Every script below is defined in `package.json`.
 ```sh
 bun install          # Install dependencies
 bun run dev          # Dev mode with watch
-bun run build        # Bundle src/main.ts to dist/ (bun build --target=bun)
+bun run build        # Bundle src/main.ts to dist/ (refuses off `.bun-version`)
 bun run build:lib    # Library build of the consumer exports (tsup -> dist/lib)
 bun run start        # Production start (NODE_ENV=production)
 
