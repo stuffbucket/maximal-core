@@ -788,6 +788,13 @@ async function attemptMint(): Promise<RearmOutcome> {
     return "online"
   } catch (err) {
     if (err instanceof CopilotAuthFatalError) return "auth_fatal"
+    // Log before classifying as "offline". Every other credential-failure path
+    // records something in auth-*.log, but this one is reached from
+    // forwardAuthFatal on a completion 401/403 — the exact moment an operator
+    // needs a trace — and setupCopilotToken's own non-transport branch stays
+    // quiet on the assumption that its caller logs a generic line. This caller
+    // did not, so a mint that fails here left no entry anywhere.
+    log.warn("Copilot token re-mint failed; treating as offline:", err)
     return "offline"
   }
 }

@@ -837,6 +837,27 @@ describe("rearmCopilotAuth — re-mint discriminator", () => {
     expect(outcome).toBe("offline")
   })
 
+  // maximal-core#9: the "offline" classification used to return from a bare
+  // catch, so a re-mint that failed here left no entry in auth-*.log — and this
+  // is the path forwardError takes on a completion 401/403, i.e. exactly when an
+  // operator goes looking.
+  test("a transient mint failure is logged before it is called 'offline'", async () => {
+    state.githubToken = "ghu_valid"
+    harness.setupCopilotTokenImpl = () =>
+      Promise.reject(new Error("network down"))
+
+    const warn = spyConsola("warn")
+    try {
+      expect(await rearmCopilotAuth()).toBe("offline")
+    } finally {
+      warn.restore()
+    }
+
+    expect(
+      warn.calls.some((args) => String(args[0]).includes("re-mint failed")),
+    ).toBe(true)
+  })
+
   test("gho_ token short-circuits to 'auth_fatal' without a mint round-trip", async () => {
     state.githubToken = "gho_used_directly"
     const outcome = await rearmCopilotAuth()

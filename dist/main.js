@@ -32002,6 +32002,7 @@ async function attemptMint() {
   } catch (err) {
     if (err instanceof CopilotAuthFatalError)
       return "auth_fatal";
+    log2.warn("Copilot token re-mint failed; treating as offline:", err);
     return "offline";
   }
 }
