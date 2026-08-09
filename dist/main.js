@@ -16975,6 +16975,7 @@ ${summary}`);
 });
 
 // src/lib/platform/paths.ts
+import nodeFs from "fs";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
@@ -16989,6 +16990,33 @@ function resolveAppDir(env2) {
   }
   return path.join(env2.homedir, ".local", "share", "maximal");
 }
+function resolveHomePolicy(raw) {
+  const value = raw?.trim().toLowerCase();
+  if (!value)
+    return "create";
+  if (value === "create" || value === "require")
+    return value;
+  throw new Error(`${HOME_POLICY_ENV} is set to "${raw}", which is not a policy. Use` + ' "create" (the default \u2014 maximal creates its data home as needed) or' + ' "require" (the home must already exist; maximal will not create it' + " or fall back to the default).");
+}
+function requireExistingHome(dir) {
+  const shown = `"${dir}"`;
+  const because = `${HOME_POLICY_ENV}=require`;
+  let real;
+  try {
+    real = nodeFs.realpathSync(dir);
+  } catch {
+    throw new Error(`The maximal data home ${shown} does not exist, and ${because} means` + " maximal must not create it or fall back to the default home \u2014 an" + " explicit home is how a host guarantees isolation, so a missing one" + " is an error, not a hint. Create the directory first, or drop" + ` ${HOME_POLICY_ENV} to let maximal create it.`);
+  }
+  if (!nodeFs.statSync(real).isDirectory()) {
+    throw new Error(`The maximal data home ${shown} is not a directory, and ${because}` + " requires an existing directory maximal can write to.");
+  }
+  try {
+    nodeFs.accessSync(real, nodeFs.constants.W_OK | nodeFs.constants.X_OK);
+  } catch {
+    throw new Error(`The maximal data home ${shown} (resolved to "${real}") cannot be written` + ` to by this process, and ${because} requires a writable home. Fix` + " its permissions, or point COPILOT_API_HOME somewhere writable.");
+  }
+  return real;
+}
 async function ensurePaths() {
   await fs.mkdir(path.join(PATHS.APP_DIR, AUTH_APP), { recursive: true });
   await ensureFile(PATHS.GITHUB_TOKEN_PATH);
@@ -17002,16 +17030,20 @@ async function ensureFile(filePath) {
     await fs.chmod(filePath, 384);
   }
 }
-var AUTH_APP, ENTERPRISE_PREFIX, APP_DIR, GITHUB_TOKEN_PATH, ACCOUNTS_PATH, CONFIG_PATH, PATHS;
+var AUTH_APP, ENTERPRISE_PREFIX, HOME_POLICY_ENV = "COPILOT_API_HOME_POLICY", HOME_OVERRIDE, APP_DIR, GITHUB_TOKEN_PATH, ACCOUNTS_PATH, CONFIG_PATH, PATHS;
 var init_paths = __esm(() => {
   AUTH_APP = process.env.COPILOT_API_OAUTH_APP?.trim() || "";
   ENTERPRISE_PREFIX = process.env.COPILOT_API_ENTERPRISE_URL ? "ent_" : "";
-  APP_DIR = resolveAppDir({
-    platform: process.platform,
-    homedir: os.homedir(),
-    copilotApiHome: process.env.COPILOT_API_HOME,
-    appData: process.env.APPDATA
-  });
+  HOME_OVERRIDE = process.env.COPILOT_API_HOME?.trim();
+  APP_DIR = (() => {
+    const resolved = resolveAppDir({
+      platform: process.platform,
+      homedir: os.homedir(),
+      copilotApiHome: HOME_OVERRIDE,
+      appData: process.env.APPDATA
+    });
+    return resolveHomePolicy(process.env[HOME_POLICY_ENV]) === "require" ? requireExistingHome(resolved) : resolved;
+  })();
   GITHUB_TOKEN_PATH = path.join(APP_DIR, AUTH_APP, ENTERPRISE_PREFIX + "github_token");
   ACCOUNTS_PATH = path.join(APP_DIR, AUTH_APP, ENTERPRISE_PREFIX + "accounts.json");
   CONFIG_PATH = path.join(APP_DIR, "config.json");
@@ -73475,7 +73507,7 @@ var cliArgs = {
   },
   "api-home": {
     type: "string",
-    description: "Path to the API home directory."
+    description: "Path to the API home directory. Created if missing, unless" + " COPILOT_API_HOME_POLICY=require, which makes a missing one an error."
   },
   "oauth-app": {
     type: "string",
