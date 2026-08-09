@@ -94,7 +94,7 @@ owned by a user the host cannot delete.
 ## In CI
 
 `ci.yml`'s `test` job runs in this image
-(`ghcr.io/stuffbucket/maximal-core/ci:latest`, built and pushed by
+(`ghcr.io/stuffbucket/maximal-core/ci:bun-<version>`, built and pushed by
 [`publish-ci-image.yml`](../../.github/workflows/publish-ci-image.yml)), so it no
 longer installs Bun or Node per run.
 
@@ -112,18 +112,33 @@ therefore landed on its own first (maximal-core#98, via maximal-core#91); a
 `workflow_dispatch` cannot substitute, because a workflow is only dispatchable
 once it is on the default branch.
 
-It names the **floating** `latest` tag rather than `bun-<version>`, for one
-mechanical reason: `jobs.<id>.container.image` is resolved before any step of
-the job runs, so it cannot read a step output. Computing the tag from
-`.bun-version` would need a preceding job and a `needs:` edge — and if that job
-failed, `test` would never run, so the *required* `test` status check would
-never report and the PR would wedge with no way to push a fix past it. That is
-worse than the drift it prevents. So the job's first step asserts
-`bun --version` equals `.bun-version` and fails loudly if it does not, which is
-what makes the float safe.
+It names the per-pin tag — the same one `scripts/dev/container.ts` builds — as a
+**committed literal**, not a floating `latest` and not a computed value.
+`jobs.<id>.container.image` is resolved before any step of the job runs, so it
+cannot read a step output: computing the tag from `.bun-version` would need a
+preceding job and a `needs:` edge, and if that job failed, `test` would never
+run, so the *required* `test` status check would never report and the PR would
+wedge with no way to push a fix past it. A literal in the tree needs none of
+that.
+
+`latest` was the first answer to that constraint, and it cost more than the
+drift it avoided: a floating tag is shared mutable state across every open PR,
+so republishing it from a bump branch flipped the image under everyone else and
+took every other PR red at the `Toolchain matches the pin` step. A
+`.bun-version` bump was therefore mutually exclusive with every in-flight PR
+(maximal-core#126). `latest` is now published only on a push to `main` and
+nothing resolves it.
+
+The literal is the one place a version string is duplicated, so it gets a gate
+on each side: [`scripts/ops/check-ci-image.test.ts`](../../scripts/ops/check-ci-image.test.ts)
+fails offline when the tag and `.bun-version` disagree, and the job's first step
+still asserts `bun --version` equals `.bun-version` — which is what catches an
+image whose *contents* disagree with its tag, something no offline check can
+see.
 
 The consequence is an ordering rule when the pin moves: publish the image, then
-open the bump PR. It is written down in
+open the bump PR. Missing it now fails at container creation (`manifest
+unknown`) rather than at the parity step. It is written down in
 [`bun-version-policy.md`](../bun-version-policy.md).
 
 The job also runs `--user 1001:1001` (the `runner` uid), not root — see the

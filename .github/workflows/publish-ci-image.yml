@@ -2,29 +2,41 @@
 # in. The image itself, and why it exists, are documented at
 # `docs/dev/container-toolchain.md`; this file is only its delivery.
 #
-# ## Two tags, and why one of them floats
+# ## Two tags, and which one anything depends on
 #
-# `bun-<version>` is the honest name — it carries the pin, so a stale image is
-# not addressable and the local runner (`scripts/dev/container.ts`) uses only
-# this form.
+# `bun-<version>` is the honest name and the only load-bearing one — it carries
+# the pin, so a stale image is not addressable. `ci.yml`'s `test` job names it
+# (as a committed literal, moved by the bump commit) and so does the local
+# runner, `scripts/dev/container.ts`.
 #
-# `latest` exists solely because `jobs.<id>.container.image` in a workflow
-# CANNOT read a step output: `container` is resolved before any step of the job
-# runs. Computing the tag from `.bun-version` therefore needs a preceding job
-# and a `needs:` edge — and if that job fails, `test` never runs, so the
-# REQUIRED `test` status check never reports and the PR wedges with no way to
-# push a fix past it. That failure mode is strictly worse than the one it would
-# prevent, so `ci.yml` names `latest` and asserts the pin in its first step
-# instead. The parity gate is what keeps the float honest; see the
-# `Toolchain matches the pin` step there.
+# `latest` is a convenience alias now, and it is published ONLY on a push to
+# `main`. It used to be pushed on every trigger including a `workflow_dispatch`
+# from a branch, which made it shared mutable state across every open PR:
+# dispatching from a bump branch flipped the tag under everyone else, and since
+# `ci.yml` resolved `latest` and asserts the image's Bun equals `.bun-version`,
+# that took every OTHER PR red — a bump was mutually exclusive with every
+# in-flight PR (maximal-core#126). Nothing resolves `latest` today, and gating
+# it to `main` means a dispatch cannot reach another branch even if something
+# starts to.
+#
+# The original argument for the float still stands and is NOT reintroduced:
+# `jobs.<id>.container.image` CANNOT read a step output — `container` is
+# resolved before any step of the job runs — so COMPUTING the tag from
+# `.bun-version` would need a preceding job and a `needs:` edge, and if that job
+# failed, `test` would never run, so the REQUIRED `test` status check would never
+# report and the PR would wedge with no way to push a fix past it. That objection
+# is to computing the reference at run time. `ci.yml` names a committed literal
+# instead: no preceding job, no `needs:` edge, no step output, no wedge. The
+# `Toolchain matches the pin` step there stays as the run-time gate.
 #
 # ## Ordering, when the pin moves
 #
-# This workflow runs on a push to `main`, so a PR that bumps `.bun-version` has
-# no republished image to run against and its `test` job fails the parity gate
-# by design — loudly, naming the fix, rather than silently testing on the old
-# Bun. `docs/bun-version-policy.md` carries the ordering step: dispatch this
-# workflow from the bump branch first, then open the PR.
+# This workflow's `push` trigger is on `main`, so a PR that bumps `.bun-version`
+# has no published image for the new pin — and `ci.yml` now asks for it by name,
+# so the `test` job dies at container creation (`manifest unknown`) rather than
+# at the parity step. Dispatch this workflow from the bump branch first, then
+# open the PR; the dispatch publishes `bun-<new>` and touches nothing any other
+# branch resolves. `docs/bun-version-policy.md` carries the step.
 name: publish-ci-image
 
 on:
@@ -58,9 +70,17 @@ jobs:
           set -euo pipefail
           version="$(cat .bun-version)"
           image="ghcr.io/${GITHUB_REPOSITORY,,}/ci"
+          tags="$image:bun-$version"
+          # `latest` ONLY from a push to `main`. A workflow_dispatch runs on a
+          # branch, and moving a shared floating tag from a branch is what made
+          # a .bun-version bump mutually exclusive with every other open PR
+          # (maximal-core#126). The per-pin tag is the one anything resolves.
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            tags="$tags,$image:latest"
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "image=$image" >> "$GITHUB_OUTPUT"
-          echo "tags=$image:bun-$version,$image:latest" >> "$GITHUB_OUTPUT"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v3
         with:
