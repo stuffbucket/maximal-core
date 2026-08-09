@@ -7,7 +7,7 @@ import {
   gitDirMount,
   imageTag,
   locate,
-  pruneEmptyNodeModules,
+  nodeModulesNote,
   readPin,
   runArgs,
   WORKDIR,
@@ -258,61 +258,59 @@ describe("runArgs", () => {
   })
 })
 
-describe("pruneEmptyNodeModules", () => {
+describe("nodeModulesNote", () => {
   // Docker creates the named volume's mount TARGET on the host, so a checkout
   // with no node_modules acquires an empty one the container never writes into
-  // — and Bun then resolves upward past it, which is how a rebuild gets
+  // — and Bun then resolves upward past it, which is how a HOST rebuild gets
   // `../../../node_modules/…` banners. maximal-core#124.
-  it("removes an empty node_modules", () => {
+  //
+  // It is REPORTED, not removed. Removing it was measured to break the very
+  // next container run (see the note's own comment), which is a worse failure
+  // than the residue — so nothing here deletes anything, and these cases pin
+  // that the note fires on exactly the state that warrants it.
+  it("names the empty directory and the one command that fixes it", () => {
     const root = tmpdir()
     fs.mkdirSync(path.join(root, "node_modules"))
-    expect(pruneEmptyNodeModules(root)).toBe(true)
-    expect(fs.existsSync(path.join(root, "node_modules"))).toBe(false)
+    const note = nodeModulesNote(root)
+    expect(note).toContain(path.join(root, "node_modules"))
+    expect(note).toContain("bun install")
+    // Still there — this is a note, not a cleanup.
+    expect(fs.existsSync(path.join(root, "node_modules"))).toBe(true)
   })
 
-  it("never touches an installed one", () => {
+  it("says nothing about an installed one", () => {
     const root = tmpdir()
     fs.mkdirSync(path.join(root, "node_modules", ".bin"), { recursive: true })
-    expect(pruneEmptyNodeModules(root)).toBe(false)
-    expect(fs.existsSync(path.join(root, "node_modules", ".bin"))).toBe(true)
+    expect(nodeModulesNote(root)).toBeUndefined()
   })
 
   // `readdirSync` follows a symlink and answers about its TARGET, so without an
-  // lstat this would consult someone else's directory and then act on the link.
-  it("leaves a symlinked node_modules alone, even one pointing at an empty dir", () => {
+  // lstat a symlinked node_modules pointing at an empty dir would be reported
+  // as this run's residue when it is nothing of the kind.
+  it("says nothing about a symlinked node_modules, even one pointing at an empty dir", () => {
     const root = tmpdir()
     const target = path.join(root, "shared")
     fs.mkdirSync(target)
     fs.symlinkSync(target, path.join(root, "node_modules"))
-    expect(pruneEmptyNodeModules(root)).toBe(false)
-    expect(fs.lstatSync(path.join(root, "node_modules")).isSymbolicLink()).toBe(
-      true,
-    )
-    expect(fs.existsSync(target)).toBe(true)
+    expect(nodeModulesNote(root)).toBeUndefined()
   })
 
-  // Not "this code declines to recurse" — `rmdir(2)` cannot remove a non-empty
-  // directory at all, so a populated tree is unreachable from here.
-  it("is a no-op on a directory holding only an empty subdirectory", () => {
+  it("says nothing about a directory that has anything at all in it", () => {
     const root = tmpdir()
-    fs.mkdirSync(path.join(root, "node_modules", "left-behind"), {
+    fs.mkdirSync(path.join(root, "node_modules", "something"), {
       recursive: true,
     })
-    expect(pruneEmptyNodeModules(root)).toBe(false)
-    expect(fs.existsSync(path.join(root, "node_modules", "left-behind"))).toBe(
-      true,
-    )
+    expect(nodeModulesNote(root)).toBeUndefined()
   })
 
-  it("fails soft on a file, so cleanup can never turn a green run red", () => {
+  it("fails soft on a file, so it can never turn a green run red", () => {
     const root = tmpdir()
     fs.writeFileSync(path.join(root, "node_modules"), "not a directory")
-    expect(pruneEmptyNodeModules(root)).toBe(false)
-    expect(fs.existsSync(path.join(root, "node_modules"))).toBe(true)
+    expect(nodeModulesNote(root)).toBeUndefined()
   })
 
-  it("is a no-op when there is nothing there", () => {
-    expect(pruneEmptyNodeModules(tmpdir())).toBe(false)
+  it("says nothing when there is nothing there", () => {
+    expect(nodeModulesNote(tmpdir())).toBeUndefined()
   })
 })
 

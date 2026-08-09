@@ -33,7 +33,7 @@
  * Exit code: the container's, so this is transparent in a `&&` chain.
  */
 import { spawnSync } from "node:child_process"
-import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync } from "node:fs"
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs"
 import pathModule, { join, posix, resolve } from "node:path"
 
 const REPO_ROOT = resolve(import.meta.dir, "../..")
@@ -262,50 +262,50 @@ export function nodeModulesPath(root: string = REPO_ROOT): string {
  * bind-mounted work tree, and docker creates a mount target that does not
  * exist — on the host, because that is where the bind source lives. So a
  * checkout with no `node_modules` acquires an empty one that the container
- * never writes into, and the host is left worse off than before the run: `bun
- * build` resolves upward to a sibling checkout's `node_modules` and writes its
- * module banner comments relative to THAT root, producing byte-different output
- * for byte-identical sources (measured: 21 banner lines). That is reported as
- * staleness, and following the fix command it prints commits the wrong bytes.
+ * never writes into, and the HOST is left worse off than before the run: Bun
+ * resolves upward past an empty directory, and `bun build` writes its module
+ * banner comments relative to the root it actually resolved. Byte-different
+ * output for byte-identical sources (measured: 21 banner lines).
  *
- * This is the ONE destructive thing this script does to a work tree, so every
- * way it could reach something a developer cares about is closed:
+ * REMOVING IT WAS TRIED, AND IT BREAKS THE NEXT RUN. `rmdir`ing the directory
+ * docker created as the volume's mount target leaves the shared filesystem in a
+ * state where the following `docker run` mounts nothing useful there. Measured,
+ * from a fresh clone with no `node_modules`, three container runs in sequence:
  *
- *   - `lstatSync().isDirectory()` — a symlinked `node_modules` is left alone.
- *     `readdirSync` would follow the link and answer about its TARGET, and
- *     `rmdirSync` would then act on the link; neither is what anyone meant.
- *   - `rmdirSync`, never `rm -r`. It is not merely that this code declines to
- *     recurse: `rmdir(2)` FAILS with ENOTEMPTY on a directory with anything in
- *     it, so a populated tree is unreachable from here at the syscall level,
- *     not merely by convention. The `readdirSync` guard means one is not even
- *     attempted.
- *   - Every failure is swallowed and reported as `false`. The caller ignores
- *     the answer, so a run's exit status is the container's and nothing else —
- *     cleanup cannot turn a green run red.
- *   - The caller only asks when `node_modules` did NOT exist before the run,
- *     so this can only ever remove a directory THIS run caused to appear.
+ *     with the removal      bindings:check ok · bun test 0 pass / 144 errors
+ *                           ("Cannot find package 'consola'") · build "Could
+ *                           not resolve: citty"
+ *     without the removal   bindings:check ok · bun test 1763 pass / 0 fail ·
+ *                           build ok
  *
- * The one window that cannot be closed is a `bun install` started in this same
- * tree while the container was running: it creates `node_modules` and this
- * could remove it between its `mkdir` and its first write. That is acceptable
- * because the loser is a command the developer is watching, whose failure is an
- * ENOENT they can simply re-run — as against the silent, committable wrong
- * bytes it exists to prevent. `rmdirSync` is atomic and empties-only, so even
- * in that race a populated `node_modules` is never at risk.
+ * The packages were in the volume the whole time — a later `ls` from inside the
+ * container listed both. So the cleanup did not merely fail to help, it took
+ * the toolchain out from under the very next command, which is a far worse
+ * failure than the residue it was removing. It is not done.
  *
- * The container itself needs no guard for this: inside it `node_modules` is the
- * named volume, which the bootstrap `bun install`s when it is empty.
+ * WHAT IS DONE INSTEAD IS TO SAY SO. The residue's remaining harm is confined
+ * to HOST-side builds, and #125 already closed the dangerous half of that: the
+ * `node_modules/.bin` probe makes `bindings:check` and `bun run build` report
+ * "could not verify" with `bun install` as the named fix, rather than rebuilding
+ * and calling the result stale. So what is left is a developer meeting that
+ * message later with no idea where the empty directory came from. One line at
+ * the point it appears is the whole fix.
  */
-export function pruneEmptyNodeModules(root: string = REPO_ROOT): boolean {
+export function nodeModulesNote(root: string = REPO_ROOT): string | undefined {
   const dir = nodeModulesPath(root)
   try {
-    if (!lstatSync(dir).isDirectory()) return false
-    if (readdirSync(dir).length > 0) return false
-    rmdirSync(dir)
-    return true
+    if (!lstatSync(dir).isDirectory()) return undefined
+    if (readdirSync(dir).length > 0) return undefined
   } catch {
-    return false
+    return undefined
   }
+  return (
+    `container: docker created an empty ${dir} as the mount target for this\n`
+    + "image's node_modules volume. Nothing in the container reads it, but on the HOST\n"
+    + "Bun will now resolve upward past it, so `bun run build` and `bindings:check`\n"
+    + "will report that they cannot verify anything here until you run:\n"
+    + "    bun install\n"
+  )
 }
 
 function run(
@@ -432,15 +432,17 @@ function runInContainer(tag: string, command: ReadonlyArray<string>, tty: boolea
     return 1
   }
   // Only a `node_modules` that was NOT there beforehand can be this run's
-  // residue, so that is the only one the prune is ever offered. Sampled before
-  // the run for the same reason the prune is empties-only: a directory the
-  // developer already had is never a candidate, whatever is or is not in it.
+  // residue, so that is the only one worth remarking on. Sampled before the run
+  // because afterwards the two cases are indistinguishable.
   const hadNodeModules = existsSync(nodeModulesPath())
   const status = run(
     "docker",
     runArgs(tag, command, { tty, user: hostUser(), mounts: git.mounts }),
   )
-  if (!hadNodeModules) pruneEmptyNodeModules()
+  if (!hadNodeModules) {
+    const note = nodeModulesNote()
+    if (note !== undefined) console.error(note)
+  }
   return status
 }
 

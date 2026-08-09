@@ -95,28 +95,40 @@ not that is refused with a named reason rather than half-mounted.
 **different** problem. That one is a git dir git distrusts; this one was
 genuinely not there.
 
-### The empty `node_modules` a run used to leave behind
+### The empty `node_modules` a run leaves behind
 
 `/work/node_modules` is a named volume mounted over a path *inside* the
 bind-mounted work tree, and docker creates a mount target that does not exist —
 on the host, because that is where the bind source lives. A worktree with no
-`node_modules` therefore acquired an empty one that the container never writes
-into, and was left worse off than before the run: Bun resolves upward past an
-empty directory, and `bun build` writes its module banner comments relative to
-the root it actually resolved. Byte-different output for byte-identical sources
-(measured: 21 banner lines), which `bindings:check` reported as **staleness** —
-and its fix command, run in that worktree, produced exactly those wrong bytes
-and staged them.
+`node_modules` therefore acquires an empty one that the container never writes
+into, and the **host** is left worse off than before the run: Bun resolves
+upward past an empty directory, and `bun build` writes its module banner
+comments relative to the root it actually resolved. Byte-different output for
+byte-identical sources (measured: 21 banner lines).
 
-`container:run` now removes that directory after the run — and only ever that
-one. It is offered the prune solely when `node_modules` did **not** exist before
-the run, so it can only remove something the run itself caused to appear; it
-`lstat`s first, so a symlinked `node_modules` is left alone; it uses `rmdir(2)`,
-which fails outright on a directory with anything in it, so a populated tree is
-unreachable at the syscall level rather than by convention; and every failure is
-swallowed, so cleanup cannot turn a green run red. The container itself needs no
-guard for this: inside it `node_modules` is the named volume, which the
-bootstrap `bun install`s when it is empty.
+**Removing it was tried, and it breaks the next run.** `rmdir`ing the directory
+docker created as the volume's mount target leaves the shared filesystem in a
+state where the following `docker run` mounts nothing useful there. Measured,
+from a fresh clone with no `node_modules`, three container runs in sequence:
+
+| | `bindings:check` | `bun test` | `bun run build` |
+|---|---|---|---|
+| with the removal | ok | 0 pass, 144 errors (`Cannot find package 'consola'`) | `Could not resolve: citty` |
+| without it | ok | 1763 pass, 0 fail | ok |
+
+The packages were in the volume the whole time — a later `ls` from inside the
+container listed both. The cleanup did not merely fail to help, it took the
+toolchain out from under the very next command. So nothing is removed.
+
+What is left is reported instead. #125 already closed the dangerous half: the
+`node_modules/.bin` probe makes `bindings:check` and `bun run build` say "could
+not verify" with `bun install` as the named fix, rather than rebuilding and
+calling the result stale. So the only remaining cost was meeting that message
+later with no idea where the empty directory came from, and `container:run` now
+prints one line naming it at the point it appears.
+
+The container itself needs no guard for any of this: inside it `node_modules` is
+the named volume, which the bootstrap `bun install`s when it is empty.
 
 ## Two decisions that look like overhead and are not
 
