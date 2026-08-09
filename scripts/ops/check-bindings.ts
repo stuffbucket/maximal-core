@@ -540,7 +540,15 @@ export function renderReport(
       "",
     )
     for (const artifact of stale) lines.push(`    ${regenCommand(artifact)}`)
-    lines.push("")
+    lines.push(
+      "",
+      "If you just merged, rebased or ran `gh pr update-branch`: REBUILD. Never",
+      "resolve a conflict in `dist/` by hand or by taking one side — the two",
+      "sides are whole artifacts, and a line-level merge of them corresponds to",
+      "no source tree at all (maximal-core#116). `.gitattributes` marks",
+      "`dist/**` `-merge` so git conflicts rather than splicing them silently.",
+      "",
+    )
   }
 
   if (blocked.length > 0) {
