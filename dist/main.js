@@ -2225,7 +2225,7 @@ var init_dist2 = __esm(() => {
 var HELPER_SUBCOMMAND = "api", LEGACY_HELPER_FLAG = "--apiKeyHelper";
 
 // package.json
-var version = "0.6.1";
+var version = "0.6.2";
 var init_package = () => {};
 
 // src/lib/update/build-info.ts
