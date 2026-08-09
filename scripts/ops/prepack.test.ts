@@ -13,9 +13,10 @@ import {
   pinObjection,
   prepack,
   realRunner,
+  REQUIREMENTS,
 } from "./prepack"
 import { BUILD_COMMAND, OUT_DIR as BUILD_OUT_DIR } from "./build-bundle"
-import { MAIN_BUILD_ARGV } from "./check-bindings"
+import { MAIN_ARTIFACT, MAIN_BUILD_ARGV, needsNodeModules, needsPinnedBun } from "./check-bindings"
 
 // Offline and deterministic: the runner is injected, so nothing here invokes a
 // bundler or writes to dist/. The parity guards are the deliberate exception —
@@ -27,6 +28,15 @@ import { MAIN_BUILD_ARGV } from "./check-bindings"
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..")
 
 const PINNED = "1.3.11"
+
+/**
+ * The environment, always injected — the header's rule applied to `prepack`'s
+ * requirement list. It defaults to the shared one, which objects without an
+ * installed `node_modules`, and `check:ops` runs without one. The default list
+ * itself is asserted in `REQUIREMENTS` below, and the refusal it produces has
+ * its own test; every other case here is about something else.
+ */
+const NO_REQUIREMENTS = { requirements: [] } as const
 
 interface Invocation {
   command: string
@@ -202,7 +212,7 @@ describe("prepack", () => {
   test("the pinned Bun builds the bundle then the bindings", () => {
     const { calls, run } = recorder()
     const { log } = silent()
-    expect(prepack({ bun: "/pin/bun", running: PINNED, pinned: PINNED, run, log })).toBe(0)
+    expect(prepack({ bun: "/pin/bun", running: PINNED, pinned: PINNED, run, log, ...NO_REQUIREMENTS })).toBe(0)
     expect(calls).toEqual([
       { command: "/pin/bun", args: mainBuildArgv() },
       { command: "/pin/bun", args: [...LIB_BUILD_ARGV] },
@@ -225,7 +235,7 @@ describe("prepack", () => {
     const { calls, run } = recorder()
     const { log } = silent()
     expect(
-      prepack({ checkOnly: true, bun: "/pin/bun", running: PINNED, pinned: PINNED, run, log }),
+      prepack({ checkOnly: true, bun: "/pin/bun", running: PINNED, pinned: PINNED, run, log, ...NO_REQUIREMENTS }),
     ).toBe(0)
     expect(calls).toEqual([])
   })
@@ -245,7 +255,7 @@ describe("prepack", () => {
   test("the bundler defaults to this process, never a PATH lookup", () => {
     const { calls, run } = recorder()
     const { log } = silent()
-    expect(prepack({ running: PINNED, pinned: PINNED, run, log })).toBe(0)
+    expect(prepack({ running: PINNED, pinned: PINNED, run, log, ...NO_REQUIREMENTS })).toBe(0)
     expect(calls[0]?.command).toBe(process.execPath)
     expect(calls[0]?.command).not.toBe("bun")
   })
@@ -253,14 +263,14 @@ describe("prepack", () => {
   test("a failed bundle build stops before the bindings build, and is not a refusal", () => {
     const { calls, run } = recorder([3])
     const { log } = silent()
-    expect(prepack({ bun: "/pin/bun", running: PINNED, pinned: PINNED, run, log })).toBe(2)
+    expect(prepack({ bun: "/pin/bun", running: PINNED, pinned: PINNED, run, log, ...NO_REQUIREMENTS })).toBe(2)
     expect(calls).toHaveLength(1)
   })
 
   test("a failed bindings build is fatal too", () => {
     const { calls, run } = recorder([0, 1])
     const { log } = silent()
-    expect(prepack({ bun: "/pin/bun", running: PINNED, pinned: PINNED, run, log })).toBe(2)
+    expect(prepack({ bun: "/pin/bun", running: PINNED, pinned: PINNED, run, log, ...NO_REQUIREMENTS })).toBe(2)
     expect(calls).toHaveLength(2)
   })
 
@@ -270,7 +280,7 @@ describe("prepack", () => {
     // A real directory with no .bun-version in it, so the real read throws.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "maximal-prepack-"))
     try {
-      expect(prepack({ bun: "/pin/bun", running: PINNED, root, run, log })).toBe(2)
+      expect(prepack({ bun: "/pin/bun", running: PINNED, root, run, log, ...NO_REQUIREMENTS })).toBe(2)
     } finally {
       fs.rmSync(root, { recursive: true, force: true })
     }
@@ -284,8 +294,8 @@ describe("prepack", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "maximal-prepack-"))
     try {
       fs.writeFileSync(path.join(root, ".bun-version"), `${PINNED}\n`)
-      expect(prepack({ bun: "/pin/bun", running: PINNED, root, run, log })).toBe(0)
-      expect(prepack({ bun: "/pin/bun", running: "9.9.9", root, run, log })).toBe(1)
+      expect(prepack({ bun: "/pin/bun", running: PINNED, root, run, log, ...NO_REQUIREMENTS })).toBe(0)
+      expect(prepack({ bun: "/pin/bun", running: "9.9.9", root, run, log, ...NO_REQUIREMENTS })).toBe(1)
     } finally {
       fs.rmSync(root, { recursive: true, force: true })
     }
@@ -295,8 +305,55 @@ describe("prepack", () => {
   test("the outDir is overridable, and reaches the bundle build", () => {
     const { calls, run } = recorder()
     const { log } = silent()
-    prepack({ bun: "/pin/bun", running: PINNED, pinned: PINNED, run, log, outDir: "/tmp/x" })
+    prepack({ bun: "/pin/bun", running: PINNED, pinned: PINNED, run, log, outDir: "/tmp/x", ...NO_REQUIREMENTS })
     expect(calls[0]?.args).toEqual(mainBuildArgv("/tmp/x"))
+  })
+
+  // maximal-core#124. `prepack` asserted the pin and NOTHING else, which made
+  // it the one guarded build path `needsNodeModules` never reached — and
+  // `release:prepare` rebuilds `dist/` through here, so a release cut from a
+  // linked worktree with an empty `node_modules` produced a release commit
+  // whose bundle carried `../../../node_modules/…` banners.
+  test("an objecting requirement is refused with nothing built", () => {
+    const { calls, run } = recorder()
+    const { lines, log } = silent()
+    const code = prepack({
+      bun: "/pin/bun",
+      running: PINNED,
+      pinned: PINNED,
+      run,
+      log,
+      requirements: [() => "no installed `node_modules`"],
+    })
+    expect(code).toBe(1)
+    expect(calls).toEqual([])
+    expect(lines.join("\n")).toContain("REFUSING")
+    expect(lines.join("\n")).toContain("no installed `node_modules`")
+  })
+
+  test("--check refuses an objecting requirement too — that is the point of the preflight", () => {
+    const { calls, run } = recorder()
+    const { log } = silent()
+    const code = prepack({
+      checkOnly: true,
+      running: PINNED,
+      pinned: PINNED,
+      run,
+      log,
+      requirements: [() => "nope"],
+    })
+    expect(code).toBe(1)
+    expect(calls).toEqual([])
+  })
+})
+
+describe("REQUIREMENTS", () => {
+  // Subtracted from the shared list rather than restated, so a requirement
+  // added to `MAIN_ARTIFACT` reaches the published tarball for free.
+  test("is the shared list, minus the pin `pinObjection` already covers", () => {
+    expect(REQUIREMENTS).toContain(needsNodeModules)
+    expect(REQUIREMENTS).not.toContain(needsPinnedBun)
+    expect([...REQUIREMENTS, needsPinnedBun].sort()).toEqual([...MAIN_ARTIFACT.requires].sort())
   })
 })
 
@@ -304,7 +361,14 @@ describe("main", () => {
   const injected = (argv: Array<string>): Array<Invocation> => {
     const { calls, run } = recorder()
     const { log } = silent()
-    main(argv, { bun: "/pin/bun", running: PINNED, pinned: PINNED, run, log })
+    main(argv, {
+      bun: "/pin/bun",
+      running: PINNED,
+      pinned: PINNED,
+      run,
+      log,
+      ...NO_REQUIREMENTS,
+    })
     return calls
   }
 
