@@ -17,6 +17,7 @@ import { cacheModels } from "./lib/platform/utils"
 import { getModelsLoadedAtMs, state } from "./lib/runtime-state/state"
 import { buildStatus } from "./lib/runtime-state/status"
 import { BUILD_VERSION } from "./lib/update/build-info"
+import { requireSupportedBuild } from "./lib/update/version-gate"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { controlRoutes } from "./routes/control/route"
 import { debugRoutes } from "./routes/debug/route"
@@ -181,21 +182,43 @@ publicApp.route("/_internal", internalRoutes)
 // route-bound OpenAPI document at `/openapi.json`. See routes/product-api.ts.
 publicApp.route("/", productApiRoutes)
 
-// Gate every upstream-touching route on the presence of a GitHub token.
-// When the engine boots without one, the HTTP server still listens (so a
-// supervisor can drive sign-in over `/control`, and `maximal auth` can run
-// alongside) but the proxy endpoints 401 with `not_authenticated` instead of
-// crashing or firing the device-code flow.
-publicApp.use("/chat/completions", requireGithubAuth)
-publicApp.use("/chat/completions/*", requireGithubAuth)
-publicApp.use("/models", requireGithubAuth)
-publicApp.use("/models/*", requireGithubAuth)
-publicApp.use("/embeddings", requireGithubAuth)
-publicApp.use("/embeddings/*", requireGithubAuth)
-publicApp.use("/responses", requireGithubAuth)
-publicApp.use("/responses/*", requireGithubAuth)
-publicApp.use("/v1/*", requireGithubAuth)
-publicApp.use("/:provider/v1/*", requireGithubAuth)
+/**
+ * The upstream-touching route set — everything that forwards to GitHub Copilot.
+ *
+ * Listed once because two middlewares gate exactly this set and must never
+ * drift apart: `requireSupportedBuild` (is this build still allowed to proxy?)
+ * and `requireGithubAuth` (do we hold a credential to proxy with?). Order is
+ * deliberate — a retired build gets the force-upgrade error even when it is
+ * also signed out, because "sign in" is not the actionable remedy there.
+ *
+ * Nothing outside this list is gated: `/`, `/status`, `/setup-status`,
+ * `/openapi.json`, `/usage`, `/token-usage`, `/_internal`, and the entire
+ * control listener stay reachable, so a blocked user can still see why and
+ * still drive an upgrade.
+ */
+const UPSTREAM_ROUTES = [
+  "/chat/completions",
+  "/chat/completions/*",
+  "/models",
+  "/models/*",
+  "/embeddings",
+  "/embeddings/*",
+  "/responses",
+  "/responses/*",
+  "/v1/*",
+  "/:provider/v1/*",
+]
+
+for (const path of UPSTREAM_ROUTES) {
+  // Force-upgrade lever (#7). Fail-open and synchronous — see version-gate.ts.
+  publicApp.use(path, requireSupportedBuild)
+  // Gate on the presence of a GitHub token. When the engine boots without one,
+  // the HTTP server still listens (so a supervisor can drive sign-in over
+  // `/control`, and `maximal auth` can run alongside) but the proxy endpoints
+  // 401 with `not_authenticated` instead of crashing or firing the device-code
+  // flow.
+  publicApp.use(path, requireGithubAuth)
+}
 
 publicApp.route("/chat/completions", completionRoutes)
 publicApp.route("/models", modelRoutes)

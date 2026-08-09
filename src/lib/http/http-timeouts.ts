@@ -22,3 +22,22 @@ export const GITHUB_API_TIMEOUT_MS = 15_000
 /** One device-code poll attempt. The overall flow is also bounded by the
  *  device code's own expiry (see pollAccessToken's deadline check). */
 export const DEVICE_POLL_TIMEOUT_MS = 15_000
+
+/**
+ * The update manifest fetch (`src/lib/update/update-check.ts`).
+ *
+ * Deliberately tighter than {@link GITHUB_API_TIMEOUT_MS}, which it used to
+ * borrow. Two reasons, and the second is why maximal-core#7 specifies 2s:
+ *
+ *   - It is not a GitHub API call. It is a ~1 KB static object on a Fastly-
+ *     backed CDN, so 15s only ever buys a hung socket more time to hang.
+ *   - The same fetch now feeds the minimum-supported-version floor. Nothing on
+ *     the request path awaits it (the gate reads the cache synchronously), but
+ *     a short ceiling keeps a stalled refresh from occupying the single-flight
+ *     slot — and therefore delaying the floor becoming known — for a quarter of
+ *     a minute.
+ *
+ * The cost is that a very slow link may never resolve an update check; that is
+ * acceptable for a best-effort, 6h-cached, fail-open mechanism.
+ */
+export const UPDATE_MANIFEST_TIMEOUT_MS = 2_000

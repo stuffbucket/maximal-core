@@ -60,9 +60,26 @@ Auth exemptions the middleware grants:
 - **Loopback-only paths:** `/usage`, `/token-usage`, `/token-usage/events`, `/_internal/shutdown` — same-machine callers skip the API-key dance; remote callers still need a key.
 
 Upstream-touching routes (`/chat/completions`, `/models`, `/embeddings`,
-`/responses`, `/v1/*`, `/:provider/v1/*`) are additionally gated on
-`requireGithubAuth`: without a GitHub token the server still listens but these
-answer `401 not_authenticated` instead of crashing.
+`/responses`, `/v1/*`, `/:provider/v1/*`) carry two additional gates, in this
+order:
+
+1. `requireSupportedBuild` (`src/lib/update/version-gate.ts`, maximal-core#7) —
+   the force-upgrade lever. When the release manifest's channel declares a
+   `min_supported_version` above the running build, these routes answer `426`
+   with `error.type: "build_retired"`. The floor is read **synchronously** off
+   the update-check cache (`checkVersionFloor`), so no request ever awaits the
+   network, and **every** unknown — cold cache, timeout, non-200, malformed
+   manifest, no floor declared — fails open. Everything a blocked user needs in
+   order to recover is outside this set by construction: `/status`, `/`,
+   `/setup-status`, `/_internal` and the whole control listener stay reachable.
+   Governed by its own config key, `enforceVersionFloor` (default ON) — not by
+   `checkUpdates`, which keeps its documented meaning of disabling the release
+   ping entirely. Turning both off is what buys zero outbound calls.
+2. `requireGithubAuth` — without a GitHub token the server still listens but
+   these answer `401 not_authenticated` instead of crashing.
+
+Both read the single `UPSTREAM_ROUTES` list in `src/server.ts`, so the two sets
+cannot drift.
 
 Mounted routers: `/_debug`, `/_internal`, `/control`, product-API
 (`/setup-status` + `/openapi.json`), `/chat/completions`, `/models`,
@@ -85,6 +102,123 @@ models use the native Messages API or fall back to Chat Completions.
 - `src/lib/auth/github-token-store.ts` — the GitHub identity store. Multi-account registry (schema v2) at `accounts.json` beside the legacy `github_token`: `{ activeKey, accounts: Record<"login@host", AccountRecord> }`, atomic temp+rename writes. Boot reads the active account; the legacy single-record file is migrated in once (gated, offline→`unknown@host`) and kept as a rollback fallback. The three sign-in producers (device-code, CLI, gh-reuse) all persist a typed `AccountRecord`. The `/control/accounts/switch` and `/control/accounts/remove` actions edit this registry (set active → a reconnect/restart adopts it). Sign-out forgets the active account; Remove forgets a specific one; both touch only maximal's own copy — never `gh`. RMW takes no lock (safe on the single Bun process; see the comment above `addAccountToDefaultRegistry`).
 - `src/lib/auth/secrets.ts` — file-based provider keys at `~/.local/share/maximal/secrets/<name>` (mode 0600). Env wins; file fills in unset values.
 - `src/lib/runtime-state/cache.ts` — `Cache<K,V>` LRU wrapper with hit/miss/eviction metrics. Wrapped instances register globally for `/_debug/state`.
+
+#### Token storage: 0600 file, no OS keyring (maximal-core#6)
+
+The GitHub bearer lives in a `0600` file under the data home (`COPILOT_API_HOME`
+/ `~/.local/share/maximal`) and nowhere else — written temp+rename with
+`{ mode: 0o600 }` so the mode survives the swap, and `ensurePaths` chmods on
+create. **An OS keyring was considered and deliberately not built.** Core is a
+headless sidecar; a keyring would add a native dependency and three per-platform
+code paths (Keychain / libsecret / Windows Credential Manager), plus a headless
+story for CI and Linux runners where no keyring is unlocked — all to defend
+against an attacker who can already read the user's own files *as the user*, at
+which point the process memory and the live proxy port are theirs too. That is
+the same model `gh auth login` ships (see ADR-0001), and the repo's documented
+threat model is about the *network* surface (ADR-0021's Origin/CSRF hardening,
+loopback-only control plane), not local same-user file reads. Revisit only if
+core ever runs under an account the user does not control.
+
+The paired invariant is that the bearer never leaves that file: the file sink in
+`logger.ts` runs every string through `scrubSecrets` and every object through
+`redactForLog`. `tests/github-token-store.test.ts` asserts the mode;
+`tests/token-never-logged.test.ts` boots the real engine with a seeded token and
+asserts it appears in neither stdout/stderr nor `<home>/logs/`. The one exception
+is `--show-token`, an explicit operator opt-in that prints through bare `consola`
+(stdout only, never the file sink) because the user asked to see it.
+
+### Instance isolation: the data home
+
+The data home is normally maximal's own directory, so maximal looks after it:
+if it is missing, it is created. That stays the default and stays right.
+
+It stops being right when the home is *shared* — when an Electron host
+(`stuffbucket/maximal`) spawns core as a sidecar and passes a home precisely so
+the sidecar cannot adopt or clobber the proxy the user already has running.
+There the caller owns the decision, and a home that is not there means the
+caller got something wrong. So the caller picks, with
+`COPILOT_API_HOME_POLICY` (maximal-core#2):
+
+| `COPILOT_API_HOME_POLICY` | Behaviour |
+|---|---|
+| Unset, blank, or `create` (**default**) | A missing home is created lazily by `ensurePaths`. Unchanged from every prior release. |
+| `require` | The home must **already exist**, be a directory, and be writable. It is canonicalized with `realpathSync`. Anything else throws at startup and the process exits non-zero — never created, never fallen back from. |
+| Anything else | Refused at startup. `required` silently becoming `create` would hand the caller the permissive behaviour while they believed they had the strict one. |
+
+An env var rather than a `config.json` key for two reasons: `config.json` lives
+*inside* the home, so a policy about the home cannot be read from it; and a
+sidecar spawner builds a child env, where this is one line next to
+`COPILOT_API_HOME`.
+
+The policy applies to whichever home resolves, not only to an explicitly-passed
+one. One rule is easier to hold than a conjunction, and the alternative makes
+`require` a silent no-op for a caller who forgot to pass a home — the same class
+of quiet failure the policy exists to remove.
+
+Blank counts as unset for both variables: `COPILOT_API_HOME: ""` is how a
+spawner clears an inherited value (`tests/helpers/spawn-engine.ts`), and that
+has to keep meaning "the default".
+
+`require` is deliberately the **inverse** of the prevailing rule in this repo,
+which is that seeding is best-effort and never fatal (`ensureConfigFile` in
+`src/lib/config/config.ts`, `markSessionRunning` in
+`src/lib/start/session-sentinel.ts`). That rule is correct when the directory is
+ours and there is nobody to ask; it is wrong when a mistyped home that got
+created — or that quietly fell back to the shared default — turns a typo into
+two engines sharing one token store. Making it opt-in is what lets both be true.
+`resolveAppDir` stays pure; the knob is `resolveHomePolicy` and the guard is
+`requireExistingHome`, both applied once in `src/lib/platform/paths.ts`.
+
+Canonicalization belongs to `require` rather than to `create`: there is nothing
+to canonicalize until the directory exists, and a rule that applied only when it
+happened to exist would be worse than either policy.
+
+#### Audit: no shared global state keyed outside the home
+
+Every piece of per-instance state is derived from `PATHS.APP_DIR`, so two
+engines with distinct homes cannot collide regardless of port. The complete
+inventory:
+
+| State | Where | Path |
+|---|---|---|
+| Token file + multi-account registry | `src/lib/platform/paths.ts` | `<home>/<oauth-app>/github_token`, `accounts.json` |
+| `config.json` | `src/lib/config/config.ts` | `<home>/config.json` |
+| Logs | `src/lib/platform/logger.ts` | `<home>/logs` |
+| Provider secrets | `src/lib/auth/secrets.ts` | `<home>/secrets` |
+| Pidfile (what `--replace` reads) | `src/lib/platform/replace-running.ts` | `<home>/maximal.pid` |
+| Crash sentinel | `src/lib/start/session-sentinel.ts` | `<home>/session-running` |
+| Token-usage sqlite | `src/lib/token-usage/store.ts` | `<home>/copilot-api.sqlite` |
+| Update state | `src/lib/update/version.ts` | under `<home>` |
+
+There is **no** fixed lockfile, no well-known unix socket and no OS-wide named
+mutex anywhere in `src/`. Both listeners bind TCP ports supplied by flag or
+config, and the control port defaults to ephemeral. The port dimension and the
+home dimension are independent, which is what lets two instances run at once.
+
+Three deliberate exceptions, none of which is per-instance state:
+
+1. **`COPILOT_API_SQLITE_DB_PATH`** (`src/lib/token-usage/store.ts`) — an opt-in
+   escape hatch that relocates the usage database out of the home. It is the one
+   supported way to make two instances share a file, and setting it in two
+   instances is how you would deliberately break the isolation described above.
+   Leave it unset and the db is `<home>/copilot-api.sqlite`.
+2. **The VS Code device id** (`src/lib/auth/deviceid.ts`) — read from, and
+   created in, VS Code's own location (`HKCU\SOFTWARE\Microsoft\DeveloperTools`
+   on Windows, `Microsoft/DeveloperTools/deviceid` under Application Support or
+   `XDG_CACHE_HOME` otherwise). Sharing is the *requirement*: it identifies the
+   machine to Copilot, so two instances on one machine must report the same
+   value, and relocating it under the home would defeat the point. It is a
+   read-mostly UUID written only when absent, so concurrent boots cannot
+   corrupt each other.
+3. **Client integrations** (`src/apps/`, `src/uninstall.ts`) — Claude Code and
+   Claude Desktop config files, launchd plists and scheduled tasks live in the
+   client's or the OS's directories by definition. These are operator-invoked
+   commands (`maximal app`, `maximal setup`, `maximal uninstall`), not state a
+   running engine touches, so they are outside the concurrency question.
+
+`scripts/dev/e2e-replace.ts` holds the executable form of this: two engines,
+distinct homes, ephemeral ports, running simultaneously — then one is stopped
+and the other is asked again.
 
 ### Two listeners
 

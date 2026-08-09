@@ -15,7 +15,9 @@ const cliArgs = {
   },
   "api-home": {
     type: "string",
-    description: "Path to the API home directory.",
+    description:
+      "Path to the API home directory. Created if missing, unless"
+      + " COPILOT_API_HOME_POLICY=require, which makes a missing one an error.",
   },
   "oauth-app": {
     type: "string",

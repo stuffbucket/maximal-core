@@ -40,6 +40,44 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:prepare vX.Y.Z` inserts the generated block here -->
 
+## [0.6.1](https://github.com/stuffbucket/maximal-core/compare/v0.6.0...v0.6.1) (2026-08-09)
+
+
+### Features
+
+* **auth:** accept a GITHUB_API_BASE override for the GitHub hosts ([#118](https://github.com/stuffbucket/maximal-core/issues/118)) ([2050e45](https://github.com/stuffbucket/maximal-core/commit/2050e4592726021de2d6672512a3b30990dcf717)), closes [#5](https://github.com/stuffbucket/maximal-core/issues/5)
+* **control:** publish the auth/status union and pin the client's protocol version ([#117](https://github.com/stuffbucket/maximal-core/issues/117)) ([ba0b8c1](https://github.com/stuffbucket/maximal-core/commit/ba0b8c17e278e853852592b50e697c7cdb32ead3))
+* **paths:** add a COPILOT_API_HOME_POLICY knob for requiring an existing home ([#121](https://github.com/stuffbucket/maximal-core/issues/121)) ([040d4c1](https://github.com/stuffbucket/maximal-core/commit/040d4c1873cce7f555e4839fde502024c62c9919)), closes [#2](https://github.com/stuffbucket/maximal-core/issues/2)
+* **update:** refuse proxy traffic below the manifest's min_supported_version ([#122](https://github.com/stuffbucket/maximal-core/issues/122)) ([af85ed1](https://github.com/stuffbucket/maximal-core/commit/af85ed1982c8f345add406ffdb3052a78745d112)), closes [#7](https://github.com/stuffbucket/maximal-core/issues/7)
+
+
+### Bug Fixes
+
+* **auth:** log a failed Copilot re-mint instead of silently calling it offline ([#119](https://github.com/stuffbucket/maximal-core/issues/119)) ([76f7834](https://github.com/stuffbucket/maximal-core/commit/76f783490d9bbadcbb6cc89b41031599260328ea))
+* **build:** make the emitted settings-types declaration deterministic ([#123](https://github.com/stuffbucket/maximal-core/issues/123)) ([0bca45f](https://github.com/stuffbucket/maximal-core/commit/0bca45fa65aa7384ca195252ae2e577fc12e636e))
+* **logger:** scrub secrets on the tee logger's console path, not only the file ([#127](https://github.com/stuffbucket/maximal-core/issues/127)) ([ac8e131](https://github.com/stuffbucket/maximal-core/commit/ac8e13146f6b4eb3a6dc830db99f88547dce56d4))
+* **test:** reset the copilot token trio through its owner in token-auth-fatal ([#116](https://github.com/stuffbucket/maximal-core/issues/116)) ([4772eac](https://github.com/stuffbucket/maximal-core/commit/4772eac8f4a92557a8f174ec2d65257caacfd1d5)), closes [#108](https://github.com/stuffbucket/maximal-core/issues/108)
+
+
+### Continuous Integration
+
+* **triage:** remove the triage caller stub that could never resolve ([#114](https://github.com/stuffbucket/maximal-core/issues/114)) ([0856742](https://github.com/stuffbucket/maximal-core/commit/085674277e8bb20ad9bf2fbf938153e835138b56)), closes [#106](https://github.com/stuffbucket/maximal-core/issues/106)
+
+
+### Documentation
+
+* **architecture:** state that agent-run state is out of scope for the control plane ([#115](https://github.com/stuffbucket/maximal-core/issues/115)) ([de61810](https://github.com/stuffbucket/maximal-core/commit/de618101aae2b836337eb2b17af1915d7d8ea8f9)), closes [#109](https://github.com/stuffbucket/maximal-core/issues/109)
+
+
+### Tests
+
+* **auth:** assert a real boot never emits the stored GitHub token ([#120](https://github.com/stuffbucket/maximal-core/issues/120)) ([51ab94b](https://github.com/stuffbucket/maximal-core/commit/51ab94b42ff8e0f5ed8ccf8a3a781d035fcd6fc6)), closes [#6](https://github.com/stuffbucket/maximal-core/issues/6)
+
+
+### Miscellaneous Chores
+
+* **deps:** reconcile external-surface drift (claude-code 2.1.226, opencode 1.18.15) ([#113](https://github.com/stuffbucket/maximal-core/issues/113)) ([dac0e75](https://github.com/stuffbucket/maximal-core/commit/dac0e75736e8166b3d727bb7ca0f19f9220bbe8c)), closes [#1](https://github.com/stuffbucket/maximal-core/issues/1)
+
 ## [0.6.0](https://github.com/stuffbucket/maximal-core/compare/v0.5.1...v0.6.0) (2026-08-09)
 
 

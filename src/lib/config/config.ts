@@ -69,8 +69,31 @@ export interface AppConfig {
    * Whether to check for a newer maximal release and surface it (Settings line
    * + a once-per-day OS notification). Defaults ON; set false to opt out of the
    * GitHub releases ping entirely. See update-check.ts.
+   *
+   * This knob governs the update *notification* and nothing else. The other
+   * reader of the same manifest — the minimum-supported-version floor — has its
+   * own knob, {@link AppConfig.enforceVersionFloor}, so a user who wants zero
+   * outbound calls turns off both and gets exactly that.
    */
   checkUpdates?: boolean
+  /**
+   * Whether the proxy enforces the release manifest's `min_supported_version`
+   * (maximal-core#7): when the running build is below its channel's floor, the
+   * upstream-touching routes refuse with `426 build_retired`. Defaults ON.
+   *
+   * Its own key rather than a reuse of `checkUpdates` because the two are
+   * different promises. `checkUpdates` was documented as disabling the release
+   * ping entirely, and silently narrowing a documented network opt-out is worse
+   * than the coverage it would buy — somebody set that flag to stop outbound
+   * calls and will not read a changelog to find out it stopped meaning that.
+   * Separating them keeps the security control on for everyone who has not
+   * opted out, while leaving an explicit, per-purpose way to opt out.
+   *
+   * Turning it off cannot break the proxy: the floor is fail-open, so `false`
+   * only skips the fetch and the check. See update-check.ts `checkVersionFloor`
+   * and lib/update/version-gate.ts.
+   */
+  enforceVersionFloor?: boolean
   editorVersion?: string
   apps?: AppsConfig
   server?: ServerConfig
@@ -600,4 +623,11 @@ export function isAutoRecoverAccountEnabled(): boolean {
 export function isUpdateCheckEnabled(): boolean {
   const config = getConfig()
   return config.checkUpdates ?? true
+}
+
+/** Whether the proxy enforces the manifest's `min_supported_version` floor.
+ *  Defaults ON — see AppConfig.enforceVersionFloor. */
+export function isVersionFloorEnforced(): boolean {
+  const config = getConfig()
+  return config.enforceVersionFloor ?? true
 }

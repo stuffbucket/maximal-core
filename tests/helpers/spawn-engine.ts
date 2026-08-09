@@ -92,10 +92,13 @@ async function drain(
   }
 }
 
-export async function startEngine(
+/** The one place a test process launches the real `start` command. Both ports
+ *  are ephemeral, always — `tests/spawned-engine-ports.test.ts` exists to keep
+ *  this the only spelling of the spawn, so nothing can reintroduce a guess. */
+function spawnEngineProcess(
   options: StartEngineOptions,
-): Promise<Engine> {
-  const proc = Bun.spawn({
+): Bun.Subprocess<"ignore", "pipe", "pipe"> {
+  return Bun.spawn({
     cmd: [
       process.execPath,
       "run",
@@ -122,6 +125,34 @@ export async function startEngine(
     stdout: "pipe",
     stderr: "pipe",
   })
+}
+
+/**
+ * Spawn `start` and wait for it to DIE, reporting the exit code and everything
+ * it wrote.
+ *
+ * The complement to `startEngine`, for the boots whose subject is a *failure* —
+ * a `COPILOT_API_HOME` that does not exist never reaches a ready-line, so
+ * `startEngine` could only ever report that as a 30-second timeout. Same spawn,
+ * same ephemeral ports, opposite expectation.
+ */
+export async function startEngineExpectingExit(
+  options: StartEngineOptions,
+): Promise<{ exitCode: number; output: string }> {
+  const proc = spawnEngineProcess(options)
+  const lines: Array<string> = []
+  await Promise.all([
+    drain(proc.stdout, lines),
+    drain(proc.stderr, lines),
+    proc.exited,
+  ])
+  return { exitCode: proc.exitCode ?? -1, output: lines.join("\n") }
+}
+
+export async function startEngine(
+  options: StartEngineOptions,
+): Promise<Engine> {
+  const proc = spawnEngineProcess(options)
 
   const logLines: Array<string> = []
   const stop = async (): Promise<void> => {

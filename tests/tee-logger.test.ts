@@ -43,6 +43,32 @@ describe("createTeeLogger — console delegation", () => {
     }
   })
 
+  test("scrubs a token interpolated into a console string arg", () => {
+    // Regression guard for the half-redacted sink: `writeFile` scrubbed, the
+    // console path did not, so an interpolated bearer reached stdout — which a
+    // supervising host captures. Objects stay untouched here on purpose; the
+    // file sink runs its own key-driven redactor over them.
+    // Split so `scripts/secret-scan.sh` does not match a literal bearer here.
+    const body = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+    const token = `ghu_${body}`
+    const calls: Array<Array<unknown>> = []
+    const original = consola.error.bind(consola)
+    consola.error = ((...args: Array<unknown>) => {
+      calls.push(args)
+    }) as typeof consola.error
+    try {
+      const log = createTeeLogger("tee-console-scrub")
+      log.error(`refresh failed for ${token}`)
+    } finally {
+      consola.error = original
+    }
+
+    expect(calls).toHaveLength(1)
+    const printed = String(calls[0]?.[0])
+    expect(printed).not.toContain(token)
+    expect(printed).toContain("refresh failed for")
+  })
+
   test("debug is suppressed unless verbose", () => {
     const calls: Array<Array<unknown>> = []
     const original = consola.debug.bind(consola)

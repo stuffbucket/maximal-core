@@ -51,11 +51,18 @@
  * harness reads the bound port off the ready-line, occupants bind port 0 and
  * announce it. Nothing here hardcodes a port (maximal-core#34).
  *
+ * The "without the flag" block additionally carries the concurrency acceptance
+ * for maximal-core#2: two engines with distinct `COPILOT_API_HOME`s and
+ * ephemeral ports run at the same time, one is stopped, and the other is asked
+ * again. Coexistence alone was never the property worth having — a pidfile,
+ * token store or sqlite handle keyed OUTSIDE the home only shows itself when
+ * one of the two goes away.
+ *
  * Not part of `bun test`: six real boots and a drain poll, several seconds each.
  */
 import type { ChildProcess } from "node:child_process"
 
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -85,6 +92,9 @@ const EVICT_MS = 5000
 const REFUSAL_MS = 30_000
 /** The engine logs its shutdown reason as it drains; the exit races the flush. */
 const LOG_FLUSH_MS = 3000
+/** Budget for an ordinary SIGTERM drain, matching `e2e:lifecycle`'s. Longer
+ *  than `EVICT_MS`, which bounds an eviction that has already happened. */
+const SIGTERM_GRACE_MS = 10_000
 
 /** A key no other check could produce by accident, so finding it on the wire is
  *  unambiguous. CLI-safe charset, per `API_KEY_VALUE_PATTERN`. */
@@ -207,11 +217,23 @@ const report = createReporter(
 // The property that keeps a dev instance from taking a production one's port.
 // A regression here is silent: the second engine still starts, just on top of
 // the first one's corpse.
+//
+// This block doubles as the concurrency acceptance for maximal-core#2: two
+// engines, two DISTINCT `COPILOT_API_HOME`s, ephemeral ports, running at the
+// same time — and then one of them is stopped and the other is asked again.
+// The homes are passed explicitly rather than left to `spawnEngine`'s default
+// temp dir, so "distinct" is a property this harness asserts rather than one it
+// inherits from a helper that could change.
 {
-  const incumbent = track(await startSidecar())
+  const homeA = mkdtempSync(join(tmpdir(), "maximal-e2e-home-a-"))
+  const homeB = mkdtempSync(join(tmpdir(), "maximal-e2e-home-b-"))
+
+  const incumbent = track(await startSidecar({ home: homeA }))
   const port = incumbent.proxyPort
 
-  const successor = track(await startSidecar({ proxyPort: port }))
+  const successor = track(
+    await startSidecar({ proxyPort: port, home: homeB }),
+  )
   report.check(
     "deferred",
     successor.proxyPort !== port && successor.proxyPort > 0,
@@ -242,8 +264,50 @@ const report = createReporter(
     : "no shutdown request reached the incumbent",
   )
 
-  incumbent.child.kill("SIGTERM")
+  // Both engines are up right now. Each one should have seeded ITS OWN home and
+  // nothing in the other's — the mechanical form of "all state is confined
+  // under the home it was given".
+  const wrote = (home: string): Array<string> =>
+    readdirSync(home).filter((entry) => entry !== ".DS_Store")
+  const [wroteA, wroteB] = [wrote(homeA), wrote(homeB)]
+  const isolated =
+    homeA !== homeB
+    && wroteA.includes("config.json")
+    && wroteB.includes("config.json")
+  report.check(
+    "isolated homes",
+    isolated,
+    isolated ?
+      `each engine seeded only its own home — ${homeA} has [${wroteA.sort().join(" ")}], ${homeB} has [${wroteB.sort().join(" ")}]`
+    : `homes did not come out independent — ${homeA} has [${wroteA.sort().join(" ")}], ${homeB} has [${wroteB.sort().join(" ")}]`,
+  )
+
+  // Stopping one must not disturb the other. This is the assertion the block
+  // was missing: it proved two engines could COEXIST, never that either one
+  // survives the other's exit. A shared pidfile, token store or sqlite handle
+  // outside the home would surface exactly here and nowhere else.
   successor.child.kill("SIGTERM")
+  const successorExit = await waitForExit(successor.child, SIGTERM_GRACE_MS)
+  report.check(
+    "one stopped",
+    successorExit !== null,
+    successorExit ?
+      `successor on :${successor.proxyPort} exited code=${successorExit.code ?? "null"} signal=${successorExit.signal ?? "none"}`
+    : `successor on :${successor.proxyPort} ignored SIGTERM within ${SIGTERM_GRACE_MS}ms — the survivor check below would prove nothing`,
+  )
+
+  const survivor = await awaitIdentity(port, MAXIMAL_IDENTITY)
+  const survivorAlive =
+    incumbent.child.exitCode === null && incumbent.child.signalCode === null
+  report.check(
+    "other healthy",
+    survivorAlive && survivor.body === MAXIMAL_IDENTITY,
+    survivorAlive && survivor.body === MAXIMAL_IDENTITY ?
+      `pid=${incumbent.pid} still answers on :${port} after the other instance was stopped — ${survivor.observed}`
+    : `pid=${incumbent.pid} is code=${incumbent.child.exitCode ?? "null"} signal=${incumbent.child.signalCode ?? "none"} on :${port} — ${survivor.observed}; stopping the OTHER instance took it down with it`,
+  )
+
+  incumbent.child.kill("SIGTERM")
 }
 
 // ── A foreign occupant is never evicted ────────────────────────────────────
