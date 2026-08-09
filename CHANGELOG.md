@@ -40,6 +40,13 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:prepare vX.Y.Z` inserts the generated block here -->
 
+## [0.6.0](https://github.com/stuffbucket/maximal-core/compare/v0.5.1...v0.6.0) (2026-08-09)
+
+
+### Features
+
+* **supervisor:** publish the boot/quit/update markers and a boot-status parser ([#111](https://github.com/stuffbucket/maximal-core/issues/111)) ([8f9eb72](https://github.com/stuffbucket/maximal-core/commit/8f9eb7245e12883f62841b799b440d424af8b7ff)), closes [#110](https://github.com/stuffbucket/maximal-core/issues/110)
+
 ## [0.5.1](https://github.com/stuffbucket/maximal-core/compare/v0.5.0...v0.5.1) (2026-08-07)
 
 
