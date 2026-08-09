@@ -119,7 +119,14 @@ jobs:
                 grep -F '(fail)' "run-${SEED}.log" | head -50
                 echo '```'
                 echo
-                echo "Reproduce: \`bun test --randomize --seed ${SEED}\`"
+                echo "Try: \`bun test --randomize --seed ${SEED}\` — but the seed is"
+                echo "**not portable**. It shuffles a file list that comes from"
+                echo "filesystem enumeration, whose order differs between a runner"
+                echo "and your machine, so the same seed replays a different order."
+                echo "If it does not reproduce, bisect instead: pass the suspect"
+                echo "files explicitly (\`bun test --randomize --seed N a.test.ts"
+                echo "b.test.ts\`). An explicit list is enumeration-independent, so"
+                echo "that repro *is* portable."
                 echo
                 echo "</details>"
               done
