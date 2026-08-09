@@ -4,6 +4,10 @@ import { Hono } from "hono"
 import type { ControlSnapshot } from "~/lib/live/resources"
 
 import { ControlClient } from "~/lib/live/client"
+import {
+  PROTOCOL_VERSION_HEADER,
+  SUPPORTED_PROTOCOL_VERSION,
+} from "~/lib/live/contract"
 import { ControlHub } from "~/lib/live/hub"
 import { createControlRoutes } from "~/routes/control/route"
 
@@ -114,6 +118,70 @@ describe("ControlClient", () => {
       ok: false,
       reason: "no_supervising_shell",
     })
+  })
+})
+
+/**
+ * The version stamp (maximal-core#8).
+ *
+ * The server rejects a request that pins a version it does not speak, and allows
+ * one that pins nothing at all — because `server/discover` is how a client
+ * LEARNS the version, and demanding the header there would be circular. The
+ * client half is this: stamp every request, and omit it on exactly that one
+ * call. A client that stamped discovery too could never talk to a sidecar
+ * speaking a different version well enough to find that out.
+ */
+/** A client that records the headers of every request it makes. */
+function recordingClient(): {
+  client: ControlClient
+  sent: Array<Record<string, string>>
+} {
+  const sent: Array<Record<string, string>> = []
+  const client = new ControlClient({
+    baseUrl: "http://127.0.0.1:1",
+    fetch: (_input, init) => {
+      sent.push({ ...(init?.headers as Record<string, string>) })
+      return Promise.resolve(Response.json({ result: null }))
+    },
+  })
+  return { client, sent }
+}
+
+describe("ControlClient protocol version header", () => {
+  test("every RPC call and read carries the version the server checks", async () => {
+    const { client, sent } = recordingClient()
+
+    await client.call("health")
+    await client.getAuth()
+    await client.quit()
+
+    expect(sent).toHaveLength(3)
+    for (const headers of sent) {
+      expect(headers[PROTOCOL_VERSION_HEADER]).toBe(SUPPORTED_PROTOCOL_VERSION)
+    }
+  })
+
+  test("the version it stamps is one the server accepts", async () => {
+    const hub = snapshotHub({})
+    const { baseUrl, stop } = serve(hub)
+    const client = new ControlClient({ baseUrl })
+    teardowns.push(() => {
+      hub.dispose()
+      stop()
+    })
+
+    // A stamp the server rejects would come back as `unsupported_version`
+    // rather than a result — this is the end-to-end half of the pin.
+    const health = await client.call("health")
+    expect(health).toMatchObject({ ok: true })
+  })
+
+  test("server/discover is sent without it — pinning there would be circular", async () => {
+    const { client, sent } = recordingClient()
+
+    await client.call("server/discover")
+
+    expect(sent[0]).not.toHaveProperty(PROTOCOL_VERSION_HEADER)
   })
 })
 

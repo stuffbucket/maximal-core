@@ -11,6 +11,7 @@
  * type mismatch.
  */
 import type {
+  AuthStatus,
   ControlErrorData,
   ControlErrorReason,
   JsonRpcErrorObject,
@@ -96,6 +97,46 @@ export function retryPolicy(reason: ControlErrorReason): "retry" | "stop" {
     }
   }
 }
+
+// --- auth state -------------------------------------------------------------
+
+/**
+ * Exhaustive handling of every `auth/status` state.
+ *
+ * `auth/status` answers with the ADR-0006 union, so a renderer discriminates on
+ * `state` exactly the way it discriminates on `reason` above. Same `never` sink,
+ * same reason: adding a state to the published union is a breaking change for
+ * any consumer with a total switch, and this makes that a compile error here
+ * rather than a blank panel in the shell.
+ */
+export function authHeadline(status: AuthStatus): string {
+  switch (status.state) {
+    case "unauthenticated": {
+      return "Signed out"
+    }
+    case "device_code_issued": {
+      return `Enter ${status.user_code}`
+    }
+    case "polling": {
+      return `Waiting for ${status.user_code}`
+    }
+    case "authenticated": {
+      return `Connected as ${status.account_login}`
+    }
+    case "error": {
+      return status.error
+    }
+    default: {
+      const exhaustive: never = status
+      return exhaustive
+    }
+  }
+}
+
+// @ts-expect-error `user_code` lives on the device-code variants only — reading
+// it off the union without narrowing must not compile, or a renderer prints
+// `undefined` in the authenticated state.
+export const unnarrowedAuth = (s: AuthStatus): string => s.user_code
 
 // --- error data -------------------------------------------------------------
 const fullErrorData: ControlErrorData = {
