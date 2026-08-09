@@ -1,9 +1,21 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test"
 
 import type { ModelsResponse } from "~/services/copilot/get-models"
 
 import { getConfig, writeConfig } from "~/lib/config/config"
 import { setModels, state } from "~/lib/runtime-state/state"
+import {
+  __resetUpdateCheckDepsForTests,
+  __setUpdateCheckDepsForTests,
+} from "~/lib/update/update-check"
 import { publicApp } from "~/server"
 
 /**
@@ -55,6 +67,22 @@ afterAll(() => {
   writeConfig(prior.config)
   state.githubToken = prior.githubToken
   state.models = prior.models
+})
+
+// `/v1/*` also passes through `requireSupportedBuild` (maximal-core#7), whose
+// synchronous cache read kicks a fire-and-forget manifest refresh when the
+// cache is cold — the real fetch would hit the public CDN. Pin the seam the
+// update-check suite owns so this file stays offline, exactly as
+// tests/live/control-route.test.ts does. An unknown floor fails open, so the
+// gate is transparent here.
+beforeEach(() => {
+  __resetUpdateCheckDepsForTests()
+  __setUpdateCheckDepsForTests({
+    fetch: () => Promise.reject(new Error("offline (cli-client-regression)")),
+  })
+})
+afterEach(() => {
+  __resetUpdateCheckDepsForTests()
 })
 
 describe("no-Origin Bearer client on /v1/* still succeeds (real server)", () => {

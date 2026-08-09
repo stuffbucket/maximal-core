@@ -6,9 +6,22 @@
 
 > **Not dead — this is the schema record for a live parser.** The producer side
 > below (the Astro site, `deploy-pages.yml`) left with the core split, but
-> `parseManifestVersion` in `src/lib/update/update-check.ts` still parses the
+> `parseManifest` in `src/lib/update/update-check.ts` still parses the
 > manifest this document specifies. Moved here from `docs/decisions/` because it
 > is a spec, not a decision record.
+>
+> **Addendum (maximal-core#7): `min_supported_version`.** Each channel entry may
+> carry an optional `min_supported_version` alongside `version` — a bare
+> `x.y.z[-prerelease]`, optionally `v`-prefixed, same validation as `version`.
+> It is the oldest build that channel still serves; a build strictly below it
+> refuses proxy requests with `426 build_retired`
+> (`src/lib/update/version-gate.ts`). Additive and backward compatible in both
+> directions: a manifest without the key means "no floor" (the overwhelmingly
+> common case), and a client that predates the key ignores it. The security
+> property stated below is unchanged and now matters more — the client reads
+> only version *strings* from this document, never a URL, so a tampered manifest
+> can at most misreport a version or set a bogus floor, and the floor's blast
+> radius is bounded by the fact that the whole mechanism fails open.
 
 ## Problem statement
 

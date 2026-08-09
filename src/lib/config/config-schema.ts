@@ -119,6 +119,7 @@ export const AppConfigSchema = z
     tokenUsageRetentionDays: z.number().int().min(0).max(3650).optional(),
     autoRecoverAccount: z.boolean().optional(),
     checkUpdates: z.boolean().optional(),
+    enforceVersionFloor: z.boolean().optional(),
     editorVersion: z.string().optional(),
     apps: z
       .object({

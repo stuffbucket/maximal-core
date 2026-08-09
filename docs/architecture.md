@@ -60,9 +60,26 @@ Auth exemptions the middleware grants:
 - **Loopback-only paths:** `/usage`, `/token-usage`, `/token-usage/events`, `/_internal/shutdown` — same-machine callers skip the API-key dance; remote callers still need a key.
 
 Upstream-touching routes (`/chat/completions`, `/models`, `/embeddings`,
-`/responses`, `/v1/*`, `/:provider/v1/*`) are additionally gated on
-`requireGithubAuth`: without a GitHub token the server still listens but these
-answer `401 not_authenticated` instead of crashing.
+`/responses`, `/v1/*`, `/:provider/v1/*`) carry two additional gates, in this
+order:
+
+1. `requireSupportedBuild` (`src/lib/update/version-gate.ts`, maximal-core#7) —
+   the force-upgrade lever. When the release manifest's channel declares a
+   `min_supported_version` above the running build, these routes answer `426`
+   with `error.type: "build_retired"`. The floor is read **synchronously** off
+   the update-check cache (`checkVersionFloor`), so no request ever awaits the
+   network, and **every** unknown — cold cache, timeout, non-200, malformed
+   manifest, no floor declared — fails open. Everything a blocked user needs in
+   order to recover is outside this set by construction: `/status`, `/`,
+   `/setup-status`, `/_internal` and the whole control listener stay reachable.
+   Governed by its own config key, `enforceVersionFloor` (default ON) — not by
+   `checkUpdates`, which keeps its documented meaning of disabling the release
+   ping entirely. Turning both off is what buys zero outbound calls.
+2. `requireGithubAuth` — without a GitHub token the server still listens but
+   these answer `401 not_authenticated` instead of crashing.
+
+Both read the single `UPSTREAM_ROUTES` list in `src/server.ts`, so the two sets
+cannot drift.
 
 Mounted routers: `/_debug`, `/_internal`, `/control`, product-API
 (`/setup-status` + `/openapi.json`), `/chat/completions`, `/models`,
