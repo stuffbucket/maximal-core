@@ -33,7 +33,10 @@ import {
 import { getConfig } from "~/lib/config/config"
 import { listActiveClients } from "~/lib/http/active-clients"
 import { RpcParamsError } from "~/lib/jsonrpc/errors"
-import { CONTROL_PROTOCOL_VERSION } from "~/lib/live/contract"
+import {
+  PROTOCOL_VERSION_HEADER,
+  SUPPORTED_PROTOCOL_VERSION,
+} from "~/lib/live/contract"
 import {
   buildAccountsList,
   buildAppsList,
@@ -46,16 +49,6 @@ import { emitQuitRequest, emitUpdateRequest } from "~/lib/start/boot-status"
 import { getTokenUsageSummary } from "~/lib/token-usage"
 import { BUILD_VERSION } from "~/lib/update/build-info"
 import { getUpdateStatus } from "~/lib/update/update-check"
-
-/** Header a client mirrors its `protocolVersion` into (maximal-core#8). Named in
- *  the MCP style because ADR-0023 aligns on the stateless *shape*; it is our
- *  version, not MCP's. */
-export const PROTOCOL_VERSION_HEADER = "mcp-protocol-version"
-
-/** The single supported wire version. A client discovers this via
- *  `server/discover` and pins to it; a mismatch is reported legibly rather than
- *  crashing (#8). */
-export const SUPPORTED_PROTOCOL_VERSION = String(CONTROL_PROTOCOL_VERSION)
 
 export interface ControlRpcDeps {
   hub: () => ControlHub<ControlSnapshot>

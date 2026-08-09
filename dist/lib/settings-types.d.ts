@@ -44,10 +44,10 @@ type TokenStatus = z.infer<typeof TokenStatus>;
  */
 declare const CopilotRefreshStatus: z.ZodObject<{
     health: z.ZodEnum<{
+        unknown: "unknown";
         healthy: "healthy";
         refreshing: "refreshing";
         expired: "expired";
-        unknown: "unknown";
     }>;
     token_expires_at: z.ZodNullable<z.ZodString>;
     last_success_at: z.ZodNullable<z.ZodString>;
@@ -110,10 +110,10 @@ declare const DiagnosticsResponse: z.ZodObject<{
     }, z.core.$strip>;
     copilot_refresh: z.ZodOptional<z.ZodObject<{
         health: z.ZodEnum<{
+            unknown: "unknown";
             healthy: "healthy";
             refreshing: "refreshing";
             expired: "expired";
-            unknown: "unknown";
         }>;
         token_expires_at: z.ZodNullable<z.ZodString>;
         last_success_at: z.ZodNullable<z.ZodString>;
