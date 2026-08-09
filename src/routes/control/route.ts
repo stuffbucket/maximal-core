@@ -35,6 +35,7 @@ import { listActiveClients } from "~/lib/http/active-clients"
 import { createRpcHandler } from "~/lib/jsonrpc/dispatch"
 import { controlError } from "~/lib/jsonrpc/errors"
 import { errorResponse } from "~/lib/jsonrpc/message"
+import { SUPPORTED_PROTOCOL_VERSION } from "~/lib/live/contract"
 import { type ControlHub } from "~/lib/live/hub"
 import { AsyncMutex } from "~/lib/live/mutex"
 import {
@@ -52,11 +53,7 @@ import { getUpdateStatus } from "~/lib/update/update-check"
 
 import type { ControlRpcDeps } from "./rpc"
 
-import {
-  createControlRpcMethods,
-  SUPPORTED_PROTOCOL_VERSION,
-  unsupportedVersion,
-} from "./rpc"
+import { createControlRpcMethods, unsupportedVersion } from "./rpc"
 import { registerSettingsEndpoints } from "./settings-endpoints"
 
 type HubAccessor = () => ControlHub<ControlSnapshot>

@@ -12,6 +12,21 @@ import { z } from "zod"
  */
 export const CONTROL_PROTOCOL_VERSION = 2
 
+/** Header a client mirrors its `protocolVersion` into (maximal-core#8). Named in
+ *  the MCP style because ADR-0023 aligns on the stateless *shape*; it is our
+ *  version, not MCP's.
+ *
+ *  It lives here, beside the version it carries, rather than in the route that
+ *  reads it: the shipped `ControlClient` has to stamp the same name the server
+ *  checks, and `~/routes/control/rpc` drags Hono and the whole engine in — which
+ *  the published `dist/lib` bundles must not. */
+export const PROTOCOL_VERSION_HEADER = "mcp-protocol-version"
+
+/** The single supported wire version, in the string form the header carries. A
+ *  client discovers this via `server/discover` and pins to it; a mismatch is
+ *  reported legibly rather than crashing (#8). */
+export const SUPPORTED_PROTOCOL_VERSION = String(CONTROL_PROTOCOL_VERSION)
+
 /** Every topic the control feed can carry. `snapshot` is the connect frame;
  *  `usage`/`boot` are transient signals. */
 export const CONTROL_TOPICS = [

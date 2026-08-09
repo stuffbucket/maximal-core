@@ -113,6 +113,9 @@ declare class ControlClient {
     private readonly baseUrl;
     private readonly controlPath;
     private readonly headers;
+    /** `headers` plus the pinned wire version — what every request but
+     *  `server/discover` is sent with (maximal-core#8). */
+    private readonly versionedHeaders;
     private readonly fetchImpl;
     private readonly reconnectMs;
     private readonly maxReconnectMs;
