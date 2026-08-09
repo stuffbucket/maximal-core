@@ -7,9 +7,19 @@ and at runtime by every CI workflow that needs Bun: `tooling-ci.yml`,
 `ci.yml`'s `windows` job each `cat .bun-version` into `setup-bun`;
 [`publish-ci-image.yml`](../.github/workflows/publish-ci-image.yml) bakes it into
 the toolchain image, and `ci.yml`'s `test` job runs in that image and `cat`s the
-file to assert the two agree. No workflow holds a copy of the version
-literal, so dev/CI drift is not representable — which is the point: drift is
-what got us a 22-test failure on a Bun `latest` regression once.
+file to assert the two agree. No workflow computes Bun from a literal it holds,
+so dev/CI drift is not representable — which is the point: drift is what got us
+a 22-test failure on a Bun `latest` regression once.
+
+**One exception, and it is checked.** `ci.yml`'s `test` job names the toolchain
+image `…/ci:bun-<version>` as a committed literal, because
+`jobs.<id>.container.image` is resolved before any step of the job runs and so
+cannot be computed (see that workflow's comment and
+[`publish-ci-image.yml`](../.github/workflows/publish-ci-image.yml)'s header).
+That literal moves in the bump commit, and
+[`scripts/ops/check-ci-image.test.ts`](../scripts/ops/check-ci-image.test.ts)
+fails — offline, in `bun run check:ops` and in the required `gate` job — when it
+and `.bun-version` disagree.
 
 Bump intentionally — edit `.bun-version`, then regenerate the one committed
 artifact that the version decides:
@@ -18,16 +28,18 @@ artifact that the version decides:
    open regressions affecting our patterns: parallel test loading,
    module-export resolution, `with { type: "file" }` import
    attributes).
-2. Edit `.bun-version`, then build the toolchain image for the new pin:
-   `bun run container:build`. The tag carries the pin, so this cannot reuse the
-   old image — [`docs/dev/container-toolchain.md`](dev/container-toolchain.md).
+2. Edit `.bun-version`, and point `ci.yml`'s `test` job at the new pin's image
+   in the same commit (`container.image: …/ci:bun-<new>`). Then build the
+   toolchain image locally: `bun run container:build`. The tag carries the pin,
+   so this cannot reuse the old image —
+   [`docs/dev/container-toolchain.md`](dev/container-toolchain.md).
 3. Rebuild and stage the committed CLI bundle **on the pin**:
    `bun run container:run -- bun run build && git add -f dist/main.js`. **This
    step is not optional and it is not cosmetic** — see below.
 4. Run the whole suite on the new version:
    `bun run container:run -- bun run check:deep`, then `bun run check:ops` and
    `bun run e2e`.
-5. If green, commit `.bun-version` and `dist/main.js` together.
+5. If green, commit `.bun-version`, `ci.yml` and `dist/main.js` together.
 6. Watch the next CI run — including the `windows` job, which is native rather
    than containerised and is where a Bun bump has broken `bun install`'s
    lifecycle scripts before (maximal-core#38, #90).
@@ -38,14 +50,22 @@ Steps 3 and 4 can be run off the host PATH instead
 the running Bun is not the pin, and the container is the only place that is
 true without arranging anything.
 
-**Ordering, once `ci.yml`'s `test` job runs in the toolchain image:** dispatch
-[`publish-ci-image.yml`](../.github/workflows/publish-ci-image.yml) on your bump
-branch *before* opening the PR. That job
-names the image by a floating `latest` tag (it cannot compute one — see that
-workflow's header), and its first step asserts the image's Bun equals
-`.bun-version`. A bump PR opened against a not-yet-republished image fails that
-gate by design, naming the fix, rather than quietly running the suite on the old
-Bun and reporting `bindings:check` staleness with the wrong cause.
+**Ordering:** push the bump branch, dispatch
+[`publish-ci-image.yml`](../.github/workflows/publish-ci-image.yml) on it, *then*
+open the PR. `ci.yml` asks for `ci:bun-<new>` by name, so until that image
+exists the `test` job dies at container creation (`manifest unknown`) with no
+step run at all — earlier and blunter than the parity gate, and the reason the
+dispatch is a step rather than a courtesy.
+
+**The dispatch no longer touches anyone else** (maximal-core#126). It publishes
+`bun-<new>` only; `latest` is now pushed solely on a push to `main`, and
+nothing resolves it. Until #126 the dispatch moved the floating `latest` tag
+that `ci.yml` resolved on *every* branch, so republishing took every other open
+PR red at the `Toolchain matches the pin` step — a bump was mutually exclusive
+with every in-flight PR, and the queue had to be drained around it. Both halves
+of the mismatch now land on the bump PR: `check:ops` catches the literal and
+`.bun-version` disagreeing before you push, and the run-time assertion catches
+an image whose contents disagree with its tag.
 
 Steps 3-4 used to be the ones that went wrong, because they depended on your
 PATH rather than on anything the repo could assert. Two things now close that:
