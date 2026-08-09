@@ -40,6 +40,13 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:prepare vX.Y.Z` inserts the generated block here -->
 
+## [0.6.2](https://github.com/stuffbucket/maximal-core/compare/v0.6.1...v0.6.2) (2026-08-09)
+
+
+### Miscellaneous Chores
+
+* **toolchain:** pin Bun 1.3.14, digest-pin the CI base image, and refuse off-pin builds ([#125](https://github.com/stuffbucket/maximal-core/issues/125)) ([759509e](https://github.com/stuffbucket/maximal-core/commit/759509e235272e577efe9d20a9127d0c28fc07a7))
+
 ## [0.6.1](https://github.com/stuffbucket/maximal-core/compare/v0.6.0...v0.6.1) (2026-08-09)
 
 
