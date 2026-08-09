@@ -56796,7 +56796,12 @@ var init_settings_types = __esm(() => {
     copilot_token_present: exports_external.boolean()
   });
   CopilotRefreshStatus = exports_external.object({
-    health: exports_external.enum(["healthy", "refreshing", "expired", "unknown"]),
+    health: exports_external.enum({
+      healthy: "healthy",
+      refreshing: "refreshing",
+      expired: "expired",
+      unknown: "unknown"
+    }),
     token_expires_at: exports_external.string().nullable(),
     last_success_at: exports_external.string().nullable(),
     last_failure_at: exports_external.string().nullable(),
