@@ -40,6 +40,14 @@ Two notes on provenance:
 
 <!-- releases below — newest first; `release:prepare vX.Y.Z` inserts the generated block here -->
 
+## [0.6.3](https://github.com/stuffbucket/maximal-core/compare/v0.6.2...v0.6.3) (2026-08-09)
+
+
+### Bug Fixes
+
+* **ci:** name the toolchain image by its per-pin tag, not by latest ([#130](https://github.com/stuffbucket/maximal-core/issues/130)) ([850136d](https://github.com/stuffbucket/maximal-core/commit/850136df496c43f60c3ce3f878077e869a4127e4)), closes [#126](https://github.com/stuffbucket/maximal-core/issues/126)
+* **container:** mount a linked worktree's git dir so bindings:check can actually run ([#131](https://github.com/stuffbucket/maximal-core/issues/131)) ([9e01350](https://github.com/stuffbucket/maximal-core/commit/9e01350c34a5650f518ae2cd82f9120ccf03221b)), closes [#124](https://github.com/stuffbucket/maximal-core/issues/124)
+
 ## [0.6.2](https://github.com/stuffbucket/maximal-core/compare/v0.6.1...v0.6.2) (2026-08-09)
 
 
