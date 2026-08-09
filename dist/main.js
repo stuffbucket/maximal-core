@@ -13478,7 +13478,7 @@ function finalize(ctx, schema) {
     result.$schema = "http://json-schema.org/draft-07/schema#";
   } else if (ctx.target === "draft-04") {
     result.$schema = "http://json-schema.org/draft-04/schema#";
-  } else if (ctx.target === "openapi-3.0") {} else {}
+  } else if (ctx.target === "openapi-3.0") {}
   if (ctx.external?.uri) {
     const id = ctx.external.registry.get(schema)?.id;
     if (!id)
@@ -13739,7 +13739,7 @@ var formatMap, stringProcessor = (schema, ctx, _json, _params) => {
     if (val === undefined) {
       if (ctx.unrepresentable === "throw") {
         throw new Error("Literal `undefined` cannot be represented in JSON Schema");
-      } else {}
+      }
     } else if (typeof val === "bigint") {
       if (ctx.unrepresentable === "throw") {
         throw new Error("BigInt literals cannot be represented in JSON Schema");
@@ -30766,7 +30766,7 @@ var isOpencodeOauthApp = () => {
     return "opencode/" + version4;
   }
   return OPENCODE_VERSION;
-}, OPENCODE_SEMVER = "1.18.14", OPENCODE_VERSION, OPENCODE_LLM_USER_AGENT, COPILOT_VERSION = "0.46.0", EDITOR_PLUGIN_VERSION, USER_AGENT, CLAUDE_AGENT_SEMVER = "2.1.223", CLAUDE_AGENT_SDK_MINOR = "0.3", CLAUDE_AGENT_SDK_SEMVER, CLAUDE_AGENT_USER_AGENT, API_VERSION = "2025-10-01", copilotBaseUrl = (state2) => {
+}, OPENCODE_SEMVER = "1.18.15", OPENCODE_VERSION, OPENCODE_LLM_USER_AGENT, COPILOT_VERSION = "0.46.0", EDITOR_PLUGIN_VERSION, USER_AGENT, CLAUDE_AGENT_SEMVER = "2.1.226", CLAUDE_AGENT_SDK_MINOR = "0.3", CLAUDE_AGENT_SDK_SEMVER, CLAUDE_AGENT_USER_AGENT, API_VERSION = "2025-10-01", copilotBaseUrl = (state2) => {
   const enterpriseDomain = getEnterpriseDomain();
   if (enterpriseDomain) {
     return `https://copilot-api.${enterpriseDomain}`;
