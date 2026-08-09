@@ -17,7 +17,7 @@ import {
 import type { CopilotHost } from "~/lib/auth/auth-types"
 
 import { CopilotAuthFatalError, HTTPError } from "~/lib/errors/error"
-import { state } from "~/lib/runtime-state/state"
+import { clearTokenTrio, state } from "~/lib/runtime-state/state"
 // Bypass Bun's module-mock registry for ~/lib/auth/token. auth-controller.test.ts
 // installs a process-wide mock.module for "~/lib/auth/token" (stubbing
 // setupCopilotToken) so its own tests can observe controller-driven sign-in
@@ -61,8 +61,7 @@ beforeEach(() => {
   harness.getCopilotTokenQueue = []
   harness.markImpl = () => Promise.resolve()
   harness.markCalls = []
-  state.githubToken = undefined
-  state.copilotToken = undefined
+  clearTokenTrio()
 
   __setTokenDepsForTests({
     getCopilotToken: () => {
@@ -83,8 +82,7 @@ beforeEach(() => {
 
 afterEach(() => {
   stopCopilotRefreshLoop()
-  state.githubToken = undefined
-  state.copilotToken = undefined
+  clearTokenTrio()
   state.copilotApiUrl = undefined
 })
 
