@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Unattended install for Windows 11 ARM64 under qemu-system-aarch64 on Apple
+  Silicon. Consumed by winvm.ts, which burns it onto the seed ISO.
+
+  Everything in here was arrived at empirically against a real 25H2 ARM64 ISO.
+  The comments record WHY, because every one of these was a failed install
+  before it was a line of XML.
+
+  ## No <DriverPaths>, on purpose
+
+  UTM's own answer file injects viostor/vioscsi/vioserial at windowsPE. We do
+  not, because we do not need to: the boot disk is NVMe, and Windows 11 ARM64
+  has an in-box NVMe driver (stornvme.sys). UTM's wizard reaches the same
+  conclusion — for aarch64 + Windows it hard-codes an NVMe interface, overriding
+  the virtio default it uses for every other guest
+  (Platform/Shared/VMWizardState.swift).
+
+  This is not just tidiness. A <DriverPaths> entry names a DRIVE LETTER, and
+  WinPE assigns letters by enumeration order across every attached CD. Hard
+  -coding `E:` is a standing bet on device ordering — and UTM's own file loses
+  that bet the moment you attach media in a different order. The drivers we
+  actually want (vioserial for the guest agent, NetKVM for the NIC) are wanted
+  AFTER the install, where a running OS can search for the volume instead of
+  guessing. provision.ps1 does exactly that.
+
+  ## Why the LabConfig bypasses are still here despite a real TPM
+
+  swtpm gives this VM a genuine TPM 2.0 — the firmware log goes from
+  `Tpm2SubmitCommand - Tcg2 - Not Found` to enumerating SHA1/256/384/512 PCR
+  banks — so BypassTPMCheck is strictly redundant. BypassSecureBootCheck is NOT:
+  Homebrew's QEMU ships only `edk2-aarch64-code.fd`, never the
+  `edk2-aarch64-secure-code.fd` that UTM pairs with its TPM, so this firmware
+  cannot present Secure Boot at all. The rest are kept because Setup reports one
+  failure for the whole group; a redundant key costs nothing, a missing one
+  costs a silent stall with no console attached.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+
+      <!--
+        WillWipeDisk is deliberate and destructive. The target is a qcow2 that
+        `winvm.ts init` creates fresh; an install that half-inherits a previous
+        layout is worse than one that refuses to start.
+      -->
+      <DiskConfiguration>
+        <WillShowUI>OnError</WillShowUI>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order><Type>EFI</Type><Size>260</Size>
+            </CreatePartition>
+            <!-- Microsoft Reserved: no filesystem, no letter, required on GPT. -->
+            <CreatePartition wcm:action="add">
+              <Order>2</Order><Type>MSR</Type><Size>128</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order><Type>Primary</Type><Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order><PartitionID>1</PartitionID><Label>System</Label><Format>FAT32</Format>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order><PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order><PartitionID>3</PartitionID><Label>Windows</Label>
+              <Letter>C</Letter><Format>NTFS</Format>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <ImageInstall>
+        <OSImage>
+          <!--
+            BY NAME, not by index. The retail multi-edition ARM64 ISO carries
+            three images — verified by parsing the WIM header's XML resource:
+              1 Windows 11 Home / 2 Home Single Language / 3 Pro
+            Index order is a property of one ISO build. The name is stable.
+          -->
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>Windows 11 Pro</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>
+        </OSImage>
+      </ImageInstall>
+
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>winvm</FullName>
+        <Organization>winvm</Organization>
+        <!--
+          Microsoft's published generic Windows 11 Pro key. It selects the
+          edition and suppresses the key prompt; it does NOT activate. This guest
+          runs as unactivated Windows, which is permitted indefinitely and is the
+          right posture for a disposable fixture.
+        -->
+        <ProductKey>
+          <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+      </UserData>
+    </component>
+  </settings>
+
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <ComputerName>WINVM</ComputerName>
+      <TimeZone>UTC</TimeZone>
+    </component>
+
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <RunSynchronous>
+        <!--
+          OOBE's "let's get you connected" page is otherwise unskippable without
+          a Microsoft account, and this guest has no working NIC until the guest
+          tools land at first logon — so setup would deadlock waiting for a
+          network it cannot have.
+        -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <!--
+          UAC OFF, and this one is load-bearing rather than a convenience.
+          FirstLogonCommands run as the auto-logged-on administrator, but with
+          UAC on they run UNELEVATED: the guest-tools installer then raises a
+          consent dialog that no one is there to answer, and Start-Process
+          reports `The operation was canceled by the user`. Worse, the UAC
+          dialog focuses "No" by default, so anything blindly sending Enter
+          actively DENIES it.
+
+          This also moves the guest closer to CI: GitHub's Windows runners run
+          with admin rights and UAC disabled. Appropriate for a throwaway
+          fixture on a loopback NIC; do not copy this onto a real machine.
+        -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v EnableLUA /t REG_DWORD /d 0 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+
+      <!--
+        NOTE THE TWO SETTINGS THAT ARE NOT HERE: SkipMachineOOBE and
+        SkipUserOOBE. Microsoft deprecated both, and on 25H2 they suppress
+        FirstLogonCommands entirely — the desktop comes up, nothing runs, and
+        there is no error anywhere to tell you why. That cost a full install
+        cycle to find. The Hide*Screen settings below achieve a hands-off OOBE
+        without breaking first-logon.
+      -->
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+      </OOBE>
+
+      <!--
+        A local account, because the point is that this guest never sees a
+        Microsoft account. The password is not a secret: this is a disposable
+        fixture reachable only through QEMU's own sockets, and the credential
+        exists solely so AutoLogon has something to present.
+      -->
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>winvm</Name>
+            <DisplayName>winvm</DisplayName>
+            <Group>Administrators</Group>
+            <Password><Value>winvm</Value><PlainText>true</PlainText></Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+
+      <!--
+        Load-bearing: FirstLogonCommands only run once a user session exists,
+        and nothing is going to type a password into a headless VM.
+      -->
+      <AutoLogon>
+        <Username>winvm</Username>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Password><Value>winvm</Value><PlainText>true</PlainText></Password>
+      </AutoLogon>
+
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>Cmd /c POWERCFG -H OFF</CommandLine>
+          <Description>Disable hibernation</Description>
+        </SynchronousCommand>
+        <!--
+          The provisioning script finds its own volume rather than trusting a
+          drive letter — see provision.ps1.
+        -->
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "foreach ($d in (Get-PSDrive -PSProvider FileSystem).Name) { $p = $d + ':\provision.ps1'; if (Test-Path $p) { &amp; $p; break } }"</CommandLine>
+          <Description>Run winvm provisioning</Description>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+</unattend>

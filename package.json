@@ -95,7 +95,14 @@
     "typecheck": "tsc",
     "typecheck:downstream": "bun downstream/check.ts",
     "typecheck:ops": "tsc -p scripts/ops/tsconfig.json",
-    "watch:drift": "bun scripts/ops/watch-external-drift.ts"
+    "watch:drift": "bun scripts/ops/watch-external-drift.ts",
+    "winvm:doctor": "bun scripts/dev/win11/winvm.ts doctor",
+    "winvm:exec": "bun scripts/dev/win11/winvm.ts exec",
+    "winvm:ls": "bun scripts/dev/win11/winvm.ts ls",
+    "winvm:reset": "bun scripts/dev/win11/winvm.ts reset",
+    "winvm:smoke": "bun scripts/dev/win11/winvm.ts smoke --expect-file .bun-version",
+    "winvm:start": "bun scripts/dev/win11/winvm.ts start",
+    "winvm:stop": "bun scripts/dev/win11/winvm.ts stop"
   },
   "simple-git-hooks": {
     "pre-commit": "bunx lint-staged"
