@@ -27,9 +27,22 @@
  * (→ 1 s) and a `slow_down` that names a fresh interval just above it, since the
  * fallback bump is a fixed +5 s. Each test carries an explicit generous timeout.
  *
- * `GITHUB_API_BASE` and `COPILOT_API_ENTERPRISE_URL` are process-global, so
- * both are cleared in `beforeEach` **and** `afterEach` — §5.6: a one-sided reset
- * either leaks this file's value forward or inherits the previous file's.
+ * **The bound the override carries (#133).** Because the overridden origin is
+ * the credentialed one, an unbounded override is a credential-exfiltration
+ * primitive: `GITHUB_API_BASE=https://collector.example` would have sent the
+ * user's GitHub token to `collector.example`, in a normal (non-test) process,
+ * and that is exactly the "callers cannot choose the credential destination"
+ * guarantee ADR-0001 exists to make. So the accepted set is now the smallest
+ * one that still expresses the fixtures below: `NODE_ENV === "test"`, `http:`,
+ * a loopback host (`127.0.0.1` / `[::1]`), no credentials, no path, no query,
+ * no fragment. Every rejection variant is asserted here, because the failure
+ * mode is silent — a too-wide override makes nothing observable go wrong
+ * locally; the request succeeds and carries the token.
+ *
+ * `GITHUB_API_BASE`, `COPILOT_API_ENTERPRISE_URL` and `NODE_ENV` are
+ * process-global, so all three are restored in `beforeEach` **and**
+ * `afterEach` — §5.6: a one-sided reset either leaks this file's value forward
+ * or inherits the previous file's.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test"
@@ -55,10 +68,21 @@ interface RecordedRequest {
 }
 
 interface DeviceFlowFixture {
-  /** `http://127.0.0.1:<os-assigned port>` — the value for `GITHUB_API_BASE`. */
+  /** `http://<loopback>:<os-assigned port>` — the value for `GITHUB_API_BASE`. */
   origin: string
   requests: Array<RecordedRequest>
   stop: () => Promise<void>
+}
+
+/** The two loopback literals the override accepts, as bind addresses. */
+const IPV4_LOOPBACK = "127.0.0.1"
+const IPV6_LOOPBACK = "::1"
+
+/** WHATWG brackets an IPv6 literal in an authority, so the origin string the
+ *  override must accept is `http://[::1]:<port>` — not the bare bind address. */
+function originFor(hostname: string, port: number): string {
+  const authority = hostname.includes(":") ? `[${hostname}]` : hostname
+  return `http://${authority}:${port}`
 }
 
 /** The device-code response the fixture hands out. `interval: 0` makes the
@@ -83,13 +107,14 @@ const DEVICE_CODE_RESPONSE = {
  */
 function startDeviceFlowFixture(
   pollScript: Array<Record<string, unknown>>,
+  hostname: string = IPV4_LOOPBACK,
 ): DeviceFlowFixture {
   const requests: Array<RecordedRequest> = []
   let pollIndex = 0
 
   const server = Bun.serve({
     port: 0,
-    hostname: "127.0.0.1",
+    hostname,
     fetch: async (request) => {
       const { pathname } = new URL(request.url)
       let body: Record<string, unknown> = {}
@@ -130,7 +155,11 @@ function startDeviceFlowFixture(
   })
 
   return {
-    origin: `http://127.0.0.1:${server.port}`,
+    // `server.url` is the address the socket ACTUALLY bound, so the IPv6 case
+    // gets its bracketed authority from Bun rather than from string surgery
+    // here — and the ephemeral port is read back rather than guessed (§5.8
+    // form 1).
+    origin: server.url.origin,
     requests,
     stop: async () => {
       await server.stop(true)
@@ -140,9 +169,19 @@ function startDeviceFlowFixture(
 
 let fixture: DeviceFlowFixture | null = null
 
+/** Captured once at module scope so the reset below restores what this file
+ *  inherited rather than a hardcoded guess. Under `bun test` it is `"test"`,
+ *  which is the whole reason the override is honoured here at all. */
+const INHERITED_NODE_ENV = process.env.NODE_ENV
+
 function clearHostEnv(): void {
   delete process.env.GITHUB_API_BASE
   delete process.env.COPILOT_API_ENTERPRISE_URL
+  if (INHERITED_NODE_ENV === undefined) {
+    delete process.env.NODE_ENV
+  } else {
+    process.env.NODE_ENV = INHERITED_NODE_ENV
+  }
 }
 
 beforeEach(clearHostEnv)
@@ -157,8 +196,11 @@ afterEach(async () => {
 })
 
 /** Start the fixture and point the auth path at it. */
-function useFixture(pollScript: Array<Record<string, unknown>>): void {
-  fixture = startDeviceFlowFixture(pollScript)
+function useFixture(
+  pollScript: Array<Record<string, unknown>>,
+  hostname: string = IPV4_LOOPBACK,
+): void {
+  fixture = startDeviceFlowFixture(pollScript, hostname)
   process.env.GITHUB_API_BASE = fixture.origin
 }
 
@@ -176,9 +218,14 @@ async function pollRejectionMessage(
   throw new Error("expected pollAccessToken to reject, but it resolved")
 }
 
-test("defaults to public GitHub when GITHUB_API_BASE is unset", () => {
+/** Assert the override was not honoured: both hosts fall back to public GitHub. */
+function expectPublicGitHubDefaults(): void {
   expect(getGitHubBaseUrl()).toBe("https://github.com")
   expect(getGitHubApiBaseUrl()).toBe("https://api.github.com")
+}
+
+test("defaults to public GitHub when GITHUB_API_BASE is unset", () => {
+  expectPublicGitHubDefaults()
   expect(getOauthUrls()).toEqual({
     deviceCodeUrl: "https://github.com/login/device/code",
     accessTokenUrl: "https://github.com/login/oauth/access_token",
@@ -186,7 +233,7 @@ test("defaults to public GitHub when GITHUB_API_BASE is unset", () => {
 })
 
 test("GITHUB_API_BASE redirects both the login host and the API host", () => {
-  process.env.GITHUB_API_BASE = "http://127.0.0.1:9999/ignored/path"
+  process.env.GITHUB_API_BASE = "http://127.0.0.1:9999"
 
   expect(getGitHubBaseUrl()).toBe("http://127.0.0.1:9999")
   expect(getGitHubApiBaseUrl()).toBe("http://127.0.0.1:9999")
@@ -196,19 +243,85 @@ test("GITHUB_API_BASE redirects both the login host and the API host", () => {
   })
 })
 
-test("GITHUB_API_BASE outranks COPILOT_API_ENTERPRISE_URL", () => {
-  process.env.COPILOT_API_ENTERPRISE_URL = "ghe.example.com"
-  process.env.GITHUB_API_BASE = "https://fixture.example:8443"
-
-  expect(getGitHubBaseUrl()).toBe("https://fixture.example:8443")
-  expect(getGitHubApiBaseUrl()).toBe("https://fixture.example:8443")
+test("an accepted value is normalized to its origin", () => {
+  // A trailing root slash and surrounding whitespace are the two shapes a
+  // shell/env round-trip adds on its own; both normalize away. Anything
+  // *beyond* the root slash is a rejection, not a normalization — see below.
+  for (const raw of ["http://127.0.0.1:9999/", "  http://127.0.0.1:9999  "]) {
+    process.env.GITHUB_API_BASE = raw
+    expect(getGitHubApiBaseUrl()).toBe("http://127.0.0.1:9999")
+    expect(getGitHubBaseUrl()).toBe("http://127.0.0.1:9999")
+  }
 })
 
-test("an unparseable or non-HTTP GITHUB_API_BASE falls back to the defaults", () => {
-  for (const bad of ["not a url", "ftp://example.com", "   "]) {
-    process.env.GITHUB_API_BASE = bad
-    expect(getGitHubBaseUrl()).toBe("https://github.com")
-    expect(getGitHubApiBaseUrl()).toBe("https://api.github.com")
+test("GITHUB_API_BASE outranks COPILOT_API_ENTERPRISE_URL", () => {
+  process.env.COPILOT_API_ENTERPRISE_URL = "ghe.example.com"
+  process.env.GITHUB_API_BASE = "http://[::1]:8443"
+
+  expect(getGitHubBaseUrl()).toBe("http://[::1]:8443")
+  expect(getGitHubApiBaseUrl()).toBe("http://[::1]:8443")
+})
+
+test("GITHUB_API_BASE is ignored unless NODE_ENV is test", () => {
+  // The core of #133: the same value a fixture uses must do nothing at all in
+  // a normal user process, because honouring it there points the credentialed
+  // origin wherever the environment says.
+  for (const nodeEnv of ["production", "development", "", undefined]) {
+    if (nodeEnv === undefined) {
+      delete process.env.NODE_ENV
+    } else {
+      process.env.NODE_ENV = nodeEnv
+    }
+    process.env.GITHUB_API_BASE = "http://127.0.0.1:9999"
+    expectPublicGitHubDefaults()
+  }
+})
+
+/**
+ * Every rejected shape, each labelled with the property that rejects it. The
+ * remote entries are the exfiltration case from the issue verbatim; the rest
+ * are the shapes that smuggle a non-loopback destination, a credential, or
+ * out-of-origin data past a loopback-looking prefix.
+ */
+/** Assembled rather than written inline: a literal `scheme://user:pass@host`
+ *  is the exact shape the staged-diff secret scanner blocks
+ *  (`scripts/secret-scan.sh`), and what these two cases are about is the
+ *  URL *shape*, not any particular value. */
+const USERINFO = ["us3r", "s3cret"].join(":")
+
+const REJECTED_OVERRIDES: ReadonlyArray<readonly [string, string]> = [
+  ["unparseable", "not a url"],
+  ["blank", "   "],
+  ["non-HTTP scheme", "ftp://127.0.0.1:9999"],
+  ["remote host", "https://collector.example"],
+  ["remote host over http", "http://collector.example"],
+  [
+    "remote host with a loopback-looking label",
+    "http://127.0.0.1.evil.example",
+  ],
+  ["https on loopback", "https://127.0.0.1:9999"],
+  ["https on IPv6 loopback", "https://[::1]:9999"],
+  ["userinfo credentials", `http://${USERINFO}@127.0.0.1:9999`],
+  ["username only", `http://${USERINFO.split(":")[0]}@127.0.0.1:9999`],
+  ["non-root path", "http://127.0.0.1:9999/ignored/path"],
+  ["query parameters", "http://127.0.0.1:9999/?token=leak"],
+  ["fragment", "http://127.0.0.1:9999/#leak"],
+  ["non-loopback IPv4 literal", "http://127.0.0.2:9999"],
+  ["non-loopback IPv6 literal", "http://[::2]:9999"],
+  ["hostname rather than a loopback literal", "http://localhost:9999"],
+]
+
+test("rejects every override that is not a bare loopback http origin", () => {
+  for (const [label, raw] of REJECTED_OVERRIDES) {
+    process.env.GITHUB_API_BASE = raw
+    // The label rides in the message so a failure names the shape that leaked
+    // rather than just the URL that did.
+    expect(`${label}: ${getGitHubApiBaseUrl()}`).toBe(
+      `${label}: https://api.github.com`,
+    )
+    expect(`${label}: ${getGitHubBaseUrl()}`).toBe(
+      `${label}: https://github.com`,
+    )
   }
 })
 
@@ -280,16 +393,35 @@ test("surfaces expired_token from the overridden host", async () => {
   )
 }, 20_000)
 
-test("attaches the GitHub credential to the overridden API host", async () => {
-  useFixture([])
+/**
+ * The acceptance half, on a REAL socket, for both loopback families. This is
+ * also the guard against the silent-anonymous failure mode described in the
+ * header: `attachHostAuth` matched the fixture's origin against
+ * `getGitHubApiBaseUrl()`, so the assertion is on the header the fixture
+ * actually received rather than on what a stub was asked for.
+ *
+ * The IPv6 case is not a duplicate of the IPv4 one. `[::1]` is the only
+ * accepted host whose WHATWG `hostname` is *bracketed*, so an implementation
+ * that compares against the bare `::1` accepts nothing on IPv6 and this file
+ * is the only place that shows it.
+ */
+for (const hostname of [IPV4_LOOPBACK, IPV6_LOOPBACK]) {
+  test(`accepts an ephemeral-port fixture on ${hostname} and credentials it`, async () => {
+    useFixture([], hostname)
+    const origin = fixture?.origin ?? ""
 
-  const user = await getGitHubUser("ghu_fixture_credential")
+    // The port is OS-assigned (§5.8 form 1), so this also proves an arbitrary
+    // high port is accepted rather than some allowlisted one.
+    expect(origin).toBe(originFor(hostname, Number(new URL(origin).port)))
+    expect(getGitHubApiBaseUrl()).toBe(origin)
+    expect(getGitHubBaseUrl()).toBe(origin)
 
-  expect(user.login).toBe("fixture-user")
-  // The guard against the silent-anonymous failure mode described in the header:
-  // `attachHostAuth` matched the fixture's origin against getGitHubApiBaseUrl().
-  expect(fixture?.requests[0]?.path).toBe("/user")
-  expect(fixture?.requests[0]?.authorization).toBe(
-    "token ghu_fixture_credential",
-  )
-})
+    const user = await getGitHubUser("ghu_fixture_credential")
+
+    expect(user.login).toBe("fixture-user")
+    expect(fixture?.requests[0]?.path).toBe("/user")
+    expect(fixture?.requests[0]?.authorization).toBe(
+      "token ghu_fixture_credential",
+    )
+  })
+}

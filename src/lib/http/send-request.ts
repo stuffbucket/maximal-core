@@ -88,6 +88,12 @@ function attachHostAuth(
     return
   }
   if (isSameOrigin(url, getGitHubApiBaseUrl())) {
+    // The credentialed GitHub origin. It is normally `https://api.github.com`
+    // and is otherwise an operator-configured enterprise host; `GITHUB_API_BASE`
+    // can also move it, but only to an `http:` loopback origin and only under
+    // `NODE_ENV === "test"` (`getGitHubApiBaseOverride`, #133). That bound is
+    // what keeps ADR-0001's guarantee true through this branch: the environment
+    // cannot name a remote destination for this token.
     const token = githubTokenOverride ?? state.githubToken
     // opencode's GitHub OAuth app expects a Bearer token; the standard
     // (VS Code) identity expects the legacy `token <x>` scheme.

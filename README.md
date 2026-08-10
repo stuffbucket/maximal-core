@@ -156,7 +156,7 @@ data home_.
 | App home dir | `--api-home` | `COPILOT_API_HOME` | — | `~/.local/share/maximal` |
 | Data-home policy | — | `COPILOT_API_HOME_POLICY` | — | `create` (or `require`: must already exist) |
 | Enterprise URL | — | `COPILOT_API_ENTERPRISE_URL` | — | unset |
-| GitHub host override | — | `GITHUB_API_BASE` | — | unset |
+| GitHub host override (test-only) | — | `GITHUB_API_BASE` | — | unset |
 | OAuth app ID | — | `COPILOT_API_OAUTH_APP` | — | upstream default |
 | Use Messages API | — | — | `useMessagesApi` | `true` |
 | Use Apply Patch | — | — | `useFunctionApplyPatch` | `true` |
@@ -172,17 +172,33 @@ data home_.
 The full `AppConfig` shape is `src/lib/config/config.ts`; the `start` flags are
 `src/lib/start/cli.ts` (or `maximal start --help`).
 
-`GITHUB_API_BASE` is a full origin (scheme, host, and port — e.g.
-`http://127.0.0.1:8787`) that replaces **both** GitHub hosts at once: the
-login/OAuth host (`https://github.com`, which serves `/login/device/code` and
-`/login/oauth/access_token`) and the API host (`https://api.github.com`, which
-serves `/user` and `/copilot_internal/*`). The device-code sign-in flow spans
-both, so one variable covers both — that is what lets a single local fixture
-server answer the whole auth path for deterministic offline testing. It
-outranks `COPILOT_API_ENTERPRISE_URL`, which takes a bare *domain* and always
-re-prefixes `https://`, and so cannot express a loopback origin. A value that
-is not a parseable `http:`/`https:` URL is ignored; only the origin is used.
-Unset (the default) leaves every host exactly as before.
+`GITHUB_API_BASE` is a **test-only, loopback-only** full origin (scheme, host,
+and port — e.g. `http://127.0.0.1:8787`) that replaces **both** GitHub hosts at
+once: the login/OAuth host (`https://github.com`, which serves
+`/login/device/code` and `/login/oauth/access_token`) and the API host
+(`https://api.github.com`, which serves `/user` and `/copilot_internal/*`). The
+device-code sign-in flow spans both, so one variable covers both — that is what
+lets a single local fixture server answer the whole auth path for deterministic
+offline testing. It outranks `COPILOT_API_ENTERPRISE_URL`, which takes a bare
+*domain* and always re-prefixes `https://`, and so cannot express a loopback
+origin.
+
+Because the overridden origin is also the origin that receives the GitHub
+credential (`send-request.ts`, ADR-0001), the accepted set is deliberately the
+smallest one that still expresses that fixture. A value is honoured **only**
+when all of the following hold; anything else is ignored and the default hosts
+stand:
+
+- the process is running under `NODE_ENV=test` — a normal `maximal start`
+  ignores the variable outright;
+- the scheme is `http:`;
+- the host is a loopback literal, `127.0.0.1` or `[::1]` (not `localhost`);
+- the URL carries no userinfo, no path beyond `/`, no query, and no fragment.
+
+An accepted value is normalized to its origin. So a local fixture on an
+ephemeral port still works, and `GITHUB_API_BASE=https://collector.example`
+cannot redirect your GitHub token to `collector.example`. Unset (the default)
+leaves every host exactly as before.
 
 Secrets follow that order with no exceptions: `readSecret()` in
 `src/lib/auth/secrets.ts` resolves env → file → unset, and the Anthropic key
