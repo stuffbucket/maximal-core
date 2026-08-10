@@ -30731,18 +30731,29 @@ var isOpencodeOauthApp = () => {
     return null;
   const normalized = normalizeDomain(raw);
   return normalized || null;
-}, getGitHubApiBaseOverride = () => {
+}, LOOPBACK_OVERRIDE_HOSTNAMES, getGitHubApiBaseOverride = () => {
+  if (true)
+    return null;
   const raw = (process.env.GITHUB_API_BASE ?? "").trim();
   if (!raw)
     return null;
+  let parsed;
   try {
-    const parsed = new URL(raw);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-      return null;
-    return parsed.origin;
+    parsed = new URL(raw);
   } catch {
     return null;
   }
+  if (parsed.protocol !== "http:")
+    return null;
+  if (!LOOPBACK_OVERRIDE_HOSTNAMES.has(parsed.hostname))
+    return null;
+  if (parsed.username !== "" || parsed.password !== "")
+    return null;
+  if (parsed.pathname !== "/")
+    return null;
+  if (parsed.search !== "" || parsed.hash !== "")
+    return null;
+  return parsed.origin;
 }, getGitHubBaseUrl = () => {
   const override = getGitHubApiBaseOverride();
   if (override)
@@ -30932,6 +30943,10 @@ var init_api_config = __esm(() => {
   init_request_context();
   init_compact();
   init_opencode();
+  LOOPBACK_OVERRIDE_HOSTNAMES = new Set([
+    "127.0.0.1",
+    "[::1]"
+  ]);
   OPENCODE_VERSION = `opencode/${OPENCODE_SEMVER}`;
   OPENCODE_LLM_USER_AGENT = `opencode/${OPENCODE_SEMVER} ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14, opencode/${OPENCODE_SEMVER}`;
   EDITOR_PLUGIN_VERSION = `copilot-chat/${COPILOT_VERSION}`;

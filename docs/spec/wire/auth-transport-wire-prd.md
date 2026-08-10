@@ -233,7 +233,10 @@ device-flow endpoints then sit on the credentialed origin and do receive the
 GitHub token. That is the intended trade: routing the override through
 `getGitHubApiBaseUrl()` is precisely what keeps the origin comparison
 recognising the configured host, so a fixture-pointed auth path stays
-credentialed instead of silently going anonymous. The override is unset in
+credentialed instead of silently going anonymous. It is also why the override
+itself is bounded to a loopback origin under `NODE_ENV=test` (#133) — the
+environment must not be able to name a *remote* credential destination, which
+is the guarantee this whole mechanism exists to make. The override is inert in
 production, so nothing about the default posture changes.
 
 There is **one** `fetch` sink (`dispatch`) and one CodeQL
@@ -306,27 +309,35 @@ must not silently redirect them.
 `getGitHubBaseUrl()` / `getGitHubApiBaseUrl()` (`src/lib/config/api-config.ts`),
 highest precedence first:
 
-1. **`GITHUB_API_BASE`** — a full origin (`http://127.0.0.1:8787`,
-   `https://fixture.example:8443`). It replaces **both** hosts: the login/OAuth
-   host and the API host. One variable covers both because the device-code flow
-   straddles them — `/login/device/code` and `/login/oauth/access_token` are
-   login-host paths, while `/user` and `/copilot_internal/*` are API-host paths
-   — and the override exists so a **single** local fixture can serve the whole
-   auth path deterministically and offline. Modelling a *split* deployment is
-   what `COPILOT_API_ENTERPRISE_URL` is for.
+1. **`GITHUB_API_BASE`** — a **test-only, loopback-only** full origin
+   (`http://127.0.0.1:8787`, `http://[::1]:8787`). It replaces **both** hosts:
+   the login/OAuth host and the API host. One variable covers both because the
+   device-code flow straddles them — `/login/device/code` and
+   `/login/oauth/access_token` are login-host paths, while `/user` and
+   `/copilot_internal/*` are API-host paths — and the override exists so a
+   **single** local fixture can serve the whole auth path deterministically and
+   offline. Modelling a *split* deployment is what `COPILOT_API_ENTERPRISE_URL`
+   is for.
 2. **`COPILOT_API_ENTERPRISE_URL`** — a bare domain, re-prefixed `https://` and
    `https://api.`. It cannot express a loopback origin (no scheme, no port),
    which is why the override is a second variable rather than a reuse.
 3. **Public GitHub** — `https://github.com` / `https://api.github.com`.
 
-`GITHUB_API_BASE` wins because it is the more explicit of the two: a full
-origin, not a domain to be re-prefixed. A value that is not a parseable
-`http:`/`https:` URL is ignored (the defaults stand — a typo must not null out
-the auth path), and only the origin is used; any path, query, or fragment is
-dropped. It does **not** affect `copilotBaseUrl(state)`, which is the LLM edge
-rather than the auth path. Covered by
-`tests/github-api-base-override.test.ts`, which drives the real device-code
-flow against a `Bun.serve({ port: 0 })` fixture.
+An accepted `GITHUB_API_BASE` wins because it is the more explicit of the two:
+a full origin, not a domain to be re-prefixed. Acceptance is deliberately
+narrow, because the overridden origin is the one that receives the GitHub
+credential (above): the value is honoured only under `NODE_ENV === "test"`,
+only with scheme `http:`, only for the loopback literals `127.0.0.1` and
+`[::1]` (not the name `localhost`), and only with no userinfo, no path beyond
+`/`, no query and no fragment. Everything else — a typo included — is ignored
+and the defaults stand, because a bad value must not null out the auth path.
+An accepted value is normalized to its origin. That set still admits
+`http://127.0.0.1:<ephemeral port>`, which is the entire use case, and admits
+no remote origin at all. It does **not** affect `copilotBaseUrl(state)`, which
+is the LLM edge rather than the auth path. Covered by
+`tests/github-api-base-override.test.ts`, which asserts every rejected shape by
+name and drives the real device-code flow against a `Bun.serve({ port: 0 })`
+fixture on both loopback families.
 
 ## Injected upstream headers
 

