@@ -22,6 +22,13 @@ export interface LaunchOptions {
 }
 
 export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOptions): readonly string[] {
+  // BOOT ORDER IS LOAD-BEARING DURING A BUILD. The install CD must come first;
+  // give the (empty) disk index 0 and EDK2 tries it, fails, and drops to a UEFI
+  // shell *before* USB enumeration has produced any filesystem — the mapping
+  // table shows the NVMe block device and nothing else, so startup.nsh is not
+  // even found, let alone run. Once installed, the disk is the boot device and
+  // the CDs are gone.
+  const diskBootIndex = o.installMedia ? 1 : 0
   const a: string[] = [
     "-name", `winvm-${name}`,
     "-machine", "virt,accel=hvf",
@@ -39,7 +46,7 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     // the virtio default it uses everywhere else. Choosing virtio here would
     // mean injecting viostor at windowsPE, which pins a WinPE drive letter.
     "-drive", `if=none,media=disk,id=hd0,file=${p.overlay}`,
-    "-device", "nvme,drive=hd0,serial=winvm,bootindex=0",
+    "-device", `nvme,drive=hd0,serial=winvm,bootindex=${String(diskBootIndex)}`,
     "-drive", `if=none,media=disk,id=res0,format=raw,file=${p.result}`,
     "-device", "usb-storage,drive=res0,removable=true,bus=usb-bus.0",
     "-device", "usb-kbd,bus=usb-bus.0",
@@ -75,7 +82,7 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
   if (o.installMedia) {
     a.push(
       "-drive", `if=none,media=cdrom,id=cd0,file=${media.iso()},readonly=on`,
-      "-device", "usb-storage,drive=cd0,removable=true,bus=usb-bus.0",
+      "-device", "usb-storage,drive=cd0,removable=true,bootindex=0,bus=usb-bus.0",
       "-drive", `if=none,media=cdrom,id=cd1,file=${media.tools()},readonly=on`,
       "-device", "usb-storage,drive=cd1,removable=true,bus=usb-bus.0",
       "-drive", `if=none,media=cdrom,id=cd2,file=${media.seed()},readonly=on`,

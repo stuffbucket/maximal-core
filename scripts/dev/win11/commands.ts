@@ -2,7 +2,7 @@
  * The verbs. Each one is short enough to read in full; anything that needed
  * more room lives in a sibling module.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 import type { Args } from "./args"
@@ -25,6 +25,7 @@ import {
   readMeta,
 } from "./paths"
 import * as qemu from "./qemu"
+import * as qmp from "./qmp"
 import * as qga from "./qga"
 
 const ISO_HELP =
@@ -130,6 +131,21 @@ export async function build(args: Args): Promise<number> {
 
   console.log(`installing Windows (unattended, ~20 min) · watch: vnc://127.0.0.1:${String(5900 + meta.vnc)}`)
   qemu.launch(scratch, p, meta, { installMedia: true, ephemeral: false })
+
+  // Answer "Press any key to boot from CD or DVD" for the first few minutes.
+  // Setup writes to the disk once it is past firmware, so overlay growth is the
+  // signal to stop hammering the keyboard. See qmp.ts for why this is not a
+  // plain QMP `sendkey`.
+  const overlayGrew = (): boolean => {
+    try {
+      return statSync(p.overlay).size > 5_000_000
+    } catch {
+      return false
+    }
+  }
+  void qmp.pressEnterUntil(p.qmp, 300_000, overlayGrew).catch(() => {
+    console.warn("warning: could not drive the boot prompt; install may stall at firmware")
+  })
 
   // provision.ps1 powers the guest off when it finishes; that is the signal.
   const deadline = Date.now() + 60 * 60_000

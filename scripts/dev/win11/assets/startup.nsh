@@ -41,12 +41,27 @@ for %d in 0 1 2 3 4 5
     cdboot_noprompt.efi
   endif
 endfor
+#
+# LAST, AND THE ONE THAT ACTUALLY WORKS. `cdboot_noprompt.efi` above is only
+# valid as an El Torito boot image; launched from the shell it returns
+# `Invalid Parameter` and falls through. `BOOTAA64.EFI` does boot, but it is
+# `cdboot.efi` and prints "Press any key to boot from CD or DVD", returning
+# EFI_TIMEOUT if nothing answers.
+#
+# That keypress is the host's job: winvm's build command drives QMP's
+# `sendkey` (wrapped in `human-monitor-command` — see qmp.ts) from the moment
+# the VM starts until the disk begins growing. Without that, this line reaches
+# the prompt and times out.
+#
+# Do not "simplify" by deleting this loop because the noprompt one looks
+# tidier: on this firmware the install CD is never registered as a boot option
+# at all, so the shell is the ONLY path to the installer.
 for %d in 0 1 2 3 4 5
-  if exist fs%d:\bootmgfw.efi then
-    echo booting installer (bootmgfw) from fs%d
+  if exist fs%d:\EFI\BOOT\BOOTAA64.EFI then
+    echo booting installer (bootaa64, expects a keypress) from fs%d
     fs%d:
-    cd \
-    bootmgfw.efi
+    cd \EFI\BOOT
+    BOOTAA64.EFI
   endif
 endfor
-echo maximal-core: no bootable target found
+echo winvm: no bootable target found
