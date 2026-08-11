@@ -208,8 +208,25 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
   clearTimeout(timer)
   if (outcome === "alive") return
 
-  const why = existsSync(p.qemuLog) ? readFileSync(p.qemuLog, "utf8").trim() : ""
+  // Read and handle absence, rather than asking whether it exists and then
+  // reading: the two-step version races anything else touching the file.
+  const why = readTextOr(p.qemuLog, "").trim()
   throw new Error(`qemu exited immediately${why === "" ? "" : `:\n  ${why.split("\n").join("\n  ")}`}`)
+}
+
+/**
+ * Read a file, or fall back — never "does it exist?" followed by a read.
+ *
+ * The two-step form is a time-of-check/time-of-use race: these files are written
+ * by a QEMU process running concurrently, so the answer can change between the
+ * question and the read. Attempting the read and handling failure has no window.
+ */
+function readTextOr(path: string, fallback: string, encoding: BufferEncoding = "utf8"): string {
+  try {
+    return readFileSync(path, encoding)
+  } catch {
+    return fallback
+  }
 }
 
 /**
@@ -226,7 +243,7 @@ export async function launch(name: string, p: Paths, meta: InstanceMeta, o: Laun
 export async function waitForSerial(p: Paths, marker: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (existsSync(p.serial) && readFileSync(p.serial, "latin1").replaceAll("\0", "").includes(marker)) return true
+    if (readTextOr(p.serial, "", "latin1").replaceAll("\0", "").includes(marker)) return true
     await new Promise((r) => setTimeout(r, 500))
   }
   return false

@@ -451,12 +451,9 @@ export async function build(args: Args): Promise<number> {
     }
     await new Promise((r) => setTimeout(r, 5000))
   }
+  // guestFailed reaps before it reports: leaving the guest running is what
+  // poisons the next build.
   return guestFailed("the guest did not shut down after provisioning")
-  // Reap before reporting: the guest is still running, and leaving it that way
-  // is what poisons the next build.
-  reap()
-  console.error(`::error::install did not finish within an hour — guest killed. See ${p.serial}`)
-  return 1
 }
 
 export async function start(args: Args): Promise<number> {

@@ -272,8 +272,20 @@ function checkAnswerFile(file: string): readonly Finding[] {
   const xml = readText(file)
   if (xml === "") return []
   const oobe = /<settings pass="oobeSystem">([\s\S]*?)<\/settings>/.exec(xml)?.[1] ?? ""
-  // Comments discuss these by name, so match ELEMENTS, not mentions.
-  const withoutComments = oobe.replaceAll(/<!--[\s\S]*?-->/g, "")
+  // Comments discuss these settings by name, so the check must match ELEMENTS
+  // rather than mentions — and this file's comments do exactly that at length.
+  //
+  // Stripped REPEATEDLY, not once: removing `<!-- … -->` in a single pass can
+  // splice the surrounding text into a fresh `<!--`, leaving a comment behind
+  // that then reads as live configuration. Repeating until nothing changes is
+  // the fix CodeQL recommends for this class, and it terminates because every
+  // pass strictly shortens the string.
+  let withoutComments = oobe
+  for (;;) {
+    const stripped = withoutComments.replace(/<!--[\s\S]*?-->/g, "")
+    if (stripped === withoutComments) break
+    withoutComments = stripped
+  }
   const auditMode = /<Mode>\s*Audit\s*<\/Mode>/i.test(withoutComments)
   const conflicts = ["AutoLogon", "UserAccounts", "FirstLogonCommands"].filter((tag) =>
     new RegExp(`<${tag}>`).test(withoutComments),

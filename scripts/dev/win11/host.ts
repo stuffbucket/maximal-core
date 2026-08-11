@@ -75,7 +75,9 @@ function expandVendoredFirmware(): string | null {
     const out = resolve(dest, f.replace(/\.gz$/, ""))
     // Size is the cheap integrity check: a truncated expansion would otherwise
     // reach QEMU as a corrupt pflash and fail somewhere far less obvious.
-    if (existsSync(out) && statSync(out).size === EXPECTED_FIRMWARE_BYTES) continue
+    // Stat and handle absence rather than asking whether it exists first — the
+    // two-step form races anything else writing here.
+    if (sizeOrZero(out) === EXPECTED_FIRMWARE_BYTES) continue
     writeFileSync(out, gunzipSync(readFileSync(resolve(src, f))))
   }
   return dest
@@ -83,6 +85,14 @@ function expandVendoredFirmware(): string | null {
 
 /** Both EDK2 images are exactly 64 MiB; pflash requires the size to match the device. */
 const EXPECTED_FIRMWARE_BYTES = 64 * 1024 * 1024
+
+const sizeOrZero = (path: string): number => {
+  try {
+    return statSync(path).size
+  } catch {
+    return 0
+  }
+}
 
 /**
  * First match wins. QEMU's own names come first; the others are what Debian and
