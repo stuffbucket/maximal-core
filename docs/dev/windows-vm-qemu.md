@@ -148,6 +148,7 @@ image automatically.
 | Dependency | Install | Why |
 |---|---|---|
 | `qemu` | `brew install qemu` | `qemu-system-aarch64`, `qemu-img`, and the EDK2 AArch64 firmware |
+| | | Binaries come from `PATH`; the firmware images are located by asking QEMU (`-L help`) rather than assuming a prefix, so an Intel Mac, MacPorts, Nix or a source build works without editing anything. `WINVM_QEMU_DATA` overrides. `doctor` prints the path it found. |
 | `swtpm` | `brew install swtpm` | **Required.** Windows 11 hard-requires TPM 2.0; without it the only way past Setup is the LabConfig bypass, an unsupported configuration |
 | `hdiutil`, `newfs_msdos` | macOS built-in | Seed ISO and FAT result volume. No `xorriso`/`mkisofs` needed |
 

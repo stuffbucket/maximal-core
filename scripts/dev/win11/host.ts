@@ -8,9 +8,86 @@ import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
-/** Homebrew's AArch64 UEFI code image. Non-secure — see the docs for why that matters. */
-export const FIRMWARE = "/opt/homebrew/share/qemu/edk2-aarch64-code.fd"
-export const FIRMWARE_VARS = "/opt/homebrew/share/qemu/edk2-arm-vars.fd"
+/**
+ * Where QEMU keeps the firmware images it ships — ASKED, NOT ASSUMED.
+ *
+ * The binaries are already found through PATH, so assuming a prefix for their
+ * data files was the one inconsistent thing left: a hard-coded
+ * `/opt/homebrew/share/qemu` finds nothing on an Intel Mac (`/usr/local`),
+ * under MacPorts or Nix, or against a QEMU built from source — while
+ * `qemu-system-aarch64` itself resolves perfectly well. On this machine that
+ * path only works by symlink: QEMU actually lives in
+ * `/opt/homebrew/Cellar/qemu-spice/…/share/qemu`.
+ *
+ * `-L help` makes QEMU print the directories it will search, which is the
+ * authoritative answer and costs one process. Falling back to the binary's own
+ * location covers a QEMU too old to support it.
+ */
+let dataDirs: readonly string[] | null = null
+export function qemuDataDirs(): readonly string[] {
+  if (dataDirs !== null) return dataDirs
+  const override = process.env["WINVM_QEMU_DATA"]
+  if (override !== undefined && override !== "") {
+    dataDirs = [resolve(override)]
+    return dataDirs
+  }
+  const asked = spawnSync("qemu-system-aarch64", ["-L", "help"], { encoding: "utf8" })
+  const listed = `${asked.stdout ?? ""}${asked.stderr ?? ""}`
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("/"))
+    .map((l) => resolve(l))
+  if (listed.length > 0) {
+    dataDirs = listed
+    return dataDirs
+  }
+  // Last resort: <prefix>/bin/qemu-system-aarch64 -> <prefix>/share/qemu
+  const bin = (spawnSync("command", ["-v", "qemu-system-aarch64"], { shell: true, encoding: "utf8" }).stdout ?? "").trim()
+  dataDirs = bin === "" ? [] : [resolve(bin, "..", "..", "share", "qemu")]
+  return dataDirs
+}
+
+/**
+ * First match wins. QEMU's own names come first; the others are what Debian and
+ * Linaro ship, cheap to look for and harmless when absent.
+ */
+function findFirmware(names: readonly string[]): string | null {
+  for (const dir of qemuDataDirs()) {
+    for (const name of names) {
+      const candidate = resolve(dir, name)
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return null
+}
+
+const CODE_NAMES = ["edk2-aarch64-code.fd", "AAVMF_CODE.fd", "QEMU_EFI.fd"] as const
+const VARS_NAMES = ["edk2-arm-vars.fd", "AAVMF_VARS.fd", "QEMU_VARS.fd"] as const
+
+/** The AArch64 UEFI code image. Non-secure — see the docs for why that matters. */
+export const firmwareCode = (): string | null => findFirmware(CODE_NAMES)
+/** The matching variables template, copied per instance and converted to qcow2. */
+export const firmwareVars = (): string | null => findFirmware(VARS_NAMES)
+
+/**
+ * Both images or a clear error. Without this the missing case reaches QEMU as
+ * the literal string "null" and comes back as `Could not open 'null'`.
+ */
+export function requireFirmware(): { readonly code: string; readonly vars: string } {
+  const code = firmwareCode()
+  const vars = firmwareVars()
+  if (code === null || vars === null) throw new Error(`UEFI firmware not found — ${firmwareHint()}`)
+  return { code, vars }
+}
+
+/** Names what was looked for and where, because "firmware not found" alone is useless. */
+export function firmwareHint(): string {
+  const dirs = qemuDataDirs()
+  return (
+    `looked for ${CODE_NAMES.join(" / ")} in ${dirs.length === 0 ? "(no QEMU data directories found)" : dirs.join(", ")}` +
+    " — set WINVM_QEMU_DATA to point at them"
+  )
+}
 
 /** WHQL-signed ARM64 virtio drivers plus qemu-ga. The practical source of both. */
 export const TOOLS_URL = "https://getutm.app/downloads/utm-guest-tools-latest.iso"
@@ -51,7 +128,13 @@ export function hostChecks(): readonly Check[] {
     // Windows 11 hard-requires TPM 2.0. Without an emulated one the only way
     // past Setup is the LabConfig registry bypass, an unsupported configuration.
     { label: "swtpm", ok: have("swtpm"), hint: "brew install swtpm" },
-    { label: `UEFI firmware (${FIRMWARE})`, ok: existsSync(FIRMWARE), hint: "brew install qemu" },
+    // Reported with the path that was actually found, so a mismatched QEMU
+    // install is obvious rather than a bare "missing".
+    {
+      label: `UEFI firmware${firmwareCode() === null ? "" : ` (${String(firmwareCode())})`}`,
+      ok: firmwareCode() !== null && firmwareVars() !== null,
+      hint: firmwareHint(),
+    },
     // Builds the seed ISO and the FAT result volume. macOS-only, which is the
     // tool's platform limit and worth surfacing as a named check rather than a
     // confusing failure deep inside `build`.

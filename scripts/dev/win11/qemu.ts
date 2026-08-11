@@ -10,7 +10,7 @@
 import { spawn, spawnSync } from "node:child_process"
 import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync } from "node:fs"
 
-import { FIRMWARE } from "./host"
+import { requireFirmware } from "./host"
 import type { InstanceMeta, Paths } from "./paths"
 import { media } from "./paths"
 
@@ -44,7 +44,7 @@ export function qemuArgs(name: string, p: Paths, meta: InstanceMeta, o: LaunchOp
     "-cpu", "host",
     "-smp", "4",
     "-m", "4096",
-    "-drive", `if=pflash,format=raw,readonly=on,file=${FIRMWARE}`,
+    "-drive", `if=pflash,format=raw,readonly=on,file=${requireFirmware().code}`,
     // QCOW2, not the raw vars image. A writable raw device blocks `savevm` for
     // the entire machine — see Paths.vars.
     "-drive", `if=pflash,format=qcow2,file=${p.vars}`,

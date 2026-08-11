@@ -8,7 +8,7 @@
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
-import { FIRMWARE_VARS, run } from "./host"
+import { requireFirmware, run } from "./host"
 import { makeResultVolume } from "./media"
 import type { InstanceMeta, Paths } from "./paths"
 import { allocateVnc, basePath, pathsFor, readMeta } from "./paths"
@@ -23,7 +23,7 @@ import { allocateVnc, basePath, pathsFor, readMeta } from "./paths"
  */
 export function makeVars(dest: string): void {
   rmSync(dest, { force: true })
-  run("qemu-img", ["convert", "-f", "raw", "-O", "qcow2", FIRMWARE_VARS, dest])
+  run("qemu-img", ["convert", "-f", "raw", "-O", "qcow2", requireFirmware().vars, dest])
 }
 
 /**
