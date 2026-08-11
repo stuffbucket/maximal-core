@@ -5,8 +5,9 @@
  * before the guest agent is installed — which is exactly when a failed install
  * most needs to explain itself.
  */
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import type { Dirent } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { capture, download, quiet, run } from "./host"
@@ -55,6 +56,130 @@ export function makeResultVolume(dest: string): void {
     writeFileSync("/Volumes/MAXRESULT/SetupComplete.cmd", readFileSync(resolve(ASSETS, "SetupComplete.cmd")))
     writeFileSync("/Volumes/MAXRESULT/provision.ps1", readFileSync(resolve(ASSETS, "provision.ps1")))
     run("hdiutil", ["detach", mounted])
+  }
+}
+
+/**
+ * Find the Windows 11 ARM64 ISO the caller wants installed.
+ *
+ * The ISO is ~8 GB and belongs to the user, not to this tool: it is never
+ * copied, never cached and never redistributed — only symlinked into the state
+ * directory, which is why answering this once is enough forever afterwards.
+ *
+ * Sources, in order, so that configuring it never means committing anything:
+ *
+ *   1. `--iso <path>`            explicit, wins over everything
+ *   2. `WINVM_ISO`               declare it once in a shell profile
+ *   3. the existing symlink      what a previous `--iso` already recorded
+ *   4. the obvious folders       Downloads, Desktop, ~/vm — matched by name
+ *   5. a prompt                  only when someone is actually there to answer
+ *
+ * Step 5 is gated on a TTY on purpose: a build that blocks forever waiting for
+ * input nobody can give is worse than one that fails saying what it needed.
+ */
+export function resolveWindowsIso(explicit: string | undefined): string | null {
+  const fromFlag = explicit ?? process.env["WINVM_ISO"]
+  if (fromFlag !== undefined && fromFlag !== "") {
+    const path = resolve(fromFlag.replace(/^~(?=\/)/, homedir()))
+    if (!existsSync(path)) {
+      console.error(`::error::no such ISO: ${path}`)
+      return null
+    }
+    return path
+  }
+  if (existsSync(media.iso())) return media.iso()
+
+  const found = discoverIsos()
+  if (found.length === 1) {
+    console.log(`using ${found[0]}`)
+    return found[0] ?? null
+  }
+  if (found.length > 1) {
+    console.log("found more than one candidate; pass --iso to choose:")
+    for (const f of found) console.log(`  ${f}`)
+    return null
+  }
+  return promptForIso()
+}
+
+/**
+ * Windows 11 ARM64 media is named like `Win11_25H2_English_Arm64_v2.iso`, so the
+ * architecture is in the filename. Matching on it keeps an x64 ISO sitting in
+ * the same folder from being picked up silently.
+ */
+function discoverIsos(): readonly string[] {
+  const roots = ["Downloads", "Desktop", "vm"].map((d) => resolve(homedir(), d))
+  const out: string[] = []
+  for (const root of roots) {
+    for (const entry of listDir(root)) {
+      const path = resolve(root, entry.name)
+      if (entry.isFile() && /arm64.*\.iso$/i.test(entry.name)) out.push(path)
+      // One level down, because people keep these in a folder per VM.
+      else if (entry.isDirectory()) {
+        for (const inner of listDir(path)) {
+          if (inner.isFile() && /arm64.*\.iso$/i.test(inner.name)) out.push(resolve(path, inner.name))
+        }
+      }
+    }
+  }
+  return [...new Set(out)]
+}
+
+/**
+ * Listing that cannot throw. `~/Downloads` and `~/Desktop` are TCC-protected on
+ * macOS, so scanning them from a terminal without Full Disk Access raises EPERM
+ * rather than returning nothing — which would abort the search for an ISO in
+ * exactly the folder people keep it in, on a first run, with a stack trace.
+ */
+function listDir(dir: string): readonly Dirent[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return []
+  }
+}
+
+function promptForIso(): string | null {
+  if (process.stdin.isTTY !== true) return null
+  console.log(`No Windows 11 ARM64 ISO found. Get one from:\n  ${ISO_SOURCE}`)
+  const answer = prompt("Path to the ISO (blank to cancel):")?.trim() ?? ""
+  if (answer === "") return null
+  const path = resolve(answer.replace(/^~(?=\/)/, homedir()).replace(/^['"]|['"]$/g, ""))
+  if (!existsSync(path)) {
+    console.error(`::error::no such ISO: ${path}`)
+    return null
+  }
+  return path
+}
+
+export const ISO_SOURCE =
+  "https://www.microsoft.com/en-us/software-download/windows11arm64 " +
+  "(multi-edition ARM64, no sign-in; the generated link expires after 24h)"
+
+/**
+ * Confirm the ISO really is ARM64 Windows before a 12-minute install finds out.
+ *
+ * Cheap and decisive: the media boots `\efi\boot\bootaa64.efi`, which an x64 ISO
+ * simply does not carry. A mount that fails proves nothing, so that case passes
+ * with a warning rather than blocking a legitimate build.
+ */
+export function checkIsoIsArm64(iso: string): boolean {
+  const mnt = mkdtempSync(resolve(tmpdir(), "winvm-iso-"))
+  try {
+    if (quiet("hdiutil", ["attach", "-readonly", "-nobrowse", "-mountpoint", mnt, iso]) !== 0) {
+      console.warn(`warning: could not mount ${iso} to check its architecture; continuing`)
+      return true
+    }
+    const ok = existsSync(resolve(mnt, "efi/boot/bootaa64.efi")) || existsSync(resolve(mnt, "EFI/BOOT/BOOTAA64.EFI"))
+    if (!ok) {
+      console.error(
+        `::error::${iso} has no \\efi\\boot\\bootaa64.efi, so it is not Windows ARM64 media.\n  ${ISO_SOURCE}`,
+      )
+    }
+    return ok
+  } finally {
+    quiet("hdiutil", ["detach", mnt])
+    rmSync(mnt, { recursive: true, force: true })
   }
 }
 

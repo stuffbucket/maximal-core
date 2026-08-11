@@ -180,6 +180,20 @@ image automatically.
 
 ## Getting the ISO
 
+You are asked for it once, and never again. `build` looks, in order, at
+`--iso`, `$WINVM_ISO`, whatever a previous build recorded, then `~/Downloads`,
+`~/Desktop` and `~/vm` for a file whose name says `arm64` — and only then
+prompts, and only when a terminal is attached, so a scripted build fails saying
+what it needed instead of blocking forever on input nobody can give.
+
+Whatever it resolves to is **symlinked** into the state directory, never copied
+and never committed: at ~8 GB it stays your file, wherever you keep it. Set
+`WINVM_ISO` in a shell profile if you would rather declare it once.
+
+The media is checked for `\efi\boot\bootaa64.efi` before anything starts, so
+handing it the x64 ISO fails in a second rather than twelve minutes in.
+
+
 <https://www.microsoft.com/en-us/software-download/windows11arm64> — multi-edition
 ARM64, no Microsoft account. **The generated link expires after 24 hours**, so it
 cannot be baked into a script. `build --iso` symlinks rather than copies it.

@@ -10,7 +10,7 @@ import { imageName, instanceName } from "./args"
 import { TOOLS_SHA256, TOOLS_URL, download, du, have, hostChecks, requireHost, run } from "./host"
 import { diagnose, formatFindings } from "./diagnose"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
-import { buildSeed, makeResultVolume, readResult } from "./media"
+import { ISO_SOURCE, buildSeed, checkIsoIsArm64, makeResultVolume, readResult, resolveWindowsIso } from "./media"
 import type { ImageMeta, InstanceMeta } from "./paths"
 import {
   allocateVnc,
@@ -39,10 +39,6 @@ import * as snapshot from "./snapshot"
  * bluescreening with INACCESSIBLE_BOOT_DEVICE.
  */
 const virtioBootFor = (meta: InstanceMeta): boolean => readImageMeta(meta.image)?.virtioBoot === true
-
-const ISO_HELP =
-  "https://www.microsoft.com/en-us/software-download/windows11arm64 " +
-  "(multi-edition ARM64, no sign-in; the generated link expires after 24h)"
 
 export function doctor(): number {
   const checks = hostChecks()
@@ -247,19 +243,21 @@ export async function build(args: Args): Promise<number> {
   }
 
   mkdirSync(mediaDir(), { recursive: true })
-  const isoArg = args.flags.get("iso")
-  if (isoArg !== undefined) {
-    const src = resolve(isoArg)
-    if (!existsSync(src)) {
-      console.error(`::error::no such ISO: ${src}`)
-      return 1
-    }
-    rmSync(media.iso(), { force: true })
-    run("ln", ["-s", src, media.iso()]) // ~8 GB; never copy
-  }
-  if (!existsSync(media.iso())) {
-    console.error(`::error::pass a Windows 11 ARM64 ISO: winvm build --iso <path>\n${ISO_HELP}`)
+  // Resolved from a flag, an env var, whatever a previous build recorded, the
+  // obvious folders, or a prompt — see resolveWindowsIso. None of that is ever
+  // written into the repository.
+  const iso = resolveWindowsIso(args.flags.get("iso"))
+  if (iso === null) {
+    console.error(`::error::pass a Windows 11 ARM64 ISO: winvm build --iso <path>, or set WINVM_ISO\n${ISO_SOURCE}`)
     return 1
+  }
+  // Checked BEFORE the install, because the alternative is finding out twelve
+  // minutes in that this was the x64 ISO.
+  if (!checkIsoIsArm64(iso)) return 1
+  if (resolve(iso) !== resolve(media.iso())) {
+    // Symlinked, never copied: ~8 GB, and it belongs to the user.
+    rmSync(media.iso(), { force: true })
+    run("ln", ["-s", iso, media.iso()])
   }
 
   download(TOOLS_URL, media.tools(), TOOLS_SHA256)
@@ -807,5 +805,6 @@ export const USAGE =
   "  prune [--media]               drop leftover build scratch instances, and cached media\n" +
   "  stop | kill | destroy [-i name]\n\n" +
   "  state:    WINVM_HOME       (default ~/.local/state/winvm)\n" +
+  "  iso:      WINVM_ISO        (else asked once, then remembered)\n" +
   "  instance: WINVM_INSTANCE / -i   (default \"default\")\n" +
   "  image:    WINVM_IMAGE / --image (default \"win11-arm64\")\n"
