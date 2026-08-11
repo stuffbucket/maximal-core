@@ -137,6 +137,15 @@ switch (sub) {
   case "diagnose":
     process.exit(commands.diagnoseCmd(args))
   // eslint-disable-next-line no-fallthrough
+  case "setup":
+    process.exit(commands.setup(args))
+  // eslint-disable-next-line no-fallthrough
+  case "rmi":
+    process.exit(commands.rmi(args))
+  // eslint-disable-next-line no-fallthrough
+  case "prune":
+    process.exit(commands.prune(args))
+  // eslint-disable-next-line no-fallthrough
   default:
     console.error(commands.USAGE)
     process.exit(2)

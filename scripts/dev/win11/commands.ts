@@ -7,7 +7,7 @@ import { resolve } from "node:path"
 
 import type { Args } from "./args"
 import { imageName, instanceName } from "./args"
-import { TOOLS_URL, download, du, hostChecks, requireHost, run } from "./host"
+import { TOOLS_SHA256, TOOLS_URL, download, du, have, hostChecks, requireHost, run } from "./host"
 import { diagnose, formatFindings } from "./diagnose"
 import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
 import { buildSeed, makeResultVolume, readResult } from "./media"
@@ -56,7 +56,10 @@ export function ls(): number {
   console.log(`state: ${home()}\n`)
   const images = listImages()
   console.log(images.length === 0 ? "images: (none — run `winvm build`)" : "images:")
-  for (const i of images) console.log(`  ${i.padEnd(18)} ${du(basePath(i))}`)
+  for (const i of images) {
+    const virtio = readImageMeta(i)?.virtioBoot === true ? "snapshots" : "no snapshots (pre-virtio)"
+    console.log(`  ${i.padEnd(18)} ${du(basePath(i)).padEnd(7)} ${virtio}`)
+  }
 
   const names = listInstances()
   console.log(names.length === 0 ? "\ninstances: (none)" : "\ninstances:")
@@ -69,7 +72,118 @@ export function ls(): number {
       `  ${n.padEnd(18)} ${du(p.overlay).padEnd(7)} image=${m?.image ?? "?"} vnc=:${String(m?.vnc)} ${state}`,
     )
   }
+
+  // MEDIA USED TO BE INVISIBLE HERE, and it is not small: the guest-tools ISO is
+  // ~121 MB and the seed is rebuilt every build. The Windows ISO is a symlink,
+  // so its size is reported as the link's, not the ~8 GB it points at — say so
+  // rather than appear to account for it.
+  console.log("\nmedia:")
+  const entries: readonly [string, string][] = [
+    ["windows ISO", media.iso()],
+    ["guest tools", media.tools()],
+    ["seed ISO", media.seed()],
+    ["seed contents", media.seedDir()],
+  ]
+  for (const [label, path] of entries) {
+    if (!existsSync(path)) continue
+    const note = label === "windows ISO" ? "  (symlink; the ISO itself is not counted)" : ""
+    console.log(`  ${label.padEnd(18)} ${du(path).padEnd(7)}${note}`)
+  }
+
+  console.log(`\ntotal under ${home()}: ${du(home())}`)
   return 0
+}
+
+/**
+ * Remove a base image. There was no way to do this: bases are sealed read-only,
+ * so the only route was `rm -rf` by hand on a `chmod 444` file.
+ */
+export function rmi(args: Args): number {
+  const image = args.positional[0] ?? imageName(args)
+  if (!existsSync(basePath(image))) {
+    console.error(`::error::no such image "${image}"`)
+    return 1
+  }
+  // Overlays name their backing file absolutely; deleting it under a live
+  // instance leaves a disk that cannot be opened and says nothing useful.
+  const users = listInstances().filter((n) => readMeta(n)?.image === image)
+  if (users.length > 0 && !args.flags.has("force")) {
+    console.error(
+      `::error::image "${image}" still backs ${users.length === 1 ? "instance" : "instances"} ${users.join(", ")} — ` +
+        `destroy them first, or pass --force to remove it anyway`,
+    )
+    return 1
+  }
+  // Undo the seal before removing: the file is deliberately 444.
+  run("chmod", ["-R", "u+w", imageDir(image)])
+  rmSync(imageDir(image), { recursive: true, force: true })
+  console.log(`removed image "${image}"`)
+  return 0
+}
+
+/**
+ * Reclaim what accumulates: scratch instances a build left behind, and the
+ * cached media that can simply be fetched or rebuilt again.
+ */
+export function prune(args: Args): number {
+  let freedAnything = false
+  for (const name of listInstances().filter((n) => n.startsWith("build-"))) {
+    const p = pathsFor(name)
+    if (qemu.isRunning(p)) {
+      console.log(`  keeping "${name}" — still running (pid ${String(qemu.pidOf(p))})`)
+      continue
+    }
+    const size = du(p.dir)
+    rmSync(p.dir, { recursive: true, force: true })
+    console.log(`  removed scratch instance "${name}" (${size})`)
+    freedAnything = true
+  }
+  if (args.flags.has("media")) {
+    // The tools ISO is re-downloaded and verified against its pin; the seed is
+    // rebuilt from assets on every build. Neither is precious. The Windows ISO
+    // is the user's own file and is only ever symlinked, so it is left alone.
+    for (const path of [media.tools(), media.seed(), media.seedDir()]) {
+      if (!existsSync(path)) continue
+      const size = du(path)
+      rmSync(path, { recursive: true, force: true })
+      console.log(`  removed ${path} (${size})`)
+      freedAnything = true
+    }
+  }
+  if (!freedAnything) console.log("nothing to prune")
+  else console.log(`\ntotal under ${home()}: ${du(home())}`)
+  return 0
+}
+
+/**
+ * Install what the host is missing. Deliberately a SEPARATE verb from `doctor`,
+ * which stays a pure check — this repository's own preflight says it plainly:
+ * "A check that silently mutates the environment is its own defect."
+ */
+export function setup(args: Args): number {
+  const missing = ["qemu-system-aarch64", "qemu-img", "swtpm"].filter((c) => !have(c))
+  const formulae = [...new Set(missing.map((c) => (c === "swtpm" ? "swtpm" : "qemu")))]
+  if (formulae.length > 0) {
+    if (!have("brew")) {
+      console.error(`::error::missing ${missing.join(", ")} and no Homebrew to install them with — see https://brew.sh`)
+      return 1
+    }
+    console.log(`installing ${formulae.join(" ")}`)
+    if (run("brew", ["install", ...formulae]) !== 0) return 1
+  }
+  // Fetch and verify the guest tools now, so the first build does not stop to do
+  // it — and so a broken pin is found here rather than 20 minutes into an install.
+  if (!args.flags.has("no-media")) {
+    mkdirSync(mediaDir(), { recursive: true })
+    try {
+      download(TOOLS_URL, media.tools(), TOOLS_SHA256)
+    } catch (error) {
+      console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+      return 1
+    }
+  }
+  console.log("")
+  return doctor()
 }
 
 /**
@@ -148,7 +262,7 @@ export async function build(args: Args): Promise<number> {
     return 1
   }
 
-  download(TOOLS_URL, media.tools())
+  download(TOOLS_URL, media.tools(), TOOLS_SHA256)
   buildSeed(args.flags.get("payload"), args.flags.get("bun"))
 
   // Start from nothing. Anything kept from a failed build is a way for this one
@@ -674,6 +788,7 @@ export function diagnoseCmd(args: Args): number {
 
 export const USAGE =
   "winvm <command>\n\n" +
+  "  setup                         install missing host prerequisites, fetch pinned media\n" +
   "  doctor                        check host prerequisites (the HOST, before anything runs)\n" +
   "  diagnose [-i name]            explain a guest that misbehaved, from its files\n" +
   "  build --iso <win11.iso>       build a base image (once, ~20 min)\n" +
@@ -688,6 +803,8 @@ export const USAGE =
   "  rewind  [-i name] [tag]       put the guest back (default tag: fresh)\n" +
   "  snapshots [-i name]           list them\n" +
   "  reset   [-i name]             discard changes, back to the base image\n" +
+  "  rmi <image> [--force]         remove a base image (undoes its read-only seal)\n" +
+  "  prune [--media]               drop leftover build scratch instances, and cached media\n" +
   "  stop | kill | destroy [-i name]\n\n" +
   "  state:    WINVM_HOME       (default ~/.local/state/winvm)\n" +
   "  instance: WINVM_INSTANCE / -i   (default \"default\")\n" +

@@ -4,8 +4,8 @@ A scriptable Windows guest on this Mac, for the class of bug that only appears
 on Windows. Driven entirely from the shell — no GUI, no clicking.
 
 ```sh
-brew install qemu swtpm                # host prerequisites
-bun run winvm:doctor                   # verify them
+bun scripts/dev/win11/winvm.ts setup   # install prerequisites, fetch pinned media
+bun run winvm:doctor                   # or just check, and change nothing
 
 # once: build the golden base image (~20 min)
 bun scripts/dev/win11/winvm.ts build --iso ~/Downloads/Win11_ARM64.iso --bun 1.3.14
@@ -20,8 +20,32 @@ bun scripts/dev/win11/winvm.ts snapshot ready  # or checkpoint your own
 
 bun run winvm:reset                    # discard everything, back to the base image
 bun run winvm:stop
-bun run winvm:ls                       # images and instances, with disk usage
+
+bun run winvm:ls                       # images, instances and media, with a total
+bun scripts/dev/win11/winvm.ts prune   # drop leftover build scratch instances
+bun scripts/dev/win11/winvm.ts rmi <image>   # remove a base image
 ```
+
+## Dependencies
+
+| | |
+|---|---|
+| `qemu`, `swtpm` | installed by `winvm setup`, or `brew install` them yourself |
+| UEFI firmware | **vendored** in `firmware/`, gzipped (128 MiB of mostly zero padding is 1.6 MB), expanded into the state directory on first use |
+| UTM guest tools | **downloaded and pinned by SHA-256**, not vendored — see below |
+
+The firmware is vendored so the harness does not care how a particular QEMU
+packaging laid out its data files; `WINVM_QEMU_DATA` overrides it, and `doctor`
+prints whichever copy it resolved.
+
+The guest-tools ISO is deliberately *not* vendored: it is ~121 MB, does not
+compress, and its installer bundles `qemu-ga` under **GPL-2.0**, which would
+oblige this project to keep corresponding source available for as long as it
+shipped the binary. It is fetched from upstream and verified against
+`TOOLS_SHA256`. The URL says "latest", so upstream *will* eventually publish a
+new build and the digest will stop matching — that is the pin doing its job.
+Review the new ISO and update the constant. Licences for both live in
+[`scripts/dev/win11/THIRD-PARTY-LICENSE.md`](../../scripts/dev/win11/THIRD-PARTY-LICENSE.md).
 
 ## Why this exists
 

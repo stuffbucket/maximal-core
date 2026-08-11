@@ -5,8 +5,11 @@
  * where it can be read without following any other code path.
  */
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
+import { gunzipSync } from "node:zlib"
+
+import { home } from "./paths"
 
 /**
  * Where QEMU keeps the firmware images it ships — ASKED, NOT ASSUMED.
@@ -31,6 +34,15 @@ export function qemuDataDirs(): readonly string[] {
     dataDirs = [resolve(override)]
     return dataDirs
   }
+  // The vendored copy comes first, so the harness does not depend on how a
+  // particular QEMU packaging laid out its data files. Expanded once into the
+  // state directory: the images are ~99% zero padding, which is why 128 MiB of
+  // firmware is 1.6 MB in the repository. See THIRD-PARTY-LICENSE.md.
+  const vendored = expandVendoredFirmware()
+  if (vendored !== null) {
+    dataDirs = [vendored]
+    return dataDirs
+  }
   const asked = spawnSync("qemu-system-aarch64", ["-L", "help"], { encoding: "utf8" })
   const listed = `${asked.stdout ?? ""}${asked.stderr ?? ""}`
     .split("\n")
@@ -46,6 +58,31 @@ export function qemuDataDirs(): readonly string[] {
   dataDirs = bin === "" ? [] : [resolve(bin, "..", "..", "share", "qemu")]
   return dataDirs
 }
+
+/**
+ * Expand `firmware/*.fd.gz` into the state directory, once, and return the
+ * directory holding them. Returns null when this copy of the tool has no
+ * vendored firmware, so discovery still runs.
+ */
+function expandVendoredFirmware(): string | null {
+  const src = resolve(import.meta.dir, "firmware")
+  const gz = [`${CODE_NAMES[0]}.gz`, `${VARS_NAMES[0]}.gz`]
+  if (!gz.every((f) => existsSync(resolve(src, f)))) return null
+
+  const dest = resolve(home(), "firmware")
+  mkdirSync(dest, { recursive: true })
+  for (const f of gz) {
+    const out = resolve(dest, f.replace(/\.gz$/, ""))
+    // Size is the cheap integrity check: a truncated expansion would otherwise
+    // reach QEMU as a corrupt pflash and fail somewhere far less obvious.
+    if (existsSync(out) && statSync(out).size === EXPECTED_FIRMWARE_BYTES) continue
+    writeFileSync(out, gunzipSync(readFileSync(resolve(src, f))))
+  }
+  return dest
+}
+
+/** Both EDK2 images are exactly 64 MiB; pflash requires the size to match the device. */
+const EXPECTED_FIRMWARE_BYTES = 64 * 1024 * 1024
 
 /**
  * First match wins. QEMU's own names come first; the others are what Debian and
@@ -89,8 +126,22 @@ export function firmwareHint(): string {
   )
 }
 
-/** WHQL-signed ARM64 virtio drivers plus qemu-ga. The practical source of both. */
+/**
+ * WHQL-signed ARM64 virtio drivers plus qemu-ga. The practical source of both.
+ *
+ * DOWNLOADED, NOT VENDORED, and that is a licence decision rather than a size
+ * one: the installer on this ISO bundles `qemu-ga`, which is GPL-2.0, and
+ * shipping it would oblige this project to keep corresponding source available
+ * for as long as it did. See THIRD-PARTY-LICENSE.md.
+ *
+ * Pinned by digest because the URL says "latest" — upstream can change what it
+ * serves at any moment, and a test fixture that silently changes underneath a
+ * harness is exactly the kind of variable this tool exists to remove.
+ */
 export const TOOLS_URL = "https://getutm.app/downloads/utm-guest-tools-latest.iso"
+export const TOOLS_SHA256 = "65b6a69b392ee01dd314c10f3dad9ebbf9c4160be43f5f0dd6bb715944d9095b"
+
+export const sha256Of = (path: string): string => capture("shasum", ["-a", "256", path]).split(/\s+/)[0] ?? ""
 
 export function run(cmd: string, args: readonly string[]): number {
   return spawnSync(cmd, [...args], { stdio: "inherit" }).status ?? 1
@@ -109,10 +160,17 @@ export function have(cmd: string): boolean {
   return spawnSync("command", ["-v", cmd], { shell: true, stdio: "ignore" }).status === 0
 }
 
-/** Human-readable size, for `winvm ls`. Overlays and base images differ by orders of magnitude. */
+/**
+ * Human-readable size, for `winvm ls`. Overlays and base images differ by orders
+ * of magnitude.
+ *
+ * `-s` is load-bearing now that directories are measured too: plain `du -h`
+ * prints a line per subdirectory and the first one is NOT the total, so a state
+ * directory holding a 14 GB image reported 128 MB.
+ */
 export function du(path: string): string {
   if (!existsSync(path)) return "-"
-  return capture("du", ["-h", path]).split(/\s+/)[0] ?? "-"
+  return capture("du", ["-sh", path]).split(/\s+/)[0] ?? "-"
 }
 
 export interface Check {
@@ -150,8 +208,13 @@ export function requireHost(): void {
   process.exit(1)
 }
 
-export function download(url: string, dest: string): void {
-  if (existsSync(dest)) return
+export function download(url: string, dest: string, sha256?: string): void {
+  if (existsSync(dest)) {
+    if (sha256 === undefined || sha256Of(dest) === sha256) return
+    // A cached file that no longer matches is not silently re-used.
+    console.warn(`warning: ${basename(dest)} does not match its pin; re-fetching`)
+    rmSync(dest, { force: true })
+  }
   mkdirSync(resolve(dest, ".."), { recursive: true })
   console.log(`fetching ${basename(dest)}`)
   if (run("curl", ["-fL", "--progress-bar", "-o", dest, url]) !== 0) {
@@ -160,4 +223,16 @@ export function download(url: string, dest: string): void {
     rmSync(dest, { force: true })
     throw new Error(`download failed: ${url}`)
   }
+  if (sha256 === undefined) return
+  const got = sha256Of(dest)
+  if (got === sha256) return
+  // The pin's job is to DETECT drift, not to prevent it. Upstream publishing a
+  // new build is expected and legitimate; adopting it silently is not.
+  rmSync(dest, { force: true })
+  throw new Error(
+    `${basename(dest)} does not match its pinned digest.\n` +
+      `  expected ${sha256}\n  got      ${got}\n` +
+      `  Upstream has probably published a new build. Review it, then update ` +
+      `TOOLS_SHA256 in host.ts to the new digest.`,
+  )
 }
