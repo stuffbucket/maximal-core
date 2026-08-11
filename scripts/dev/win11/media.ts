@@ -31,6 +31,19 @@ export function makeResultVolume(dest: string): void {
   const mounted = capture("hdiutil", ["attach", dest]).split(/\s+/)[0]
   if (mounted !== undefined && mounted !== "") {
     writeFileSync("/Volumes/MAXRESULT/startup.nsh", readFileSync(resolve(ASSETS, "startup.nsh")))
+    // The answer file goes here TOO, not only on the seed ISO.
+    //
+    // Windows Setup scans attached volumes for `autounattend.xml`, and a FAT
+    // removable volume is the location it has always honoured. An ISO9660 seed
+    // built by hdiutil is not reliably picked up on 25H2 — Setup came up
+    // interactively at "Select language settings" with the file present at the
+    // ISO root, which is indistinguishable from having supplied no answer file
+    // at all. Writing it to both costs 12 KB and removes the ambiguity.
+    writeFileSync("/Volumes/MAXRESULT/autounattend.xml", readFileSync(resolve(ASSETS, "autounattend.xml")))
+    // Provisioning rides here too: `specialize` copies whichever volume it
+    // finds first into C:\\Windows\\Setup\\Scripts.
+    writeFileSync("/Volumes/MAXRESULT/SetupComplete.cmd", readFileSync(resolve(ASSETS, "SetupComplete.cmd")))
+    writeFileSync("/Volumes/MAXRESULT/provision.ps1", readFileSync(resolve(ASSETS, "provision.ps1")))
     run("hdiutil", ["detach", mounted])
   }
 }
@@ -48,6 +61,7 @@ export function buildSeed(payloadDir: string | undefined, bunVersion: string | u
   mkdirSync(resolve(dir, "payload"), { recursive: true })
   copyFileSync(resolve(ASSETS, "autounattend.xml"), resolve(dir, "autounattend.xml"))
   copyFileSync(resolve(ASSETS, "provision.ps1"), resolve(dir, "provision.ps1"))
+  copyFileSync(resolve(ASSETS, "SetupComplete.cmd"), resolve(dir, "SetupComplete.cmd"))
 
   if (payloadDir !== undefined) {
     const src = resolve(payloadDir)

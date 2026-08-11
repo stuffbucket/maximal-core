@@ -187,11 +187,59 @@
           <Order>2</Order>
           <Path>reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v EnableLUA /t REG_DWORD /d 0 /f</Path>
         </RunSynchronousCommand>
+        <!--
+          Stage provisioning as SetupComplete.cmd, which Windows runs at the end
+          of Setup as SYSTEM, before any logon.
+          FirstLogonCommands is NOT used: it needs a user session, runs
+          unelevated (so the guest-tools installer raises a UAC dialog nobody
+          can answer), and is silently suppressed on 25H2 by the deprecated
+          Skip*OOBE settings. Every one of those failures is invisible — the
+          desktop appears and nothing runs.
+
+          The drive letter is searched rather than assumed: WinPE and the
+          installed OS enumerate removable media differently, and the seed's
+          letter is not stable between them.
+        -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>cmd /c md C:\Windows\Setup\Scripts</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>cmd /c for %d in (D E F G H I) do @if exist %d:\SetupComplete.cmd copy /y %d:\SetupComplete.cmd C:\Windows\Setup\Scripts\</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <Path>cmd /c for %d in (D E F G H I) do @if exist %d:\provision.ps1 copy /y %d:\provision.ps1 C:\Windows\Setup\Scripts\</Path>
+        </RunSynchronousCommand>
       </RunSynchronous>
     </component>
   </settings>
 
   <settings pass="oobeSystem">
+    <!--
+      REQUIRED, AND EASY TO OMIT. The same component in `windowsPE` only covers
+      Setup itself; OOBE reads its own copy from this pass. Without it, an
+      otherwise-complete answer file installs Windows perfectly and then parks
+      on "Is this the right country or region?" forever, which looks like the
+      answer file was ignored when in fact only this pass was missing.
+
+      This is the non-deprecated way to get a hands-off OOBE.
+      SkipMachineOOBE/SkipUserOOBE would also silence those screens, but
+      Microsoft deprecated both and on 25H2 they suppress FirstLogonCommands
+      entirely — so provisioning never runs and nothing says why.
+    -->
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <InputLocale>0409:00000409</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="arm64"
                publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"

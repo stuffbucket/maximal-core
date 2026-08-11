@@ -132,18 +132,32 @@ export async function build(args: Args): Promise<number> {
   console.log(`installing Windows (unattended, ~20 min) · watch: vnc://127.0.0.1:${String(5900 + meta.vnc)}`)
   qemu.launch(scratch, p, meta, { installMedia: true, ephemeral: false })
 
-  // Answer "Press any key to boot from CD or DVD" for the first few minutes.
-  // Setup writes to the disk once it is past firmware, so overlay growth is the
-  // signal to stop hammering the keyboard. See qmp.ts for why this is not a
-  // plain QMP `sendkey`.
-  const overlayGrew = (): boolean => {
+  // Answer "Press any key to boot from CD or DVD", then STOP EARLY.
+  //
+  // THE STOP CONDITION IS THE DANGEROUS PART, IN BOTH DIRECTIONS.
+  //
+  // Too late, and Enter starts landing on Windows Setup's GUI: the "Installing
+  // Windows" progress screen has a focusable Cancel, so a stray Enter opens
+  // "Are you sure you want to quit?" and the install freezes mid-copy waiting
+  // for an answer that never comes. That is not hypothetical — it wedged a
+  // build at 35%.
+  //
+  // Too early, and the prompt goes unanswered and nothing installs at all.
+  //
+  // A small amount of disk growth is the right signal: it means WinPE is past
+  // firmware and writing, which can only happen after the prompt was answered.
+  // Later reboots do not need the keyboard, because by then startup.nsh finds
+  // Windows Boot Manager on the ESP and prefers it over the installer.
+  //
+  // See qmp.ts for why this is not a plain QMP `sendkey`.
+  const installerRunning = (): boolean => {
     try {
-      return statSync(p.overlay).size > 5_000_000
+      return statSync(p.overlay).size > 300_000_000
     } catch {
       return false
     }
   }
-  void qmp.pressEnterUntil(p.qmp, 300_000, overlayGrew).catch(() => {
+  void qmp.pressEnterUntil(p.qmp, 15 * 60_000, installerRunning).catch(() => {
     console.warn("warning: could not drive the boot prompt; install may stall at firmware")
   })
 
@@ -291,8 +305,25 @@ export async function smoke(args: Args): Promise<number> {
     return 1
   }
   const ps = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-  const arch = await qga.exec(p.qga, ps, ["-NoProfile", "-Command", "$env:PROCESSOR_ARCHITECTURE"])
-  console.log(`guest arch -> ${arch.stdout.trim()}`)
+  // ARCHITECTURE MUST COME FROM THE HARDWARE, NOT THE ENVIRONMENT.
+  //
+  // `$env:PROCESSOR_ARCHITECTURE` reports AMD64 on this ARM64 guest, because
+  // qemu-ga is the x86-64 build (UTM's installer has no ARM64 branch for it)
+  // and every process it spawns inherits that emulated environment. Win32_
+  // Processor.Architecture comes from the OS: 12 is ARM64, 9 is x64.
+  //
+  // The practical consequence is worth knowing: anything run through
+  // `winvm exec` sees an emulated x64 environment, so tools that branch on
+  // PROCESSOR_ARCHITECTURE will take their x64 path. Native ARM64 binaries
+  // still execute natively — Bun reports arch "arm64" from the same session.
+  const archCode = (
+    await qga.exec(p.qga, ps, ["-NoProfile", "-Command", "(Get-CimInstance Win32_Processor).Architecture"])
+  ).stdout.trim()
+  const archName = archCode === "12" ? "ARM64" : archCode === "9" ? "x64" : `unknown(${archCode})`
+  const envArch = (
+    await qga.exec(p.qga, ps, ["-NoProfile", "-Command", "$env:PROCESSOR_ARCHITECTURE"])
+  ).stdout.trim()
+  console.log(`guest cpu -> ${archName}   (exec environment reports ${envArch}; qemu-ga is emulated x64)`)
 
   const probe = args.flags.get("probe") ?? "C:\\payload\\bun-windows-aarch64\\bun.exe"
   const versionArg = args.flags.get("version-arg") ?? "--version"

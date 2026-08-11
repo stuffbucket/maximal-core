@@ -1,8 +1,13 @@
 # Provisioning for the winvm Windows 11 ARM64 guest.
 #
-# Runs once, at first logon, from autounattend.xml's FirstLogonCommands under an
-# AutoLogon session with UAC already disabled (see the `specialize` pass), so it
-# is elevated and never raises a consent dialog.
+# Runs once, at the END OF SETUP, via C:\Windows\Setup\Scripts\SetupComplete.cmd
+# -- which Windows executes as SYSTEM before any user logs on. The answer file's
+# specialize pass copies this script and that wrapper into place.
+#
+# NOT FirstLogonCommands: that needs a user session, runs unelevated (so the
+# guest-tools installer raises a UAC dialog nobody can answer), and on 25H2 is
+# silently suppressed by the deprecated Skip*OOBE settings. All three failures
+# look identical from outside -- the desktop appears and nothing has run.
 #
 # THIS SCRIPT KNOWS NOTHING ABOUT ANY PARTICULAR PROJECT. It installs the guest
 # tools, then stages whatever the caller put in the seed's `payload\` directory:
@@ -29,8 +34,9 @@ function Find-VolumeContaining {
     return $null
 }
 
+# Diagnostic only. Several volumes carry a copy of this script, so this is NOT
+# a reliable way to find the seed -- see the payload section below.
 $seed = Find-VolumeContaining -RelativePath "provision.ps1"
-if (-not $seed) { throw "seed volume not found" }
 
 # The RESULT volume is a separate writable FAT image: the seed is an ISO and
 # cannot carry anything back out. Found by label, for the same reason as above.
@@ -75,6 +81,15 @@ try {
 
     # --- 2. Stage the caller's payload ---------------------------------------
     #
+    # The payload volume is located by looking for the `payload` DIRECTORY, not
+    # by assuming it sits next to this script.
+    #
+    # This script runs from C:\Windows\Setup\Scripts (copied there by the
+    # answer file's specialize pass), and copies of it also exist on the seed
+    # ISO and on the writable result volume — so "the volume containing
+    # provision.ps1" is genuinely ambiguous and picked the wrong one, silently
+    # staging nothing. The payload directory only ever exists on the seed.
+    #
     # Payloads are shipped on the seed rather than downloaded, so what runs is
     # exactly what the caller pinned rather than whatever an installer resolves
     # on the day. It also does not depend on the NIC, whose driver has only just
@@ -82,14 +97,26 @@ try {
     $payloadRoot = "C:\payload"
     New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
 
+    $payloadSource = $null
+    foreach ($name in (Get-PSDrive -PSProvider FileSystem).Name) {
+        $candidate = "${name}:\payload"
+        # Skip the destination itself, which this script just created.
+        if ($candidate -eq $payloadRoot) { continue }
+        if ((Test-Path $candidate) -and (Get-ChildItem $candidate -ErrorAction SilentlyContinue)) {
+            $payloadSource = $candidate
+            break
+        }
+    }
+    Write-Output "payload source: $(if ($payloadSource) { $payloadSource } else { '(none found)' })"
+
     $staged = @()
-    if (Test-Path "$seed\payload") {
-        foreach ($zip in Get-ChildItem -Path "$seed\payload\*.zip" -ErrorAction SilentlyContinue) {
+    if ($payloadSource) {
+        foreach ($zip in Get-ChildItem -Path "$payloadSource\*.zip" -ErrorAction SilentlyContinue) {
             Write-Output "expanding $($zip.Name)"
             Expand-Archive -Path $zip.FullName -DestinationPath $payloadRoot -Force
             $staged += $zip.Name
         }
-        foreach ($item in Get-ChildItem -Path "$seed\payload" -Exclude *.zip -ErrorAction SilentlyContinue) {
+        foreach ($item in Get-ChildItem -Path $payloadSource -Exclude *.zip -ErrorAction SilentlyContinue) {
             Copy-Item -Path $item.FullName -Destination $payloadRoot -Recurse -Force
         }
     }
