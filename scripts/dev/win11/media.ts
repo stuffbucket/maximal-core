@@ -11,7 +11,7 @@ import { homedir, tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 import { capture, download, quiet, run } from "./host"
-import { media } from "./paths"
+import { media, mediaDir } from "./paths"
 
 const ASSETS = resolve(import.meta.dir, "assets")
 
@@ -71,7 +71,7 @@ export function makeResultVolume(dest: string): void {
  *   1. `--iso <path>`            explicit, wins over everything
  *   2. `WINVM_ISO`               declare it once in a shell profile
  *   3. the existing symlink      what a previous `--iso` already recorded
- *   4. the obvious folders       Downloads, Desktop, ~/vm — matched by name
+ *   4. unprotected folders       ~/vm, ~/isos, the state dir — matched by name
  *   5. a prompt                  only when someone is actually there to answer
  *
  * Step 5 is gated on a TTY on purpose: a build that blocks forever waiting for
@@ -106,9 +106,17 @@ export function resolveWindowsIso(explicit: string | undefined): string | null {
  * Windows 11 ARM64 media is named like `Win11_25H2_English_Arm64_v2.iso`, so the
  * architecture is in the filename. Matching on it keeps an x64 ISO sitting in
  * the same folder from being picked up silently.
+ *
+ * DELIBERATELY DOES NOT LOOK IN ~/Downloads OR ~/Desktop. Those are TCC-
+ * protected on macOS, and merely attempting to read them raises a consent
+ * dialog against whichever terminal is running this — a background build
+ * demanding permission to your Downloads folder is not acceptable behaviour
+ * from a dev tool, and catching the resulting EPERM does not prevent the
+ * prompt. Only unprotected locations are searched; anywhere else is named with
+ * `--iso` or `WINVM_ISO`.
  */
 function discoverIsos(): readonly string[] {
-  const roots = ["Downloads", "Desktop", "vm"].map((d) => resolve(homedir(), d))
+  const roots = [resolve(homedir(), "vm"), resolve(homedir(), "isos"), mediaDir()]
   const out: string[] = []
   for (const root of roots) {
     for (const entry of listDir(root)) {
@@ -126,10 +134,9 @@ function discoverIsos(): readonly string[] {
 }
 
 /**
- * Listing that cannot throw. `~/Downloads` and `~/Desktop` are TCC-protected on
- * macOS, so scanning them from a terminal without Full Disk Access raises EPERM
- * rather than returning nothing — which would abort the search for an ISO in
- * exactly the folder people keep it in, on a first run, with a stack trace.
+ * Listing that cannot throw. The searched folders are unprotected, but a missing
+ * one, a dangling symlink or an odd permission bit should skip that root rather
+ * than abort the search with a stack trace on someone's first run.
  */
 function listDir(dir: string): readonly Dirent[] {
   try {

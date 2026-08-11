@@ -181,10 +181,15 @@ image automatically.
 ## Getting the ISO
 
 You are asked for it once, and never again. `build` looks, in order, at
-`--iso`, `$WINVM_ISO`, whatever a previous build recorded, then `~/Downloads`,
-`~/Desktop` and `~/vm` for a file whose name says `arm64` — and only then
+`--iso`, `$WINVM_ISO`, whatever a previous build recorded, then `~/vm`, `~/isos`
+and the state directory for a file whose name says `arm64` — and only then
 prompts, and only when a terminal is attached, so a scripted build fails saying
 what it needed instead of blocking forever on input nobody can give.
+
+It deliberately never looks in `~/Downloads` or `~/Desktop`. Those are
+TCC-protected, and merely *reading* them raises a consent dialog against
+whichever terminal is running the build. Keep the ISO anywhere you like and name
+it with `WINVM_ISO`.
 
 Whatever it resolves to is **symlinked** into the state directory, never copied
 and never committed: at ~8 GB it stays your file, wherever you keep it. Set
