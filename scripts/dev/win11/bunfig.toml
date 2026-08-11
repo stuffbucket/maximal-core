@@ -1,0 +1,6 @@
+[test]
+# `bun test` from this directory runs ONLY this tool's own tests. The repo root
+# scopes `bun test` to tests/**, which keeps the product gate clean; this tool
+# gets its own lane (`bun run test:winvm`) in the same way scripts/ops does, and
+# the config travels with the directory so the tool stays copyable.
+root = "."
