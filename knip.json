@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  "entry": ["scripts/*.ts", "scripts/dev/*.ts", "scripts/ops/*.ts"],
+  "entry": ["scripts/*.ts", "scripts/dev/*.ts", "scripts/ops/*.ts", "scripts/dev/win11/tests/*.ts"],
   "project": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
   "ignoreDependencies": [
     "prettier-plugin-packagejson",

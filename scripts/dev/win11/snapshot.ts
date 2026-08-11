@@ -74,8 +74,6 @@ export async function listLive(p: Paths): Promise<readonly Snapshot[]> {
 }
 
 export const has = (p: Paths, tag: string): boolean => list(p).some((s) => s.tag === tag)
-export const hasLive = async (p: Paths, tag: string): Promise<boolean> =>
-  (await listLive(p)).some((s) => s.tag === tag)
 
 /**
  * Capture the running guest.

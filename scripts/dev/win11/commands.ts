@@ -497,14 +497,10 @@ export async function snapshots(args: Args): Promise<number> {
     console.error(`::error::no such instance "${name}"`)
     return 1
   }
-  // A running QEMU holds the disk, so qemu-img cannot open it. Ask the monitor
-  // instead and print what it says verbatim — the columns are already a table.
-  if (qemu.isRunning(p)) {
-    const out = await qmp.hmp(p.qmp, "info snapshots")
-    console.log(out.replace(/\r/g, "").trim())
-    return 0
-  }
-  const rows = snapshot.list(p)
+  // A running QEMU holds the disk, so qemu-img cannot open it; the monitor is
+  // the only way in. Both listings go through the same row parser so the output
+  // does not change shape depending on whether the guest happens to be up.
+  const rows = qemu.isRunning(p) ? await snapshot.listLive(p) : snapshot.list(p)
   if (rows.length === 0) {
     console.log(`instance "${name}" has no snapshots`)
     return 0

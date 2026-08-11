@@ -354,6 +354,18 @@ answers "running" in all of them. `build` runs it automatically when it fails.
 It reports nothing on a healthy instance. If it finds nothing and the guest is
 still wrong, that is a new failure mode worth adding to `diagnose.ts`.
 
+Its checks are held to recorded artifacts of guests that actually failed, kept
+in `scripts/dev/win11/tests/traces.zip` and exercised by `bun run test:winvm`.
+The archive also carries the long-form write-up (`notes/diagnostic-notes.md`)
+and an `index.md`. It is a zip rather than loose files on purpose: those traces
+are pictures of BROKEN configurations, and next to the working code they are a
+trap for anyone reading the tree to learn how this is supposed to work. Open it
+when you are diagnosing something; ignore it otherwise.
+
+Half the traces are of guests that were FINE. That is the point — several
+signatures here are transient states a healthy guest passes straight through,
+and the archive keeps a working example beside each failing one.
+
 **Watch a boot.** `winvm ls` prints each instance's VNC display; connect with
 `open vnc://127.0.0.1:590<n>`. Firmware output goes to the instance's
 `serial.log`, and the boot before it to `serial.prev.log` — kept because the

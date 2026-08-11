@@ -62,7 +62,10 @@ const tail = (text: string, lines: number): string =>
     .slice(-lines)
     .join("\n")
 
-export function diagnose(name: string): readonly Finding[] {
+/** Where the answer file lives; overridable so traces can carry their own. */
+export const defaultAnswerFile = (): string => resolve(import.meta.dir, "assets", "autounattend.xml")
+
+export function diagnose(name: string, answerFile: string = defaultAnswerFile()): readonly Finding[] {
   const p = pathsFor(name)
   const findings: Finding[] = []
   const meta = readMeta(name)
@@ -80,6 +83,27 @@ export function diagnose(name: string): readonly Finding[] {
   const serial = readText(p.serial)
   const boot = lastBoot(serial)
   const running = qemu.isRunning(p)
+
+  // "STOPPED PROGRESSING" IS A CLAIM ABOUT TIME, SO MEASURE IT.
+  //
+  // Several signatures below are only failures because nothing happened NEXT: a
+  // console that ends at a USB command, a keypress marker with an empty disk.
+  // Both are also exactly what a healthy guest looks like ten seconds into a
+  // build. Without this, `diagnose` on a running build reports a hang while the
+  // installer is working perfectly — and a diagnostic that cries wolf is worse
+  // than none. A stopped guest is stalled by definition; a running one has to
+  // have gone quiet on both its console and its disk to qualify.
+  const mtimeOf = (path: string): number => {
+    try {
+      return statSync(path).mtimeMs
+    } catch {
+      return 0
+    }
+  }
+  const lastProgress = Math.max(mtimeOf(p.serial), mtimeOf(p.overlay))
+  const quietSeconds = lastProgress === 0 ? Infinity : Math.round((Date.now() - lastProgress) / 1000)
+  const stalled = !running || quietSeconds > 90
+  const quietNote = running ? ` after ${String(quietSeconds)}s with no console or disk activity` : ""
 
   // ---- QEMU never got off the ground ---------------------------------------
   // It reports a bad command line or an unreachable socket on stderr and then
@@ -99,11 +123,16 @@ export function diagnose(name: string): readonly Finding[] {
   // The firmware spins a core, serial output stops mid-line, and no boot target
   // is ever chosen. Distinctive because the LAST boot produced firmware output
   // and then simply stopped, with no loader ever starting.
-  if (boot.includes("UsbBootExecCmd") && !boot.includes("Windows Boot Manager") && !boot.includes("booting install")) {
+  if (
+    stalled &&
+    boot.includes("UsbBootExecCmd") &&
+    !boot.includes("Windows Boot Manager") &&
+    !boot.includes("booting install")
+  ) {
     findings.push({
       severity: "error",
       title: "firmware stopped while enumerating USB, and never chose a boot target",
-      evidence: `${p.serial} ends at: ${tail(boot, 1)}`,
+      evidence: `${p.serial} ends at: ${tail(boot, 1)}${quietNote}`,
       remedy:
         "A running instance should attach NO usb-storage; check qemu.ts. Seen on qemu-xhci and nec-usb-xhci alike, " +
         "roughly one boot in three. `winvm kill` then `winvm start` to retry.",
@@ -115,11 +144,16 @@ export function diagnose(name: string): readonly Finding[] {
   // the one image that waits for a key. If that is the last thing on the console
   // and the disk never grew, nothing answered it.
   const overlayBytes = sizeOf(p.overlay)
-  if (boot.includes("winvm-keypress-needed") && overlayBytes < 300_000_000 && !boot.includes("Windows Boot Manager")) {
+  if (
+    stalled &&
+    boot.includes("winvm-keypress-needed") &&
+    overlayBytes < 300_000_000 &&
+    !boot.includes("Windows Boot Manager")
+  ) {
     findings.push({
       severity: "error",
       title: "the install media asked for a keypress and nothing answered",
-      evidence: `saw winvm-keypress-needed; overlay is only ${String(Math.round(overlayBytes / 1_048_576))} MB`,
+      evidence: `saw winvm-keypress-needed; overlay is only ${String(Math.round(overlayBytes / 1_048_576))} MB${quietNote}`,
       remedy: "The host answers this over QMP after seeing that marker — check qmp.tapEnter and the QMP socket.",
     })
   }
@@ -207,6 +241,8 @@ export function diagnose(name: string): readonly Finding[] {
     }
   }
 
+  findings.push(...checkAnswerFile(answerFile))
+
   if (!existsSync(basePath(meta.image))) {
     findings.push({
       severity: "error",
@@ -217,6 +253,42 @@ export function diagnose(name: string): readonly Finding[] {
   }
 
   return findings
+}
+
+/**
+ * The answer file, checked for the conflict that produces NO error anywhere.
+ *
+ * Requesting audit mode while leaving OOBE's account settings in place is
+ * accepted by Windows and half-honoured: `audit.exe` runs and enables the
+ * built-in Administrator, then AutoLogon signs in the answer file's account
+ * instead. The audit logon that `audit.exe /user` was arranged for never
+ * happens, so the auditUser pass never runs and provisioning never runs. The
+ * guest reaches a working desktop and simply has no agent. Nothing in any log
+ * says why; it took reading audit.exe's own log inside the guest disk to find.
+ *
+ * A static check costs nothing and catches it before a build is spent.
+ */
+function checkAnswerFile(file: string): readonly Finding[] {
+  const xml = readText(file)
+  if (xml === "") return []
+  const oobe = /<settings pass="oobeSystem">([\s\S]*?)<\/settings>/.exec(xml)?.[1] ?? ""
+  // Comments discuss these by name, so match ELEMENTS, not mentions.
+  const withoutComments = oobe.replaceAll(/<!--[\s\S]*?-->/g, "")
+  const auditMode = /<Mode>\s*Audit\s*<\/Mode>/i.test(withoutComments)
+  const conflicts = ["AutoLogon", "UserAccounts", "FirstLogonCommands"].filter((tag) =>
+    new RegExp(`<${tag}>`).test(withoutComments),
+  )
+  if (!auditMode || conflicts.length === 0) return []
+  return [
+    {
+      severity: "error",
+      title: "the answer file asks for audit mode AND leaves OOBE logon settings in place",
+      evidence: `${file}: oobeSystem has Reseal/Mode=Audit alongside ${conflicts.join(", ")}`,
+      remedy:
+        "Delete them. They are not inert in audit mode: AutoLogon signs in its own account, the audit logon never " +
+        "happens, and the auditUser pass — where provisioning runs — is skipped silently.",
+    },
+  ]
 }
 
 /** Scratch instances a build creates, which only survive a run that did not finish. */
