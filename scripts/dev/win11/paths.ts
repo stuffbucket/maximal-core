@@ -31,6 +31,7 @@ export const mediaDir = (): string => resolve(home(), "media")
 
 export const imageDir = (image: string): string => resolve(imagesDir(), image)
 export const basePath = (image: string): string => resolve(imageDir(image), "base.qcow2")
+export const imageMetaPath = (image: string): string => resolve(imageDir(image), "image.json")
 export const instanceDir = (name: string): string => resolve(instancesDir(), name)
 
 export const media = {
@@ -44,13 +45,36 @@ export const media = {
 export interface Paths {
   readonly dir: string
   readonly overlay: string
+  /**
+   * Firmware variables, as QCOW2 rather than the raw pflash image QEMU ships.
+   *
+   * Not a preference: `savevm` refuses to run while ANY writable device cannot
+   * hold a snapshot, and a raw pflash is exactly that — "Device 'pflash1' is
+   * writable but does not support snapshots". qcow2 is accepted as pflash as
+   * long as the virtual size still matches the flash device.
+   */
   readonly vars: string
+  /**
+   * A scratch virtio-blk disk attached only while building, so Windows sees a
+   * virtio-blk device once and installs viostor as a boot-start driver. Without
+   * that the finished image cannot boot from virtio-blk, and live snapshots are
+   * unavailable. Never attached to a normal instance.
+   */
+  readonly prime: string
   readonly tpmDir: string
   readonly tpmSock: string
   readonly qga: string
   readonly qmp: string
   readonly pid: string
   readonly serial: string
+  /**
+   * The PREVIOUS boot's firmware log. Kept because the natural response to a
+   * boot that misbehaved is to try again, and each boot replaces `serial.log` —
+   * so without this the retry destroys the only record of what it is retrying.
+   */
+  readonly serialPrev: string
+  /** QEMU's own stderr. See qemu.ts: it reports a failed launch here, and exits 0. */
+  readonly qemuLog: string
   readonly result: string
   readonly meta: string
 }
@@ -60,13 +84,16 @@ export function pathsFor(name: string): Paths {
   return {
     dir,
     overlay: resolve(dir, "overlay.qcow2"),
-    vars: resolve(dir, "efi-vars.fd"),
+    vars: resolve(dir, "efi-vars.qcow2"),
+    prime: resolve(dir, "prime.qcow2"),
     tpmDir: resolve(dir, "tpm"),
     tpmSock: resolve(dir, "tpm/swtpm-sock"),
     qga: resolve(dir, "qga.sock"),
     qmp: resolve(dir, "qmp.sock"),
     pid: resolve(dir, "qemu.pid"),
     serial: resolve(dir, "serial.log"),
+    serialPrev: resolve(dir, "serial.prev.log"),
+    qemuLog: resolve(dir, "qemu.log"),
     result: resolve(dir, "result.img"),
     meta: resolve(dir, "instance.json"),
   }
@@ -77,6 +104,27 @@ export interface InstanceMeta {
   /** VNC display number; the port is 5900 + this. Assigned once, at creation. */
   readonly vnc: number
   readonly created: string
+}
+
+/**
+ * What a base image can do, recorded when it is built.
+ *
+ * Exists for one reason: `virtioBoot` cannot be inferred by looking at a disk.
+ * An image built before the virtio switch runs Windows without viostor as a
+ * boot-start driver, so booting it on virtio-blk bluescreens with
+ * INACCESSIBLE_BOOT_DEVICE. Rather than break every existing base image, each
+ * one states what it supports and instances follow it.
+ */
+export interface ImageMeta {
+  /** The guest can boot with its disk on virtio-blk, which is what live snapshots require. */
+  readonly virtioBoot: boolean
+  readonly created: string
+}
+
+export function readImageMeta(image: string): ImageMeta | null {
+  const f = imageMetaPath(image)
+  if (!existsSync(f)) return null
+  return JSON.parse(readFileSync(f, "utf8")) as ImageMeta
 }
 
 export function readMeta(name: string): InstanceMeta | null {

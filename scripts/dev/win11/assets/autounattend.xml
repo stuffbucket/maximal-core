@@ -216,96 +216,117 @@
     </component>
   </settings>
 
+  <!--
+    PROVISIONING RUNS HERE, because the guest boots to audit mode (see the
+    oobeSystem pass). Microsoft names this pass for exactly this job: "Add
+    Microsoft-Windows-Deployment\RunAsynchronousCommand or RunSynchronousCommand
+    to the auditUser configuration pass to run a script that runs when the PC
+    enters audit mode. This can be helpful for tasks like automated app
+    installation or testing."
+    <https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/add-a-custom-script-to-windows-setup>
+
+    `SetupComplete.cmd` still runs too, and still invokes the same script. Both
+    entry points are kept because the script is idempotent and returns
+    immediately once it has completed once — whichever fires first does the
+    work. That is deliberate belt-and-braces: SetupComplete.cmd is the
+    documented once-ever hook, and this pass is the documented audit-mode hook.
+
+    The path is absolute rather than searched: the specialize pass above has
+    already copied provision.ps1 to C:\Windows\Setup\Scripts.
+  -->
+  <settings pass="auditUser">
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Setup\Scripts\provision.ps1</Path>
+          <Description>winvm provisioning (idempotent)</Description>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+
   <settings pass="oobeSystem">
     <!--
-      REQUIRED, AND EASY TO OMIT. The same component in `windowsPE` only covers
-      Setup itself; OOBE reads its own copy from this pass. Without it, an
-      otherwise-complete answer file installs Windows perfectly and then parks
-      on "Is this the right country or region?" forever, which looks like the
-      answer file was ignored when in fact only this pass was missing.
+      ================= THE MOST IMPORTANT SETTING IN THIS FILE =================
 
-      This is the non-deprecated way to get a hands-off OOBE.
-      SkipMachineOOBE/SkipUserOOBE would also silence those screens, but
-      Microsoft deprecated both and on 25H2 they suppress FirstLogonCommands
-      entirely — so provisioning never runs and nothing says why.
+      AUDIT MODE, NOT OOBE. This one setting is what makes the guest boot
+      straight to a logged-on desktop, every time, with no out-of-box
+      experience at all.
+
+      Microsoft: "Booting to audit mode starts the computer in the built-in
+      administrator account", and "After you configure a computer to boot to
+      audit mode, the computer will continue to boot to audit mode by default
+      until you configure the computer to boot to OOBE."
+      <https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/boot-windows-to-audit-mode-or-oobe>
+
+      WHY IT IS NOT OPTIONAL HERE. With OOBE, every fresh instance runs the
+      out-of-box experience on its first boot: it logs on a temporary account
+      called `defaultuser0`, sits on "Just a moment, checking for updates" for
+      minutes against the network, then reboots. Three consequences, all
+      observed:
+
+        - There is no reliable moment to call the guest "ready". qemu-ga runs as
+          SYSTEM and answers throughout OOBE; so does guest-exec; and Windows
+          reports OOBEInProgress=0, SystemSetupInProgress=0 and a running
+          explorer.exe while the OOBE screen is still on display. Every probe
+          says yes too early.
+        - Snapshotting during that window LIVELOCKS the guest — all vCPUs at
+          100%, no disk I/O, recoverable only by killing it.
+        - The post-OOBE reboot is itself a failure point; one hung at the
+          firmware splash burning 100% CPU indefinitely.
+
+      Audit mode removes the phase rather than tolerating it. Per the Reseal
+      table, oobeSystem + Mode=Audit + ForceShutdownNow=false means: ignore
+      every other setting in this pass, then start the auditSystem pass.
+      <https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-deployment-reseal-mode>
+
+      SO EVERYTHING BELOW IN THIS PASS IS INERT while this is set. It is kept,
+      not deleted, because each entry records a real failure that would return
+      the moment anyone switches back to OOBE.
     -->
-    <component name="Microsoft-Windows-International-Core"
+    <component name="Microsoft-Windows-Deployment"
                processorArchitecture="arm64"
                publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-      <InputLocale>0409:00000409</InputLocale>
-      <SystemLocale>en-US</SystemLocale>
-      <UILanguage>en-US</UILanguage>
-      <UILanguageFallback>en-US</UILanguageFallback>
-      <UserLocale>en-US</UserLocale>
+      <!--
+        ELEMENT ORDER MATCHES MICROSOFT'S OWN XML EXAMPLE — ForceShutdownNow
+        before Mode. Unattend files are schema-validated and these are ordered
+        sequences, so a reversed pair risks the component being rejected whole.
+
+        ForceShutdownNow MUST be false here: the docs mark oobeSystem + Audit +
+        ForceShutdownNow=true as "Unsupported. Do not use. Sets the computer into
+        a loop of reboots."
+      -->
+      <Reseal>
+        <ForceShutdownNow>false</ForceShutdownNow>
+        <Mode>Audit</Mode>
+      </Reseal>
     </component>
 
-    <component name="Microsoft-Windows-Shell-Setup"
-               processorArchitecture="arm64"
-               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+    <!--
+      NOTHING ELSE BELONGS IN THIS PASS.
+      =================================
 
-      <!--
-        NOTE THE TWO SETTINGS THAT ARE NOT HERE: SkipMachineOOBE and
-        SkipUserOOBE. Microsoft deprecated both, and on 25H2 they suppress
-        FirstLogonCommands entirely — the desktop comes up, nothing runs, and
-        there is no error anywhere to tell you why. That cost a full install
-        cycle to find. The Hide*Screen settings below achieve a hands-off OOBE
-        without breaking first-logon.
-      -->
-      <OOBE>
-        <HideEULAPage>true</HideEULAPage>
-        <HideLocalAccountScreen>true</HideLocalAccountScreen>
-        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
-        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
-        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
-        <ProtectYourPC>3</ProtectYourPC>
-      </OOBE>
+      The OOBE components that used to live here — Microsoft-Windows-Shell-Setup
+      with UserAccounts, AutoLogon, OOBE screen-hiding and FirstLogonCommands,
+      plus Microsoft-Windows-International-Core — were removed, and their absence
+      is load-bearing.
 
-      <!--
-        A local account, because the point is that this guest never sees a
-        Microsoft account. The password is not a secret: this is a disposable
-        fixture reachable only through QEMU's own sockets, and the credential
-        exists solely so AutoLogon has something to present.
-      -->
-      <UserAccounts>
-        <LocalAccounts>
-          <LocalAccount wcm:action="add">
-            <Name>winvm</Name>
-            <DisplayName>winvm</DisplayName>
-            <Group>Administrators</Group>
-            <Password><Value>winvm</Value><PlainText>true</PlainText></Password>
-          </LocalAccount>
-        </LocalAccounts>
-      </UserAccounts>
+      They were kept once on the strength of the documented line that oobeSystem
+      settings "do not appear in audit mode". THEY ARE NOT INERT. Windows honoured
+      the audit-mode request (`IMAGE_STATE_SPECIALIZE_RESEAL_TO_AUDIT`) and
+      enabled the built-in Administrator, and then AutoLogon signed in `winvm`
+      instead. audit.exe had arranged to be re-called as `audit.exe /user` on the
+      AUDIT logon, which therefore never happened — so the auditUser pass never
+      ran, provisioning never ran, and the guest sat idle on a desktop with no
+      agent and nothing anywhere saying why.
 
-      <!--
-        Load-bearing: FirstLogonCommands only run once a user session exists,
-        and nothing is going to type a password into a headless VM.
-      -->
-      <AutoLogon>
-        <Username>winvm</Username>
-        <Enabled>true</Enabled>
-        <LogonCount>1</LogonCount>
-        <Password><Value>winvm</Value><PlainText>true</PlainText></Password>
-      </AutoLogon>
-
-      <FirstLogonCommands>
-        <SynchronousCommand wcm:action="add">
-          <Order>1</Order>
-          <CommandLine>Cmd /c POWERCFG -H OFF</CommandLine>
-          <Description>Disable hibernation</Description>
-        </SynchronousCommand>
-        <!--
-          The provisioning script finds its own volume rather than trusting a
-          drive letter — see provision.ps1.
-        -->
-        <SynchronousCommand wcm:action="add">
-          <Order>2</Order>
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "foreach ($d in (Get-PSDrive -PSProvider FileSystem).Name) { $p = $d + ':\provision.ps1'; if (Test-Path $p) { &amp; $p; break } }"</CommandLine>
-          <Description>Run winvm provisioning</Description>
-        </SynchronousCommand>
-      </FirstLogonCommands>
-    </component>
+      Audit mode logs on the built-in Administrator by itself. Give it no other
+      account to prefer.
+    -->
   </settings>
 </unattend>

@@ -65,6 +65,58 @@ export async function waitFor(sockPath: string, timeoutMs: number): Promise<bool
 }
 
 /**
+ * Poll until Windows has FINISHED STARTING — a state of the OS, not a sign of
+ * life from the channel.
+ *
+ * THE DISTINCTION IS THE WHOLE POINT, AND GETTING IT WRONG COSTS INSTANCES.
+ * qemu-ga runs as SYSTEM and answers long before any logon, so `guest-ping`
+ * succeeds throughout OOBE — and so does `guest-exec`, and so does anything else
+ * that merely asks whether the agent is alive. A guest sitting on "Just a
+ * moment, checking for updates" satisfies every one of those probes while being
+ * nowhere near settled. Two earlier versions of this function gated on exactly
+ * that and were meaningless: `start` reported the guest up, `smoke` returned
+ * correct answers, and the machine was still in OOBE the entire time.
+ *
+ * WHAT IS ASKED INSTEAD: has the REAL account logged on?
+ *
+ * Windows runs the out-of-box experience under a temporary account called
+ * `defaultuser0`, and it runs a full session as it — Explorer included. While
+ * that session is on screen showing "Checking for updates", the guest already
+ * reports `OOBEInProgress = 0` AND `SystemSetupInProgress = 0` AND a running
+ * `explorer.exe`. Every one of those was tried here and every one was true too
+ * early. `Win32_ComputerSystem.UserName` is not: it reads `<HOST>\defaultuser0`
+ * throughout OOBE and only becomes the answer file's account once AutoLogon has
+ * actually taken the machine to its desktop. That is the end of the lifecycle,
+ * and it is unambiguous.
+ *
+ * It matters beyond tidiness: freezing a guest mid-OOBE and restoring it
+ * LIVELOCKS the machine — every vCPU at 100%, no disk I/O, recoverable only by
+ * killing it. Snapshots must not be taken until this returns true.
+ */
+export async function waitReady(sockPath: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  if (!(await waitFor(sockPath, timeoutMs))) return false
+  while (Date.now() < deadline) {
+    try {
+      const r = await exec(sockPath, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", [
+        "-NoProfile",
+        "-Command",
+        "(Get-CimInstance Win32_ComputerSystem).UserName",
+      ])
+      const user = r.stdout.trim()
+      // Matched by SHAPE, not by name: this file knows nothing about which
+      // account a caller's answer file creates, only that OOBE's own temporary
+      // one is `defaultuser<n>`.
+      if (user !== "" && !/\\defaultuser\d+$/i.test(user)) return true
+    } catch {
+      // The agent drops in and out across OOBE's reboots; keep asking.
+    }
+    await new Promise((r) => setTimeout(r, 5000))
+  }
+  return false
+}
+
+/**
  * `guest-exec` starts a process and returns immediately; the output is only
  * available once `guest-exec-status` reports it exited, so this polls. Output
  * arrives base64-encoded.

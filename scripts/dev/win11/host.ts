@@ -23,6 +23,11 @@ export function capture(cmd: string, args: readonly string[]): string {
   return (spawnSync(cmd, [...args], { encoding: "utf8" }).stdout ?? "").trim()
 }
 
+/** Like `run`, but silent — for probes whose failure is expected and handled by the caller. */
+export function quiet(cmd: string, args: readonly string[]): number {
+  return spawnSync(cmd, [...args], { stdio: "ignore" }).status ?? 1
+}
+
 export function have(cmd: string): boolean {
   return spawnSync("command", ["-v", cmd], { shell: true, stdio: "ignore" }).status === 0
 }

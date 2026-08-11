@@ -26,6 +26,17 @@
 
 $ErrorActionPreference = "Stop"
 
+# IDEMPOTENT BY DESIGN. Two documented hooks invoke this script — SetupComplete.cmd
+# (once, at the end of Setup) and the answer file's auditUser pass (each time the
+# machine enters audit mode). Whichever runs first does the work; every later
+# invocation returns here immediately. Without this guard, audit mode would
+# reinstall the guest tools and re-expand the payload on every single boot.
+$Done = "C:\winvm-provisioned.txt"
+if (Test-Path $Done) {
+    Write-Output "already provisioned on $(Get-Content $Done -Raw); nothing to do"
+    exit 0
+}
+
 function Find-VolumeContaining {
     param([Parameter(Mandatory = $true)][string] $RelativePath)
     foreach ($name in (Get-PSDrive -PSProvider FileSystem).Name) {
@@ -142,6 +153,45 @@ try {
         & $setup
     }
 
+    # --- 4. Confirm viostor came out boot-start ------------------------------
+    #
+    # The build attaches a scratch virtio-blk disk purely so PnP installs
+    # viostor from the DriverStore and marks it boot-start (Start=0). That is
+    # what lets instances run their boot disk on virtio-blk, which QEMU requires
+    # for live snapshots -- the nvme device model has no migration support, so
+    # `savevm` refuses outright.
+    #
+    # Reported, NOT thrown: an image without it is still a working Windows
+    # guest, just one that cannot be snapshotted. The host records the answer on
+    # the image so instances know which bus to boot.
+    $viostor = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\viostor" -ErrorAction SilentlyContinue
+    if ($viostor -and $viostor.Start -eq 0) {
+        Write-Output "viostor is boot-start: this image can boot on virtio-blk"
+        Write-Result -Name "virtio.txt" -Content "ok"
+    } else {
+        $state = if ($viostor) { "Start=$($viostor.Start)" } else { "service absent" }
+        Write-Output "WARNING: viostor is not boot-start ($state) - no live snapshots"
+        Write-Result -Name "virtio.txt" -Content "no"
+    }
+
+    # --- 5. Audit mode housekeeping ------------------------------------------
+    #
+    # Microsoft, on audit mode: "If a password-protected screen saver starts
+    # when you are in audit mode, you cannot log back on to the system. The
+    # built-in administrator account that is used to log on to audit mode is
+    # immediately disabled after logon." A long-lived VM would eventually lock
+    # itself out of its own desktop, so turn the screen saver off outright.
+    # <https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/boot-windows-to-audit-mode-or-oobe>
+    reg.exe add "HKCU\Control Panel\Desktop" /v ScreenSaveActive /t REG_SZ /d 0 /f | Out-Null
+    reg.exe add "HKCU\Control Panel\Desktop" /v ScreenSaverIsSecure /t REG_SZ /d 0 /f | Out-Null
+    powercfg.exe /change monitor-timeout-ac 0
+    powercfg.exe /change standby-timeout-ac 0
+    # Hibernation off: hiberfil.sys is sized from RAM and would be pure waste in
+    # every overlay. This used to be a FirstLogonCommand, which audit mode does
+    # not run — so it lives here now, with everything else that must happen once.
+    powercfg.exe -h off
+
+    Set-Content -Path $Done -Value (Get-Date -Format o) -Encoding UTF8
     Write-Result -Name "status.txt" -Content "ok"
     Write-Output "PROVISION OK"
 } catch {
@@ -149,8 +199,16 @@ try {
     Write-Result -Name "status.txt" -Content "failed: $_"
 } finally {
     Stop-Transcript | Out-Null
-    # Power off: the host treats guest shutdown as "build complete", then
-    # promotes the disk to a read-only base image.
-    Start-Sleep -Seconds 3
-    Stop-Computer -Force
 }
+# DELIBERATELY DOES NOT POWER THE MACHINE OFF.
+#
+# This used to end in `Stop-Computer -Force`, so the host could treat the guest
+# vanishing as "build complete". Microsoft is explicit that this is unsafe from
+# a Setup script: "You can't reboot the system and resume running
+# SetupComplete.cmd. You should not reboot the system by adding a command such
+# as shutdown -r. This will put the system in a bad state."
+# <https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/add-a-custom-script-to-windows-setup>
+#
+# The host now waits for the guest to become genuinely ready, checks this
+# script's verdict, and shuts the guest down itself through the guest agent —
+# an ordinary, orderly shutdown of a machine that has finished starting.

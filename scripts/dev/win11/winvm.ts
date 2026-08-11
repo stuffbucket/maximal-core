@@ -7,6 +7,8 @@
  *   winvm adopt <disk.qcow2>         turn an existing installed disk into a base
  *   winvm start [-i name]            boot an instance (creating it if absent)
  *   winvm exec  [-i name] -- <cmd>   run a command in the guest
+ *   winvm snapshot [-i name] [tag]   capture the running guest, RAM and all
+ *   winvm rewind   [-i name] [tag]   put it back — about a second, no reboot
  *   winvm reset [-i name]            discard all changes, back to the base
  *   winvm ls                         images and instances, with disk usage
  *
@@ -21,11 +23,11 @@
  * An earlier version of this tool did not hold that line — it read
  * `../../.bun-version` and keyed its state directory on one project's name — and
  * the result was an uncaught `ENOENT` anywhere else plus two consumers silently
- * sharing a single 26 GB disk image.
+ * sharing a single 15 GB disk image.
  *
  * ## One base image, many thin instances
  *
- * A Windows install is ~26 GB, so a copy per consumer is not viable. The base is
+ * A Windows install is ~15 GB, so a copy per consumer is not viable. The base is
  * built once and never written again; each instance is a qcow2 OVERLAY backed by
  * it, storing only its own deltas — megabytes for a boot, not gigabytes.
  *
@@ -43,6 +45,26 @@
  * `--ephemeral` adds QEMU's `-snapshot`, so even the overlay is untouched and
  * the whole run is discarded on exit.
  *
+ * ## Rewinding is cheaper than resetting
+ *
+ * `reset` returns to the base image, which still costs a boot afterwards. A
+ * SNAPSHOT captures the running machine including RAM, and restoring one is not
+ * a reboot: the guest resumes mid-instruction. Take one yourself once the guest
+ * is where you want to keep returning to — `start` deliberately does not, because
+ * snapshotting a guest that has not finished starting livelocks it.
+ *
+ * That is why the disk runs on virtio-blk rather than the NVMe it installs on:
+ * QEMU's nvme device model is non-migratable and `savevm` refuses to touch it.
+ * See qemu.ts and snapshot.ts.
+ *
+ * ## The guest boots to audit mode
+ *
+ * There is no out-of-box experience: the answer file sets
+ * Microsoft-Windows-Deployment | Reseal | Mode = Audit, so every boot lands on a
+ * desktop logged in as the built-in Administrator in about 35 seconds. OOBE was
+ * not merely slow, it was undetectable — qemu-ga answers throughout it, so no
+ * probe could tell a starting guest from a started one. See the docs.
+ *
  * ## Layout
  *
  *   winvm.ts      this file — argument dispatch only
@@ -51,6 +73,9 @@
  *   host.ts       prerequisites, shelling out, downloads
  *   qemu.ts       the QEMU command line and process lifecycle
  *   qga.ts        guest-agent client (the scriptable channel)
+ *   qmp.ts        QEMU monitor client (keystrokes, snapshots)
+ *   snapshot.ts   capture and restore a running guest
+ *   diagnose.ts   known failure signatures, read from a guest's own artifacts
  *   media.ts      seed ISO and result volume
  *   instance.ts   create / reset / seal
  *   assets/       answer file, provisioning script, UEFI boot selector
@@ -99,6 +124,18 @@ switch (sub) {
   // eslint-disable-next-line no-fallthrough
   case "smoke":
     process.exit(await commands.smoke(args))
+  // eslint-disable-next-line no-fallthrough
+  case "snapshot":
+    process.exit(await commands.snap(args))
+  // eslint-disable-next-line no-fallthrough
+  case "rewind":
+    process.exit(await commands.rewind(args))
+  // eslint-disable-next-line no-fallthrough
+  case "snapshots":
+    process.exit(await commands.snapshots(args))
+  // eslint-disable-next-line no-fallthrough
+  case "diagnose":
+    process.exit(commands.diagnoseCmd(args))
   // eslint-disable-next-line no-fallthrough
   default:
     console.error(commands.USAGE)

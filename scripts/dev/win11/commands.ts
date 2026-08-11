@@ -2,31 +2,43 @@
  * The verbs. Each one is short enough to read in full; anything that needed
  * more room lives in a sibling module.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 import type { Args } from "./args"
 import { imageName, instanceName } from "./args"
-import { FIRMWARE_VARS, TOOLS_URL, download, du, hostChecks, requireHost, run } from "./host"
-import { ensureInstance, resetInstance, sealBase } from "./instance"
-import { buildSeed, makeResultVolume } from "./media"
-import type { InstanceMeta } from "./paths"
+import { TOOLS_URL, download, du, hostChecks, requireHost, run } from "./host"
+import { diagnose, formatFindings } from "./diagnose"
+import { ensureInstance, makeVars, resetInstance, sealBase } from "./instance"
+import { buildSeed, makeResultVolume, readResult } from "./media"
+import type { ImageMeta, InstanceMeta } from "./paths"
 import {
   allocateVnc,
   basePath,
   home,
   imageDir,
+  imageMetaPath,
   instanceDir,
   listImages,
   listInstances,
   media,
   mediaDir,
   pathsFor,
+  readImageMeta,
   readMeta,
 } from "./paths"
 import * as qemu from "./qemu"
 import * as qmp from "./qmp"
 import * as qga from "./qga"
+import * as snapshot from "./snapshot"
+
+/**
+ * Whether this instance's image can boot on virtio-blk, which is what live
+ * snapshots require. Images built before that change have no metadata and no
+ * viostor boot-start driver, so they keep booting on NVMe rather than
+ * bluescreening with INACCESSIBLE_BOOT_DEVICE.
+ */
+const virtioBootFor = (meta: InstanceMeta): boolean => readImageMeta(meta.image)?.virtioBoot === true
 
 const ISO_HELP =
   "https://www.microsoft.com/en-us/software-download/windows11arm64 " +
@@ -99,6 +111,27 @@ export async function build(args: Args): Promise<number> {
     return 1
   }
 
+  // Build in a scratch instance so a failed install cannot leave a half-made
+  // base image that later runs would happily use.
+  const scratch = `build-${image}`
+  const p = pathsFor(scratch)
+
+  // A BUILD THAT ENDED BADLY VERY LIKELY LEFT ITS GUEST RUNNING. `launch`
+  // detaches, so Ctrl-C kills this script and nothing else; the hour-long
+  // timeout used to return without reaping either. Recreating the overlay under
+  // a live QEMU corrupts it, and a second QEMU sharing this instance's pidfile,
+  // sockets and TPM state stalls with no error anywhere. Refuse, and say how out.
+  //
+  // CHECKED BEFORE ANY MEDIA IS TOUCHED, because buildSeed rewrites the SHARED
+  // seed ISO — which a build already in flight has attached as a CD.
+  if (qemu.isRunning(p)) {
+    console.error(
+      `::error::a build of "${image}" is already running (pid ${String(qemu.pidOf(p))}) — ` +
+        `\`winvm kill -i ${scratch}\` if it is stuck`,
+    )
+    return 1
+  }
+
   mkdirSync(mediaDir(), { recursive: true })
   const isoArg = args.flags.get("iso")
   if (isoArg !== undefined) {
@@ -118,63 +151,199 @@ export async function build(args: Args): Promise<number> {
   download(TOOLS_URL, media.tools())
   buildSeed(args.flags.get("payload"), args.flags.get("bun"))
 
-  // Build in a scratch instance so a failed install cannot leave a half-made
-  // base image that later runs would happily use.
-  const scratch = `build-${image}`
-  const p = pathsFor(scratch)
+  // Start from nothing. Anything kept from a failed build is a way for this one
+  // to behave like that one: the result volume carries the answer file and the
+  // provisioning scripts (so an edited asset would not reach the guest, and the
+  // old transcript would be read as this run's), and TPM state and firmware
+  // variables persist outside the disk image.
+  rmSync(p.dir, { recursive: true, force: true })
   mkdirSync(p.tpmDir, { recursive: true })
   run("qemu-img", ["create", "-f", "qcow2", p.overlay, "64G"])
-  copyFileSync(FIRMWARE_VARS, p.vars)
+  // The scratch virtio-blk disk. Tiny and never read: its only job is to be a
+  // virtio-blk device, so PnP installs viostor and marks it boot-start, which is
+  // what lets the finished image run (and therefore snapshot) on virtio-blk.
+  run("qemu-img", ["create", "-f", "qcow2", p.prime, "64M"])
+  makeVars(p.vars)
   makeResultVolume(p.result)
   const meta: InstanceMeta = { image, vnc: allocateVnc(), created: new Date().toISOString() }
   writeFileSync(p.meta, `${JSON.stringify(meta, null, 2)}\n`)
 
-  console.log(`installing Windows (unattended, ~20 min) · watch: vnc://127.0.0.1:${String(5900 + meta.vnc)}`)
-  qemu.launch(scratch, p, meta, { installMedia: true, ephemeral: false })
+  // Never leave a guest behind. Without this an interrupted build keeps a VM
+  // running invisibly — still writing to a disk this process has stopped
+  // watching — and the next build collides with it.
+  const reap = (): void => {
+    const pid = qemu.pidOf(p)
+    if (pid !== null) process.kill(pid, "SIGKILL")
+  }
+  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+    process.on(sig, () => {
+      reap()
+      console.error(`\n::error::build interrupted — guest killed, scratch instance "${scratch}" kept`)
+      process.exit(1)
+    })
+  }
 
-  // Answer "Press any key to boot from CD or DVD", then STOP EARLY.
+  console.log(`installing Windows (unattended, ~20 min) · watch: vnc://127.0.0.1:${String(5900 + meta.vnc)}`)
+  try {
+    // Installs on NVMe — WinPE has no virtio-blk driver. See qemuArgs.
+    await qemu.launch(scratch, p, meta, { installMedia: true, ephemeral: false, virtioBoot: false })
+  } catch (error) {
+    console.error(`::error::could not start the installer VM: ${error instanceof Error ? error.message : String(error)}`)
+    return 1
+  }
+
+  // ANSWER "Press any key to boot from CD or DVD" — ONCE THE FIRMWARE SAYS SO.
   //
-  // THE STOP CONDITION IS THE DANGEROUS PART, IN BOTH DIRECTIONS.
+  // Two rules, and the second is the one that was learned the hard way:
   //
-  // Too late, and Enter starts landing on Windows Setup's GUI: the "Installing
-  // Windows" progress screen has a focusable Cancel, so a stray Enter opens
-  // "Are you sure you want to quit?" and the install freezes mid-copy waiting
-  // for an answer that never comes. That is not hypothetical — it wedged a
-  // build at 35%.
+  //   1. Wait for the EVENT. startup.nsh prints `winvm-keypress-needed` on the
+  //      firmware console immediately before launching the only boot image that
+  //      asks for a key. That is a causal signal; a timer is not. The prompt
+  //      itself is drawn on the graphical console and never reaches serial, so
+  //      this handshake is the only thing there is to observe.
   //
-  // Too early, and the prompt goes unanswered and nothing installs at all.
+  //   2. Send a BOUNDED number of keys. Surplus keystrokes are not discarded —
+  //      they queue and are delivered to Windows Setup's GUI, where Enter
+  //      activates Cancel and opens "Are you sure you want to quit?", freezing
+  //      the install with no error. The previous version held Enter down until
+  //      the disk grew past 300 MB, ~250 keystrokes for a prompt that takes
+  //      one, and wedged builds intermittently for exactly that reason.
   //
-  // A small amount of disk growth is the right signal: it means WinPE is past
-  // firmware and writing, which can only happen after the prompt was answered.
-  // Later reboots do not need the keyboard, because by then startup.nsh finds
-  // Windows Boot Manager on the ESP and prefers it over the installer.
-  //
-  // See qmp.ts for why this is not a plain QMP `sendkey`.
-  const installerRunning = (): boolean => {
+  // Later reboots need no keyboard at all: startup.nsh finds Windows Boot
+  // Manager on the ESP by then and prefers it over the installer.
+  const installerWriting = (): boolean => {
     try {
       return statSync(p.overlay).size > 300_000_000
     } catch {
       return false
     }
   }
-  void qmp.pressEnterUntil(p.qmp, 15 * 60_000, installerRunning).catch(() => {
-    console.warn("warning: could not drive the boot prompt; install may stall at firmware")
+  void (async () => {
+    if (!(await qemu.waitForSerial(p, "winvm-keypress-needed", 10 * 60_000))) {
+      console.warn("warning: the firmware never asked for a keypress; the install may stall at the boot prompt")
+      return
+    }
+    // Five keys, ten seconds, spanning the prompt's window — then stop for good,
+    // whatever happens next.
+    await qmp.tapEnter(p.qmp, 5, 2000)
+    // Confirm the keys did their job, so a prompt that went unanswered is named
+    // now rather than surfacing an hour later as a bare timeout.
+    for (let waited = 0; waited < 300_000; waited += 5000) {
+      if (installerWriting()) return
+      await new Promise((r) => setTimeout(r, 5000))
+    }
+    console.error("::error::the installer never started writing — the boot prompt appears to have gone unanswered")
+  })().catch((error: unknown) => {
+    console.warn(`warning: could not answer the boot prompt: ${error instanceof Error ? error.message : String(error)}`)
   })
 
-  // provision.ps1 powers the guest off when it finishes; that is the signal.
-  const deadline = Date.now() + 60 * 60_000
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 15_000))
+  // THE HOST SHUTS THE GUEST DOWN; THE GUEST NO LONGER SHUTS ITSELF DOWN.
+  //
+  // provision.ps1 used to end in `Stop-Computer -Force`, which let this loop
+  // treat "QEMU exited" as "the install finished". Microsoft is explicit that
+  // terminating the machine from a Setup script is unsafe — "You should not
+  // reboot the system by adding a command such as shutdown -r. This will put
+  // the system in a bad state" — and the signal was ambiguous anyway: a crash,
+  // a `winvm kill` and a successful provision all end with QEMU gone.
+  //
+  // Now the sequence says what it means. Wait for the agent (provisioning is
+  // what installs it), wait for provisioning to declare itself finished, ask the
+  // guest what it is, then shut it down in an orderly way.
+  const guestFailed = (why: string): number => {
+    console.error(`::error::${why}`)
+    reap()
+    const result = readResult(p.result)
+    for (const line of result.log.trimEnd().split("\n").slice(-20)) {
+      if (line.trim() !== "") console.error(`  | ${line}`)
+    }
+    // Run the post-mortem HERE rather than leaving it for someone to think of.
+    // The artifacts are at their most informative right now, and every failure
+    // this has ever had looked identical from the outside.
+    const findings = diagnose(scratch)
+    if (findings.length > 0) console.error(`\n${formatFindings(scratch, findings)}\n`)
+    console.error(
+      `  firmware log: ${p.serial}\n` +
+        `  scratch instance "${scratch}" kept for inspection — \`winvm destroy -i ${scratch}\` when done`,
+    )
+    return 1
+  }
+
+  // The agent only exists once the guest tools are installed, which is most of
+  // the way through provisioning — so this doubles as progress.
+  if (!(await qga.waitFor(p.qga, 45 * 60_000))) {
+    return guestFailed("the guest agent never came up, so provisioning did not get far enough to install it")
+  }
+
+  const ps = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+  // TOLERATES THE AGENT DISAPPEARING, because it will. Provisioning installs
+  // vioserial — the driver underneath the very channel this speaks over — so the
+  // agent drops and returns mid-run. An unguarded call here throws right at the
+  // moment provisioning is doing its job, and the whole build dies reporting a
+  // timeout while the install underneath it was perfectly healthy.
+  const ask = async (command: string): Promise<string | null> => {
+    try {
+      return (await qga.exec(p.qga, ps, ["-NoProfile", "-Command", command])).stdout.trim()
+    } catch {
+      return null
+    }
+  }
+
+  // provision.ps1 writes its marker last, immediately before reporting success.
+  const provisionDeadline = Date.now() + 30 * 60_000
+  let provisioned = false
+  while (Date.now() < provisionDeadline) {
+    if ((await ask("Test-Path C:\\winvm-provisioned.txt")) === "True") {
+      provisioned = true
+      break
+    }
+    await new Promise((r) => setTimeout(r, 10_000))
+  }
+  if (!provisioned) return guestFailed("provisioning never reported that it finished")
+
+  // Asked of the guest directly rather than read off a file it wrote earlier:
+  // this is the property that decides whether instances may boot on virtio-blk,
+  // and it is cheap to be certain about.
+  // Retried, because `ask` returns null on a transient agent dropout and a null
+  // here would quietly stamp the image as snapshot-incapable for the rest of its
+  // life. A wrong answer is much more expensive than another round trip.
+  let virtioAnswer: string | null = null
+  for (let attempt = 0; attempt < 5 && virtioAnswer === null; attempt += 1) {
+    virtioAnswer = await ask(
+      "$s = Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\viostor' -ErrorAction SilentlyContinue; " +
+        "if ($s -and $s.Start -eq 0) { 'yes' } else { 'no' }",
+    )
+    if (virtioAnswer === null) await new Promise((r) => setTimeout(r, 5000))
+  }
+  const virtioBoot = virtioAnswer === "yes"
+
+  console.log("provisioning finished; shutting the guest down")
+  await qga.shutdown(p.qga)
+  const stopDeadline = Date.now() + 10 * 60_000
+  while (Date.now() < stopDeadline) {
     if (!qemu.isRunning(p)) {
       mkdirSync(imageDir(image), { recursive: true })
       run("mv", [p.overlay, basePath(image)])
       sealBase(image)
+      // Recorded because it cannot be read back off a disk image later.
+      const imageMeta: ImageMeta = { virtioBoot, created: new Date().toISOString() }
+      writeFileSync(imageMetaPath(image), `${JSON.stringify(imageMeta, null, 2)}\n`)
       rmSync(p.dir, { recursive: true, force: true })
-      console.log(`base image ready: ${basePath(image)} (${du(basePath(image))})\nnext: winvm start`)
+      console.log(`base image ready: ${basePath(image)} (${du(basePath(image))})`)
+      console.log(
+        virtioBoot
+          ? "snapshots: available (`winvm snapshot` / `winvm rewind`)"
+          : "snapshots: UNAVAILABLE — viostor did not come out boot-start, so this image boots on NVMe",
+      )
+      console.log("next: winvm start")
       return 0
     }
+    await new Promise((r) => setTimeout(r, 5000))
   }
-  console.error(`::error::install did not finish within an hour — see ${p.serial}`)
+  return guestFailed("the guest did not shut down after provisioning")
+  // Reap before reporting: the guest is still running, and leaving it that way
+  // is what poisons the next build.
+  reap()
+  console.error(`::error::install did not finish within an hour — guest killed. See ${p.serial}`)
   return 1
 }
 
@@ -190,17 +359,157 @@ export async function start(args: Args): Promise<number> {
   const meta = readMeta(name)
   if (meta === null) return 1
 
-  qemu.launch(name, p, meta, { installMedia: false, ephemeral: args.flags.has("ephemeral") })
+  const virtioBoot = virtioBootFor(meta)
+  try {
+    await qemu.launch(name, p, meta, {
+      installMedia: false,
+      ephemeral: args.flags.has("ephemeral"),
+      virtioBoot,
+    })
+  } catch (error) {
+    console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+    return 1
+  }
   process.stdout.write("booting")
-  const up = await qga.waitFor(p.qga, 300_000)
+  // READY, NOT MERELY ANSWERING. `guest-ping` succeeds while the screen still
+  // reads "Just a moment..."; anything issued then races the rest of the boot.
+  const up = await qga.waitReady(p.qga, 300_000)
   process.stdout.write("\n")
   if (!up) {
     console.error(
-      `::error::guest agent never answered. Look at vnc://127.0.0.1:${String(5900 + meta.vnc)} or ${p.serial}`,
+      `::error::guest never became ready. Look at vnc://127.0.0.1:${String(5900 + meta.vnc)} or ${p.serial}`,
     )
     return 1
   }
   console.log(`instance "${name}" up (vnc :${String(meta.vnc)})`)
+  // DELIBERATELY NO AUTOMATIC SNAPSHOT HERE.
+  //
+  // Taking one on first boot was tried and was a mistake in two ways. It froze
+  // the guest at whatever point boot had reached, so "fresh" captured a machine
+  // that was still starting; and doing that to a half-booted Windows LIVELOCKED
+  // it — four vCPUs at 100%, no disk I/O, no recovery. That turned a convenience
+  // into a way for the ordinary `start` path to destroy an instance.
+  //
+  // `winvm snapshot` is one command, and the caller knows when the guest is
+  // where they want to keep returning to. See the docs.
+  return 0
+}
+
+/** Capture the running guest, RAM and all. */
+export async function snap(args: Args): Promise<number> {
+  const name = instanceName(args)
+  const p = pathsFor(name)
+  const meta = readMeta(name)
+  if (meta === null) {
+    console.error(`::error::no such instance "${name}"`)
+    return 1
+  }
+  if (!qemu.isRunning(p)) {
+    console.error(`::error::instance "${name}" is not running — a snapshot captures a LIVE guest`)
+    return 1
+  }
+  if (!virtioBootFor(meta)) {
+    console.error(
+      `::error::image "${meta.image}" predates virtio boot, so its guest runs on NVMe — a device QEMU ` +
+        "cannot snapshot. Rebuild the image (`winvm build --image <name>`) to enable snapshots.",
+    )
+    return 1
+  }
+  const tag = args.positional[0] ?? snapshot.DEFAULT_TAG
+  if (args.flags.has("delete")) {
+    await snapshot.remove(p, tag)
+    console.log(`deleted snapshot "${tag}"`)
+    return 0
+  }
+  // REFUSE TO FREEZE A GUEST THAT IS NOT READY. Snapshotting a still-booting
+  // Windows livelocks it: every vCPU spins, no disk I/O, and the instance is
+  // only recoverable by killing it. A snapshot of a half-booted machine would
+  // not be worth restoring anyway.
+  if (!(await qga.waitReady(p.qga, 120_000))) {
+    console.error(`::error::guest "${name}" is not ready — snapshotting one that is still booting wedges it`)
+    return 1
+  }
+  const started = Date.now()
+  await snapshot.save(p, tag)
+  console.log(`snapshot "${tag}" taken in ${String(Date.now() - started)} ms`)
+  return 0
+}
+
+/**
+ * Put the guest back to a snapshot.
+ *
+ * Works whether or not it is running: a stopped instance is started directly
+ * into the saved state (`-loadvm`), which skips booting entirely.
+ */
+export async function rewind(args: Args): Promise<number> {
+  const name = instanceName(args)
+  const p = pathsFor(name)
+  const meta = readMeta(name)
+  if (meta === null) {
+    console.error(`::error::no such instance "${name}"`)
+    return 1
+  }
+  const tag = args.positional[0] ?? snapshot.DEFAULT_TAG
+  const started = Date.now()
+
+  if (!qemu.isRunning(p)) {
+    if (!snapshot.has(p, tag)) {
+      console.error(`::error::instance "${name}" has no snapshot "${tag}" — \`winvm snapshots -i ${name}\``)
+      return 1
+    }
+    try {
+      await qemu.launch(name, p, meta, {
+        installMedia: false,
+        ephemeral: false,
+        virtioBoot: virtioBootFor(meta),
+        loadvm: tag,
+      })
+    } catch (error) {
+      console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+      return 1
+    }
+  } else {
+    try {
+      await snapshot.load(p, tag)
+    } catch (error) {
+      console.error(`::error::${error instanceof Error ? error.message : String(error)}`)
+      return 1
+    }
+  }
+
+  // WAIT FOR THE GUEST, DO NOT SLEEP. `loadvm` returns once QEMU has restored
+  // the state, which is before the guest agent can serve anything. A fixed
+  // sleep that is a little too short produces the worst possible result: a
+  // command answered from across the restore, making a rewind that DID work
+  // look like one that changed nothing.
+  if (!(await qga.waitReady(p.qga, 120_000))) {
+    console.error(`::error::guest did not come back after the rewind — see ${p.serial}`)
+    return 1
+  }
+  console.log(`rewound "${name}" to "${tag}" in ${String(Date.now() - started)} ms`)
+  return 0
+}
+
+export async function snapshots(args: Args): Promise<number> {
+  const name = instanceName(args)
+  const p = pathsFor(name)
+  if (readMeta(name) === null) {
+    console.error(`::error::no such instance "${name}"`)
+    return 1
+  }
+  // A running QEMU holds the disk, so qemu-img cannot open it. Ask the monitor
+  // instead and print what it says verbatim — the columns are already a table.
+  if (qemu.isRunning(p)) {
+    const out = await qmp.hmp(p.qmp, "info snapshots")
+    console.log(out.replace(/\r/g, "").trim())
+    return 0
+  }
+  const rows = snapshot.list(p)
+  if (rows.length === 0) {
+    console.log(`instance "${name}" has no snapshots`)
+    return 0
+  }
+  for (const s of rows) console.log(`  ${s.tag.padEnd(18)} ${s.vmSize.padStart(9)}  ${s.date}`)
   return 0
 }
 
@@ -354,9 +663,23 @@ export async function smoke(args: Args): Promise<number> {
   return 0
 }
 
+/**
+ * Explain a guest that misbehaved, from its files.
+ *
+ * Separate from `doctor`, which checks the HOST before anything runs. This reads
+ * what a guest left behind afterwards, and works on one that is dead or wedged.
+ */
+export function diagnoseCmd(args: Args): number {
+  const name = instanceName(args)
+  const findings = diagnose(name)
+  console.log(formatFindings(name, findings))
+  return findings.some((f) => f.severity === "error") ? 1 : 0
+}
+
 export const USAGE =
   "winvm <command>\n\n" +
-  "  doctor                        check host prerequisites\n" +
+  "  doctor                        check host prerequisites (the HOST, before anything runs)\n" +
+  "  diagnose [-i name]            explain a guest that misbehaved, from its files\n" +
   "  build --iso <win11.iso>       build a base image (once, ~20 min)\n" +
   "        [--payload <dir>] [--bun <version>] [--image <name>]\n" +
   "  adopt <disk.qcow2>            adopt an installed disk as a base image\n" +
@@ -364,6 +687,10 @@ export const USAGE =
   "  start   [-i name] [--ephemeral]\n" +
   "  exec    [-i name] -- <cmd>    run a command in the guest\n" +
   "  smoke   [-i name] [--expect <v> | --expect-file <path>] [--probe <exe>]\n" +
+  "  snapshot [-i name] [tag]      capture the running guest, RAM and all\n" +
+  "           [--delete]           remove that snapshot instead\n" +
+  "  rewind  [-i name] [tag]       put the guest back (default tag: fresh)\n" +
+  "  snapshots [-i name]           list them\n" +
   "  reset   [-i name]             discard changes, back to the base image\n" +
   "  stop | kill | destroy [-i name]\n\n" +
   "  state:    WINVM_HOME       (default ~/.local/state/winvm)\n" +

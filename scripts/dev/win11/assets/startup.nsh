@@ -48,10 +48,20 @@ endfor
 # `cdboot.efi` and prints "Press any key to boot from CD or DVD", returning
 # EFI_TIMEOUT if nothing answers.
 #
-# That keypress is the host's job: winvm's build command drives QMP's
-# `sendkey` (wrapped in `human-monitor-command` — see qmp.ts) from the moment
-# the VM starts until the disk begins growing. Without that, this line reaches
-# the prompt and times out.
+# That keypress is the host's job, and the line below is the HANDSHAKE that
+# makes it deterministic: winvm watches the firmware console for
+# `winvm-keypress-needed` and only then sends a small, bounded number of Enters.
+# It is printed here, immediately before the one image that asks for a key,
+# because this is the only moment the host can know the prompt is imminent —
+# the prompt itself is drawn on the graphical console and never reaches serial.
+#
+# THE VERSION WITHOUT THIS HANDSHAKE FAILED, AND FAILED INTERMITTENTLY. The host
+# used to hold Enter down from power-on until the disk grew past 300 MB, which
+# is ~250 keystrokes for a prompt that consumes exactly one. The surplus sat in
+# the keyboard buffer and was delivered later to Windows Setup's GUI, where
+# Enter lands on Cancel and opens "Are you sure you want to quit?" — freezing
+# the install at 10% with no error anywhere. Stopping the sender earlier cannot
+# fix that: the keys are already queued.
 #
 # Do not "simplify" by deleting this loop because the noprompt one looks
 # tidier: on this firmware the install CD is never registered as a boot option
@@ -59,6 +69,7 @@ endfor
 for %d in 0 1 2 3 4 5
   if exist fs%d:\EFI\BOOT\BOOTAA64.EFI then
     echo booting installer (bootaa64, expects a keypress) from fs%d
+    echo winvm-keypress-needed
     fs%d:
     cd \EFI\BOOT
     BOOTAA64.EFI
